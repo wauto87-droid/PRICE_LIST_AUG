@@ -31,6 +31,7 @@ services:
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
   migrate:
+    image: amt-pricelist-app:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: app }
     environment: *app-environment
     command: [pnpm, migrate]
@@ -39,6 +40,7 @@ services:
     restart: "no"
     logging: *logging
   app:
+    image: amt-pricelist-app:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: app }
     restart: unless-stopped
     environment: *app-environment
@@ -63,6 +65,7 @@ services:
       retries: 3
     logging: *logging
   worker:
+    image: amt-pricelist-worker:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: worker }
     restart: unless-stopped
     environment: *app-environment
@@ -74,9 +77,10 @@ services:
     mem_limit: 1536m
     cpus: 0.75
     pids_limit: 160
-    tmpfs: [/tmp:size=256m, mode=1777]
+    tmpfs: ["/tmp:size=256m,mode=1777"]
     logging: *logging
   backup:
+    image: amt-pricelist-backup:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: backup }
     restart: unless-stopped
     environment: *app-environment

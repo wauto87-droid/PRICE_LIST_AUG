@@ -1,0 +1,16 @@
+[Unit]
+Description=AMT Price List isolated application
+After=network-online.target docker.service podman.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/shop-pricelist/current/scripts/deployment/manage.py start --yes
+ExecStop=/usr/bin/python3 /opt/shop-pricelist/current/scripts/deployment/manage.py stop --yes
+TimeoutStartSec=300
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
