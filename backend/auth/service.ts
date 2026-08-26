@@ -232,4 +232,4 @@ export async function logout(db: DB, request: Request) {
     await db.query("DELETE FROM sessions WHERE token_hash=$1", [digest(token)]);
 }
 export const sessionCookie = (token: string) =>
-  `amt_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${token ? 43200 : 0}${process.env.COOKIE_SECURE === "true" ? "; Secure" : ""}`;
+  `amt_session=${token}; HttpOnly; SameSite=Strict; Path=/amt_price_list/; Max-Age=${token ? 43200 : 0}${process.env.COOKIE_SECURE === "true" ? "; Secure" : ""}`;

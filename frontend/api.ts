@@ -1,3 +1,4 @@
+import { appPath } from "../shared/paths";
 // Memory-only state survives development hot-module replacement; never persisted.
 const sessionState = globalThis as typeof globalThis & { amtCsrf?: string };
 export const setCsrf = (value: string) => {
@@ -11,7 +12,7 @@ export async function api<T = any>(
   const form = body instanceof FormData;
   let result: Response;
   try {
-    result = await fetch("/api/v1/" + path, {
+    result = await fetch(appPath("/api/v1/" + path), {
       method,
       credentials: "same-origin",
       cache: "no-store",

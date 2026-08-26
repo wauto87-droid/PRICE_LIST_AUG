@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS app
+FROM docker.io/library/node:24-bookworm-slim AS app
 ARG AMT_VERIFY_BUILD_LIMIT=0
 RUN if [ "$AMT_VERIFY_BUILD_LIMIT" = 1 ]; then limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes); case "$limit" in ''|*[!0-9]*) exit 1;; esac; test "$limit" -gt 0 && test "$limit" -le 2147483648; fi
 WORKDIR /app
@@ -22,7 +22,7 @@ ENV PYTHON_BIN=/opt/extract/bin/python
 USER node
 CMD ["pnpm","worker"]
 
-FROM postgres:17-bookworm AS backup
+FROM docker.io/library/postgres:17-bookworm AS backup
 COPY --from=app /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 COPY --from=app /app/node_modules ./node_modules

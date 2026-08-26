@@ -1,27 +1,27 @@
 {
-  "id": "/",
+  "id": "/amt_price_list/",
   "name": "AMT Electric Price List",
   "short_name": "AMT Electric",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "/amt_price_list/",
+  "scope": "/amt_price_list/",
   "display": "standalone",
   "background_color": "#f5f5f7",
   "theme_color": "#cc0000",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/amt_price_list/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/amt_price_list/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-maskable.png",
+      "src": "/amt_price_list/icon-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

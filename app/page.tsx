@@ -5,6 +5,7 @@ import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
 import Admin from "@/frontend/Admin";
+import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "" },
   lines: [] as any[],
@@ -27,8 +28,8 @@ export default function App() {
     update();
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator)
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (process.env.NODE_ENV === "production" && window.isSecureContext && "serviceWorker" in navigator)
+      navigator.serviceWorker.register(appPath("/sw.js"), { scope: appPath("/") }).catch(() => {});
     return () => {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
@@ -95,7 +96,7 @@ export default function App() {
     window.addEventListener("amt-connection-lost", lost);
     const timer = setInterval(async () => {
       try {
-        const r = await fetch("/api/v1/health", {
+        const r = await fetch(appPath("/api/v1/health"), {
           cache: "no-store",
           signal: AbortSignal.timeout(5000),
         });
@@ -183,7 +184,7 @@ export default function App() {
     <>
       <header className="app-header">
         <a className="brand" href="/" aria-label="AMT Electric Price List">
-          <img src="/logo.svg" alt="AMT Electric" />
+          <img src={appPath("/logo.svg")} alt="AMT Electric" />
           <span>
             <strong>
               AMT <em>ELECTRIC</em>

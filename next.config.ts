@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
+  basePath: "/amt_price_list",
   serverExternalPackages: [
     "pg",
     "@electric-sql/pglite",

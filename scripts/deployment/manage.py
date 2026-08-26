@@ -18,6 +18,9 @@ import time
 import queue
 import threading
 import signal
+import socket
+from urllib.parse import urlsplit
+import ipaddress
 from collections import deque
 
 REPORT = None
@@ -168,10 +171,11 @@ class Diagnostics:
 
 ROOT = Path('/opt/shop-pricelist')
 PROJECT = 'amt-pricelist'
-DB_IMAGE = 'postgres:17-bookworm'
+DB_IMAGE = 'docker.io/library/postgres:17-bookworm'
+BASE_PATH = '/amt_price_list'
 SERVICES = ('app', 'worker', 'backup')
 MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
-ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR'}
+ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR'}
 
 class DeployError(Exception):
     pass
@@ -234,7 +238,11 @@ def read_env(path):
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('POSTGRES_PASSWORD', '')), 'Database password must be a generated 64-character hex secret')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('SETUP_TOKEN', '')), 'Setup token must be generated hex')
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
-    require(values.get('APP_ORIGIN') == f"http://localhost:{values['APP_PORT']}" and values.get('COOKIE_SECURE') == 'false', 'This installer supports loopback tunnel mode only; HTTPS needs a reviewed domain configuration')
+    require(values.get('APP_BASE_PATH', BASE_PATH) == BASE_PATH, 'Unexpected application base path')
+    origin = values.get('APP_ORIGIN', '')
+    if origin != f"http://localhost:{values['APP_PORT']}":
+        parse_public_url(origin + BASE_PATH)
+    require(values.get('COOKIE_SECURE') == ('true' if origin.startswith('https://') else 'false'), 'Cookie security does not match origin')
     if REPORT:
         REPORT.protect(values)
     return values
@@ -247,7 +255,7 @@ def env_text(values):
 def new_env(port):
     return dict(POSTGRES_USER='amt', POSTGRES_DB='amt_pricelist', POSTGRES_PASSWORD=secrets.token_hex(32),
                 SETUP_TOKEN=secrets.token_hex(32), APP_PORT=str(port), APP_ORIGIN=f'http://localhost:{port}',
-                COOKIE_SECURE='false', PDF_MAX_PAGES='100', UPLOAD_MAX_MB='20', BACKUP_RETENTION_DAYS='14',
+                APP_BASE_PATH=BASE_PATH, COOKIE_SECURE='false', PDF_MAX_PAGES='100', UPLOAD_MAX_MB='20', BACKUP_RETENTION_DAYS='14',
                 UPLOAD_DIR='/data/uploads', BACKUP_DIR='/data/backups')
 
 def project_label(labels):
@@ -441,7 +449,7 @@ class Deployment:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             if self.database('SELECT 1;', check=False).returncode == 0:
-                result = run(['curl', '--silent', '--fail', '--max-time', '5', f"http://127.0.0.1:{self.env['APP_PORT']}/api/v1/health"], check=False, timeout=10)
+                result = run(['curl', '--silent', '--fail', '--max-time', '5', f"http://127.0.0.1:{self.env['APP_PORT']}{BASE_PATH}/api/v1/health"], check=False, timeout=10)
                 ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
                 if result.returncode == 0 and len(ids) == 3:
                     states = json.loads(decoded(self.engine('inspect', *ids)))
@@ -569,7 +577,7 @@ class Deployment:
             tar.extractall(release, filter='data')
         for required in ['compose.yaml', 'Dockerfile', 'pnpm-lock.yaml', 'scripts/deployment/manage.py']:
             require((release / required).is_file(), f'Release is missing {required}; commit and push deployment tooling first')
-        images = {s: {'image': f'{PROJECT}-' + ('app' if s == 'migrate' else s) + ':' + commit} for s in ['app', 'migrate', 'worker', 'backup']}
+        images = {s: {'image': f'localhost/{PROJECT}-' + ('app' if s == 'migrate' else s) + ':' + commit} for s in ['app', 'migrate', 'worker', 'backup']}
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         atomic(release / 'release.json', json.dumps({'commit': commit, 'migrations': self.migration_files(release)}))
         self.compose('config', '--quiet', release=release)
@@ -590,7 +598,7 @@ class Deployment:
             self.stage(f'Build {target} image (2 GiB memory cap)')
             run(['podman', 'build', *network_args, '--jobs=1', '--memory=2g', '--memory-swap=2g',
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
-                 '--tag', f'{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
+                 '--tag', f'localhost/{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
 
     @staticmethod
     def migration_files(release):
@@ -614,6 +622,12 @@ class Deployment:
             require(journal.is_file(), 'No resumable first installation; retain files for manual review')
             recovery = json.loads(journal.read_text())
             require(not recovery.get('completed'), 'Installation is already complete; use upgrade')
+            if self.args.replace_failed_release:
+                self.check_replace_failed()
+                atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
+                recovery = {'commit': commit, 'candidate': None}
+                atomic(journal, json.dumps(recovery))
+                self.event('FAILED_RELEASE_REPLACED', commit=commit)
             commit = recovery['commit']
             require(re.fullmatch(r'[a-f0-9]{40,64}', commit), 'Invalid recovery commit')
             self.port(int(self.env['APP_PORT']))
@@ -675,7 +689,18 @@ class Deployment:
         if not first and self.args.rotate:
             self.rotate()
         print(f"Ready: ssh -N -L {self.env['APP_PORT']}:127.0.0.1:{self.env['APP_PORT']} root@76.13.244.160")
-        print(f"Open {self.env['APP_ORIGIN']}. Read the setup token privately from {self.envfile}; it is never printed here.")
+        print(f"Open {self.env['APP_ORIGIN']}{BASE_PATH}. Read the setup token privately from {self.envfile}; it is never printed here.")
+
+    def check_replace_failed(self):
+        require(not (self.root / 'current').exists(), 'Cannot replace a release after activation')
+        recovery = json.loads((self.state / 'install.json').read_text())
+        require(not recovery.get('completed'), 'Installation already completed')
+        state_file = self.state / 'deployment.json'
+        if state_file.exists():
+            require(json.loads(state_file.read_text()).get('phase') == 'BUILT', 'Replacement blocked after migrations or ambiguous recovery state')
+        volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
+        require(f'{PROJECT}_database' not in volumes, 'Database volume already exists; replacement needs manual recovery review')
+        require(not any(self.owned(c) for c in self.inventory()), 'AMT containers already exist; replacement refused')
 
     def rollback(self):
         require(self.args.release and re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', self.args.release), 'Specify an exact --release directory name')
@@ -743,6 +768,10 @@ class Deployment:
             self.current()
             self.port(int(self.env['APP_PORT']))
         if self.args.dry_run:
+            if self.args.replace_failed_release:
+                self.check_replace_failed()
+            if self.args.command == 'set-public-url':
+                self.public_url(dry_run=True)
             if self.args.command in ['install', 'upgrade']:
                 self.source(fetch=False)
             print('Dry run: inspected only. No fetch, files, containers, migrations, secrets or system services changed.')
@@ -771,6 +800,8 @@ class Deployment:
                     self.restore_check()
                 elif command == 'rollback':
                     self.rollback()
+                elif command == 'set-public-url':
+                    self.public_url()
                 elif command == 'start':
                     phase = json.loads((self.state / 'deployment.json').read_text()).get('phase')
                     require(phase == 'HEALTHY', 'Incomplete deployment must be recovered before boot startup')
@@ -786,7 +817,7 @@ class Deployment:
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description='AMT-only VPS deployment; no root/user password changes or public proxy configuration')
-    parser.add_argument('command', nargs='?', choices=['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop'])
+    parser.add_argument('command', nargs='?', choices=['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'set-public-url'])
     parser.add_argument('--source', default=str(Path(__file__).resolve().parents[2]), help='Clean Git checkout; not a deployed release directory')
     parser.add_argument('--ref', default='origin/master')
     parser.add_argument('--release', help='Exact retained release directory for rollback')
@@ -799,15 +830,20 @@ def arguments(argv=None):
     parser.add_argument('--access-verified', action='store_true', help='Operator confirms SSH-key access and separately rotated VPS root password')
     parser.add_argument('--rotate', action='store_true', help='Explicitly opt into app-secret rotation after a successful upgrade')
     parser.add_argument('--resume', action='store_true', help='Recover an interrupted first install or credential rotation')
+    parser.add_argument('--replace-failed-release', action='store_true', help='Explicitly replace the pinned first-install commit before any database initialization')
+    parser.add_argument('--url', help='Public URL ending in /amt_price_list; HTTP only for the approved VPS IP, HTTPS for a domain')
     args = parser.parse_args(argv)
     if not args.command:
         require(sys.stdin.isatty(), 'Non-interactive use requires an explicit command and --yes')
-        options = ['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback']
+        options = ['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'set-public-url']
         for i, item in enumerate(options, 1):
             print(f'{i}. {item}')
         choice = input('Select command: ').strip()
         require(choice.isdigit() and 1 <= int(choice) <= len(options), 'Invalid selection')
         args.command = options[int(choice) - 1]
+    require(not args.replace_failed_release or (args.command == 'install' and args.resume), '--replace-failed-release requires install --resume')
+    if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():
+        args.url = input('Public URL (including /amt_price_list): ').strip()
     if not args.dry_run and args.command not in ['status', 'start', 'stop']:
         if not args.access_verified and sys.stdin.isatty():
             args.access_verified = input('SSH-key access verified AND root password separately rotated? (y/N): ').lower() == 'y'

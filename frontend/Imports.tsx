@@ -106,13 +106,13 @@ export default function Imports({ t }: { t: Translate }) {
   return (
     <>
       <div className="actions wrap">
-        <a href="/api/v1/templates/simple">
+        <a href="/amt_price_list/api/v1/templates/simple">
           {t(
             "Download Simple Price Update (Excel)",
             "تنزيل نموذج تحديث الأسعار",
           )}
         </a>
-        <a href="/api/v1/templates/advanced">
+        <a href="/amt_price_list/api/v1/templates/advanced">
           {t(
             "Download Advanced Catalog (Excel)",
             "تنزيل نموذج الكتالوج المتقدم",

@@ -1,4 +1,5 @@
-const CACHE = "amt-shell-v2";
+const CACHE = "amt-price-list-shell-v3";
+const BASE = "/amt_price_list";
 const DEVELOPMENT_HOST = ["localhost", "127.0.0.1", "[::1]"].includes(
   self.location.hostname,
 );
@@ -11,10 +12,10 @@ self.addEventListener("install", (event) =>
       .open(CACHE)
       .then((cache) =>
         cache.addAll([
-          "/",
-          "/logo.svg",
-          "/manifest.webmanifest",
-          "/icon-192.png",
+          BASE + "/",
+          BASE + "/logo.svg",
+          BASE + "/manifest.webmanifest",
+          BASE + "/icon-192.png",
         ]),
       ),
   ),
@@ -26,7 +27,7 @@ self.addEventListener("activate", (event) =>
       .then((keys) =>
         Promise.all(
           keys
-            .filter((k) => k.startsWith("amt-shell-") && k !== CACHE)
+            .filter((k) => k.startsWith("amt-price-list-shell-") && k !== CACHE)
             .map((k) => caches.delete(k)),
         ),
       ),
@@ -39,20 +40,21 @@ self.addEventListener("fetch", (event) => {
   if (
     req.method !== "GET" ||
     url.origin !== self.location.origin ||
-    url.pathname.startsWith("/api/") ||
+    !url.pathname.startsWith(BASE + "/") ||
+    url.pathname.startsWith(BASE + "/api/") ||
     url.search
   )
     return;
   if (req.mode === "navigate")
-    event.respondWith(fetch(req).catch(() => caches.match("/")));
+    event.respondWith(fetch(req).catch(() => caches.match(BASE + "/")));
   else if (
-    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith(BASE + "/_next/static/") ||
     [
       "/logo.svg",
       "/icon-192.png",
       "/icon-512.png",
       "/icon-maskable.png",
-    ].includes(url.pathname)
+    ].map((path) => BASE + path).includes(url.pathname)
   )
     event.respondWith(
       caches.open(CACHE).then(

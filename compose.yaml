@@ -4,6 +4,7 @@ x-app-environment: &app-environment
   NODE_ENV: production
   APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  APP_BASE_PATH: /amt_price_list
   SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
   UPLOAD_DIR: /data/uploads
   BACKUP_DIR: /data/backups
@@ -11,7 +12,7 @@ x-app-environment: &app-environment
   UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-20}
 services:
   db:
-    image: postgres:17-bookworm
+    image: docker.io/library/postgres:17-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
@@ -32,7 +33,7 @@ services:
       options: { max-size: 10m, max-file: "3" }
   migrate:
     mem_limit: 512m
-    image: amt-pricelist-app:${AMT_RELEASE_TAG:-local}
+    image: localhost/amt-pricelist-app:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: app }
     environment: *app-environment
     command: [pnpm, migrate]
@@ -41,7 +42,7 @@ services:
     restart: "no"
     logging: *logging
   app:
-    image: amt-pricelist-app:${AMT_RELEASE_TAG:-local}
+    image: localhost/amt-pricelist-app:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: app }
     restart: unless-stopped
     environment: *app-environment
@@ -59,14 +60,14 @@ services:
           CMD,
           node,
           -e,
-          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:3000/amt_price_list/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s
       retries: 3
     logging: *logging
   worker:
-    image: amt-pricelist-worker:${AMT_RELEASE_TAG:-local}
+    image: localhost/amt-pricelist-worker:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: worker }
     restart: unless-stopped
     environment: *app-environment
@@ -81,7 +82,7 @@ services:
     tmpfs: ["/tmp:size=256m,mode=1777"]
     logging: *logging
   backup:
-    image: amt-pricelist-backup:${AMT_RELEASE_TAG:-local}
+    image: localhost/amt-pricelist-backup:${AMT_RELEASE_TAG:-local}
     build: { context: ., target: backup }
     restart: unless-stopped
     environment: *app-environment

@@ -1,10 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { appPath } from "../shared/paths";
+import ConnectionNotice from "../frontend/ConnectionNotice";
 export const metadata: Metadata = {
   title: "AMT Electric Price List",
   description: "AMT Electric — secure price lookup and quotations",
-  manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon-192.png", apple: "/icon-192.png" },
+  manifest: appPath("/manifest.webmanifest"),
+  icons: { icon: appPath("/icon-192.png"), apple: appPath("/icon-192.png") },
   robots: { index: false, follow: false },
   appleWebApp: {
     capable: true,
@@ -21,11 +23,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
+        <ConnectionNotice />
         {process.env.NODE_ENV === "development" && (
           <script
             dangerouslySetInnerHTML={{
               __html:
-                "if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(async rs=>{for(const r of rs){if(r.scope===location.origin+'/')await r.unregister();}for(const k of await caches.keys()){if(k.startsWith('amt-shell-'))await caches.delete(k);}if(rs.some(r=>r.scope===location.origin+'/'))location.reload();});}",
+                "if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(async rs=>{for(const r of rs){if(r.scope===location.origin+'/amt_price_list/')await r.unregister();}for(const k of await caches.keys()){if(k.startsWith('amt-price-list-shell-'))await caches.delete(k);}if(rs.some(r=>r.scope===location.origin+'/amt_price_list/'))location.reload();});}",
             }}
           />
         )}

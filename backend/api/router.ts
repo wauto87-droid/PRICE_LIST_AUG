@@ -62,6 +62,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
   try {
     const url = new URL(req.url),
       parts = url.pathname
+        .replace(/^\/amt_price_list(?=\/)/, "")
         .replace(/^\/api\/v1\/?/, "")
         .split("/")
         .filter(Boolean),

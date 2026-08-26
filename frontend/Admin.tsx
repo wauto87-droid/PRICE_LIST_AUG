@@ -245,7 +245,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     (exportJob.status === "DONE" ? (
                       <a
                         className="button primary"
-                        href={"/api/v1/exports/" + exportJob.id + "/download"}
+                        href={"/amt_price_list/api/v1/exports/" + exportJob.id + "/download"}
                       >
                         {t("Download workbook", "تنزيل الملف")}
                       </a>
