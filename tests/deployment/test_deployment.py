@@ -76,10 +76,52 @@ class SafetyTests(unittest.TestCase):
         for call in run.call_args_list:
             args = call.args[0]
             self.assertEqual(args[:2], ['podman', 'build'])
+            self.assertFalse(any(str(a).startswith('--network') for a in args))
             for flag in ('--jobs=1', '--memory=2g', '--memory-swap=2g', 'AMT_VERIFY_BUILD_LIMIT=1'):
                 self.assertIn(flag, args)
             targets.append(args[args.index('--target') + 1])
         self.assertEqual(targets, ['app', 'worker', 'backup'])
+
+    def test_host_network_builds_only(self):
+        d = self.deployment()
+        d.args.build_network = 'host'
+        with patch.object(m, 'run', return_value=result()) as run:
+            d.build_release(ROOT, 'a' * 40)
+        for call in run.call_args_list:
+            self.assertIn('--network=host', call.args[0])
+            self.assertIn('--memory=2g', call.args[0])
+            self.assertTrue(call.kwargs['live'])
+        d.release = ROOT
+        d.engine = Mock(return_value=result())
+        d.compose('up', '-d', '--no-build', 'app', 'worker', 'backup')
+        args = d.engine.call_args.args
+        self.assertNotIn('--network=host', args)
+        self.assertNotIn('--build-network', args)
+
+    def test_build_network_cli_validation(self):
+        self.assertEqual(m.arguments(['install', '--dry-run']).build_network, 'default')
+        self.assertEqual(m.arguments(['install', '--resume', '--dry-run', '--build-network=host']).build_network, 'host')
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            m.arguments(['install', '--dry-run', '--build-network=untrusted'])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_resumed_build_uses_host_network_and_original_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.resume_fixture(temp)
+            d.args.build_network = 'host'
+            original_password = d.env['POSTGRES_PASSWORD']
+            def prepare(source, commit):
+                self.assertEqual(commit, 'a' * 40)
+                d.build_release(ROOT, commit)
+            d.prepare_release = Mock(side_effect=prepare)
+            with patch.object(m, 'run', side_effect=m.DeployError('build failed')) as run:
+                with self.assertRaises(m.DeployError):
+                    d.deploy(True)
+            self.assertIn('--network=host', run.call_args.args[0])
+            self.assertIn('amt-pricelist-app:' + 'a' * 40, run.call_args.args[0])
+            self.assertEqual(d.env['POSTGRES_PASSWORD'], original_password)
+            d.port.assert_called_once_with(18188)
+            self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'a' * 40)
 
     def test_failed_build_stops_before_next_image(self):
         d = self.deployment()

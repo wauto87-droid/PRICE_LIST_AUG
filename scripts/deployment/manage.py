@@ -579,9 +579,16 @@ class Deployment:
     def build_release(self, release, commit):
         # Native Podman is intentional: Docker daemon builds can ignore client limits.
         # The Dockerfile checks the effective cgroup limit before installing packages.
+        network_args = ['--network=host'] if self.args.build_network == 'host' else []
+        if network_args:
+            warning = 'Build-only host networking enabled: build processes can reach host-network services. Runtime networks remain unchanged.'
+            if REPORT:
+                REPORT.emit(warning)
+            else:
+                print(warning, flush=True)
         for target in ('app', 'worker', 'backup'):
             self.stage(f'Build {target} image (2 GiB memory cap)')
-            run(['podman', 'build', '--jobs=1', '--memory=2g', '--memory-swap=2g',
+            run(['podman', 'build', *network_args, '--jobs=1', '--memory=2g', '--memory-swap=2g',
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
                  '--tag', f'{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
 
@@ -785,6 +792,8 @@ def arguments(argv=None):
     parser.add_argument('--release', help='Exact retained release directory for rollback')
     parser.add_argument('--backup', help='Exact completed recovery backup directory for restore verification')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--build-network', choices=['default', 'host'], default='default',
+                        help='Image builds only: host grants build processes access to host-network services; runtime isolation is unchanged')
     parser.add_argument('-v', '--verbose', '--v', action='store_true', help='Extra timings and safe diagnostics; build output is always visible')
     parser.add_argument('--yes', action='store_true', help='Explicit non-interactive approval; never implies secret rotation')
     parser.add_argument('--access-verified', action='store_true', help='Operator confirms SSH-key access and separately rotated VPS root password')

@@ -1,5 +1,27 @@
 # AMT first installation on the existing Podman VPS
 
+## Build-only host-network workaround
+
+If the host can reach package registries but bridge-network containers cannot,
+explicitly opt into host networking for image builds:
+
+```sh
+bash deploy.sh install --resume --build-network=host --dry-run
+bash deploy.sh install --resume --build-network=host --verbose
+```
+
+`--build-network` accepts only `default` (the unchanged Podman build default) or
+`host`. The host option applies exclusively to the three `podman build` commands,
+including rebuilds of the saved installation commit. Build processes and package
+installation scripts temporarily gain access to host-network services; use only
+trusted source/dependencies. No application secrets are passed as build arguments.
+Memory caps, log redaction, saved ports and credentials remain unchanged.
+
+The option is not persisted: specify it again for future builds if needed. It
+never changes runtime Compose networks, database isolation, firewall, host DNS or
+staging services. This is a workaround, not a repair or root-cause diagnosis of
+the bridge-network failure. A dry run does not exercise network connectivity.
+
 ## Visible deployment progress and diagnostics
 
 Numbered stages and redacted build output are shown by default. Add `-v`,
