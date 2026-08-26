@@ -15,6 +15,156 @@ import subprocess
 import sys
 import tarfile
 import time
+import queue
+import threading
+import signal
+from collections import deque
+
+REPORT = None
+
+class Diagnostics:
+    """Only explicitly public command output is streamed; all other output stays captured."""
+    def __init__(self, verbose=False, heartbeat=10):
+        self.verbose = verbose
+        self.heartbeat = heartbeat
+        self.path = None
+        self.stream = None
+        self.number = 0
+        self.stage_name = 'Preflight'
+        self.secrets = set()
+        self.private_block = False
+        self.tail = deque(maxlen=12)
+
+    def protect(self, values):
+        for key, value in values.items():
+            if any(word in key.upper() for word in ('PASSWORD', 'TOKEN', 'SECRET', 'DATABASE_URL')) and value:
+                self.secrets.add(value)
+
+    def redact(self, text):
+        text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+        if '-----BEGIN ' in text and 'PRIVATE KEY' in text:
+            self.private_block = True
+        if self.private_block:
+            if '-----END ' in text and 'PRIVATE KEY' in text:
+                self.private_block = False
+            return '[REDACTED private key]'
+        for value in sorted(self.secrets, key=len, reverse=True):
+            text = text.replace(value, '[REDACTED]')
+        text = re.sub(r'(?i)(?:password|passwd|secret|token|authorization|database_url)[\w-]*[\s\"\x27]*[:=].*', '[REDACTED credential assignment]', text)
+        text = re.sub(r'(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@', r'\1[REDACTED]@', text)
+        text = re.sub(r'(?i)\bBearer\s+\S+', 'Bearer [REDACTED]', text)
+        return re.sub(r'\b[a-fA-F0-9]{64}\b', '[REDACTED]', text)
+
+    def emit(self, text):
+        safe = self.redact(text)
+        print(safe, flush=True)
+        if self.stream:
+            self.stream.write(safe + '\n')
+            self.stream.flush()
+        self.tail.append(safe)
+
+    def stage(self, name):
+        self.number += 1
+        self.stage_name = name
+        self.tail.clear()
+        self.emit(f'==> [{self.number}] {name}')
+
+    def open(self, root):
+        if self.stream:
+            return
+        directory = root / 'logs'
+        require(not directory.is_symlink(), 'Unsafe log directory')
+        directory.mkdir(mode=0o700, exist_ok=True)
+        require(directory.stat().st_mode & 0o077 == 0, 'Logs directory must be private mode 0700')
+        if os.name == 'posix':
+            require(directory.stat().st_uid == 0, 'Logs directory must be root-owned')
+        self.path = directory / (dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + secrets.token_hex(4) + '.log')
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        self.stream = os.fdopen(fd, 'w', encoding='utf-8')
+        self.emit(f'Diagnostic log: {self.path}')
+
+    def close(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+    def command(self, args, *, data, output, timeout, check, live):
+        started = time.monotonic()
+        events = queue.Queue()
+        if self.verbose:
+            self.emit(f'    Starting {Path(str(args[0])).name}; timeout {timeout}s (arguments hidden)')
+        process = subprocess.Popen([str(a) for a in args], stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                                   stdout=output or subprocess.PIPE, stderr=subprocess.STDOUT if live else subprocess.PIPE,
+                                   start_new_session=os.name == 'posix')
+
+        def collect():
+            try:
+                if live:
+                    # Buffer complete lines before redaction, including split UTF-8/secret chunks.
+                    pending = b''
+                    dropping = False
+                    while True:
+                        chunk = process.stdout.read1(4096)
+                        if not chunk:
+                            break
+                        pending += chunk
+                        while b'\n' in pending:
+                            line, pending = pending.split(b'\n', 1)
+                            events.put(('line', '[oversized line omitted]' if dropping or len(line) > 65536 else line.decode('utf-8', errors='replace')))
+                            dropping = False
+                        if len(pending) > 65536:
+                            pending = b''
+                            dropping = True
+                    if pending or dropping:
+                        events.put(('line', '[oversized line omitted]' if dropping else pending.decode('utf-8', errors='replace')))
+                    process.wait()
+                    events.put(('done', (b'', b'')))
+                else:
+                    events.put(('done', process.communicate(input=data)))
+            except Exception:
+                events.put(('error', None))
+
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
+        last_notice = started
+        try:
+            while True:
+                now = time.monotonic()
+                if now - started >= timeout:
+                    raise DeployError(f'{self.stage_name}: {args[0]} timed out after {timeout}s')
+                try:
+                    kind, value = events.get(timeout=min(0.2, max(0.001, timeout - (now - started))))
+                except queue.Empty:
+                    kind, value = None, None
+                if kind == 'line':
+                    self.emit(value)
+                    last_notice = time.monotonic()
+                elif kind == 'done':
+                    result = subprocess.CompletedProcess(args, process.returncode, *value)
+                    if check and result.returncode:
+                        raise DeployError(f'{self.stage_name}: {args[0]} failed (exit {result.returncode})' + ('' if live else '; sensitive/captured output withheld'))
+                    if self.verbose:
+                        self.emit(f'    Finished {Path(str(args[0])).name}: exit {result.returncode}, {time.monotonic() - started:.1f}s')
+                    return result
+                elif kind == 'error':
+                    raise DeployError(f'{self.stage_name}: output collection failed')
+                if time.monotonic() - last_notice >= self.heartbeat:
+                    self.emit(f'    {self.stage_name}: still working ({int(time.monotonic() - started)}s elapsed)')
+                    last_notice = time.monotonic()
+        finally:
+            if os.name == 'posix' and (process.poll() is None or reader.is_alive()):
+                # Only this command's new process group; never other VPS services.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            reader.join(timeout=2)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream and not stream.closed:
+                    stream.close()
 
 ROOT = Path('/opt/shop-pricelist')
 PROJECT = 'amt-pricelist'
@@ -30,9 +180,12 @@ def require(condition, message):
     if not condition:
         raise DeployError(message)
 
-def run(args, *, data=None, output=None, timeout=300, check=True):
+def run(args, *, data=None, output=None, timeout=300, check=True, live=False):
     # No command includes credentials. Do not echo raw stderr: engines can render env values.
     try:
+        if REPORT:
+            require(not live or (data is None and output is None), 'Cannot stream secret input or binary output')
+            return REPORT.command(args, data=data, output=output, timeout=timeout, check=check, live=live)
         result = subprocess.run([str(a) for a in args], input=data, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -82,6 +235,8 @@ def read_env(path):
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('SETUP_TOKEN', '')), 'Setup token must be generated hex')
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
     require(values.get('APP_ORIGIN') == f"http://localhost:{values['APP_PORT']}" and values.get('COOKIE_SECURE') == 'false', 'This installer supports loopback tunnel mode only; HTTPS needs a reviewed domain configuration')
+    if REPORT:
+        REPORT.protect(values)
     return values
 
 def env_text(values):
@@ -137,6 +292,15 @@ class Deployment:
         self.state = self.root / 'state'
         self.release = None
         self.env = None
+
+    def stage(self, name):
+        if REPORT:
+            REPORT.stage(name)
+
+    def log_ready(self):
+        if REPORT and not self.args.dry_run:
+            REPORT.protect(self.env or {})
+            REPORT.open(self.root)
 
     def engine(self, *args, **kwargs):
         return run(['docker', *args], **kwargs)
@@ -295,6 +459,7 @@ class Deployment:
         raise DeployError('Database authentication did not become ready')
 
     def start(self):
+        self.stage('Start AMT services and verify health')
         self.ownership()
         self.port(int(self.env['APP_PORT']))  # Immediate fail-closed recheck; never kill a listener.
         self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
@@ -318,6 +483,7 @@ class Deployment:
         self.compose('stop', '-t', '60', *SERVICES)
 
     def snapshot(self):
+        self.stage('Create private recovery backup')
         target = self.root / 'recovery' / (dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + secrets.token_hex(3))
         target.mkdir(mode=0o700)
         atomic(target / 'private.env', env_text(self.env))
@@ -379,6 +545,7 @@ class Deployment:
         print('App database credentials rotated and authenticated; user passwords and VPS access are unchanged.')
 
     def source(self, fetch=True):
+        self.stage('Check clean source and resolve release')
         source = Path(self.args.source).resolve()
         require(decoded(run(['git', '-C', source, 'status', '--porcelain', '--untracked-files=normal'])) == '', 'Dirty Git checkout: commit or remove local changes deliberately; no automatic stash/reset')
         remote = decoded(run(['git', '-C', source, 'remote', 'get-url', 'origin']))
@@ -413,9 +580,10 @@ class Deployment:
         # Native Podman is intentional: Docker daemon builds can ignore client limits.
         # The Dockerfile checks the effective cgroup limit before installing packages.
         for target in ('app', 'worker', 'backup'):
+            self.stage(f'Build {target} image (2 GiB memory cap)')
             run(['podman', 'build', '--jobs=1', '--memory=2g', '--memory-swap=2g',
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
-                 '--tag', f'{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600)
+                 '--tag', f'{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
 
     @staticmethod
     def migration_files(release):
@@ -428,6 +596,9 @@ class Deployment:
         self.release = release
 
     def deploy(self, first):
+        if self.root.exists():
+            self.load_environment()
+            self.log_ready()
         source, commit = self.source()
         journal = self.state / 'install.json'
         recovery = None
@@ -450,6 +621,7 @@ class Deployment:
             self.env = new_env(port)
             atomic(self.envfile, env_text(self.env))
             atomic(journal, json.dumps({'commit': commit, 'candidate': None}))
+            self.log_ready()
         else:
             self.current()
         previous = self.release
@@ -468,6 +640,7 @@ class Deployment:
             self.stop()
             self.snapshot()
         self.release = release
+        self.stage('Initialize dedicated storage and database')
         if first and self.args.resume:
             self.stop()
         self.initialize_volumes()
@@ -475,9 +648,11 @@ class Deployment:
         self.verify_limits('db')
         self.wait_db()
         self.checkpoint('MIGRATING', previous=previous.name if previous else None, candidate=release.name)
+        self.stage('Run database migrations')
         self.compose('run', '--rm', '--no-deps', 'migrate', timeout=600)
         self.start()
         self.activate(release)
+        self.stage('Activate release and configure AMT startup')
         unit = release / 'docker/amt-pricelist.service'
         target = Path('/etc/systemd/system/amt-pricelist.service')
         if target.exists():
@@ -548,6 +723,7 @@ class Deployment:
         print(f'Restore counts and quotation sequence verified. Isolated stopped resources retained: {drill}')
 
     def execute(self):
+        self.stage('Check runtime, memory, ownership and ports')
         self.preflight()
         if self.args.command == 'install':
             if self.args.resume:
@@ -569,6 +745,8 @@ class Deployment:
             return
         require(self.args.command in ['start', 'stop'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
         with self.locked():
+            if self.root.exists():
+                self.log_ready()
             if self.root.exists() and (self.state / 'rotation.json').exists():
                 require(self.args.command == 'rotate-secrets' and self.args.resume, 'Interrupted rotation: only rotate-secrets --resume is permitted')
             before = {c['Id']: c.get('State', {}).get('Status') for c in self.inventory() if not self.owned(c)}
@@ -607,6 +785,7 @@ def arguments(argv=None):
     parser.add_argument('--release', help='Exact retained release directory for rollback')
     parser.add_argument('--backup', help='Exact completed recovery backup directory for restore verification')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('-v', '--verbose', '--v', action='store_true', help='Extra timings and safe diagnostics; build output is always visible')
     parser.add_argument('--yes', action='store_true', help='Explicit non-interactive approval; never implies secret rotation')
     parser.add_argument('--access-verified', action='store_true', help='Operator confirms SSH-key access and separately rotated VPS root password')
     parser.add_argument('--rotate', action='store_true', help='Explicitly opt into app-secret rotation after a successful upgrade')
@@ -630,18 +809,35 @@ def arguments(argv=None):
     return args
 
 def main():
+    global REPORT
     os.umask(0o077)
     try:
-        Deployment(arguments()).execute()
+        args = arguments()
+        REPORT = Diagnostics(args.verbose)
+        Deployment(args).execute()
     except (DeployError, ValueError, KeyError, OSError) as error:
         # Never print raw exception contents from engine output/environment parsing.
         message = str(error) if isinstance(error, DeployError) else 'Unexpected filesystem/configuration failure; inspect private recovery state'
-        print('STOP: ' + message, file=sys.stderr)
+        if REPORT:
+            recent = list(REPORT.tail)
+            if recent:
+                REPORT.emit(f'Failure context for stage: {REPORT.stage_name}')
+                for line in recent[-8:]:
+                    REPORT.emit('    ' + line)
+            REPORT.emit('STOP: ' + message)
+            if REPORT.path:
+                REPORT.emit(f'Review redacted diagnostics: {REPORT.path}')
+        else:
+            print('STOP: ' + message, file=sys.stderr)
         print('No global cleanup or automatic database restore was attempted. Retain all recovery files.', file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print('Interrupted. Retain recovery state; resume credential rotation if its journal exists.', file=sys.stderr)
         return 130
+    finally:
+        if REPORT:
+            REPORT.close()
+        REPORT = None
     return 0
 
 if __name__ == '__main__':

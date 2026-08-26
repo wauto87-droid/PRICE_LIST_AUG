@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import contextlib
+import io
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
@@ -189,6 +192,113 @@ class SafetyTests(unittest.TestCase):
         dockerfile = (ROOT / 'Dockerfile').read_text()
         self.assertLess(dockerfile.index('/sys/fs/cgroup/memory.max'), dockerfile.index('npm install'))
         self.assertIn('2147483648', dockerfile)
+
+    def test_verbose_aliases(self):
+        for flag in ('-v', '--verbose', '--v'):
+            self.assertTrue(m.arguments(['install', '--resume', '--dry-run', flag]).verbose)
+
+    def command_output(self, code, *, live=True, timeout=5, verbose=False, secret=None):
+        report = m.Diagnostics(verbose=verbose, heartbeat=0.05)
+        if secret:
+            report.protect({'POSTGRES_PASSWORD': secret})
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch.object(m, 'REPORT', report):
+            result = m.run([sys.executable, '-u', '-c', code], live=live, timeout=timeout)
+        return result, output.getvalue()
+
+    def test_build_output_visible_by_default(self):
+        _, output = self.command_output("print('STEP 1: building')")
+        self.assertIn('STEP 1: building', output)
+
+    def test_chunk_split_secret_and_utf8_redacted(self):
+        secret = 'sensitive-value-not-hex'
+        code = "import os,time; os.write(1,b'sensitive-value-'); time.sleep(.1); os.write(1,b'not-hex\\n'); os.write(1,b'\\xd8'); time.sleep(.1); os.write(1,b'\\xa7\\n')"
+        _, output = self.command_output(code, secret=secret)
+        self.assertNotIn('sensitive', output)
+        self.assertNotIn('not-hex', output)
+        self.assertIn('[REDACTED]', output)
+        self.assertIn('\u0627', output)
+
+    def test_generic_credentials_redacted(self):
+        report = m.Diagnostics()
+        for line in ('POSTGRES_PASSWORD=secret-value', 'Authorization: Bearer abcdef', 'postgresql://amt:secret-value@db/x', 'a' * 64):
+            safe = report.redact(line)
+            self.assertIn('[REDACTED', safe)
+            self.assertNotIn('secret-value', safe)
+            self.assertNotIn('abcdef', safe)
+
+    def test_private_key_block_redacted(self):
+        report = m.Diagnostics()
+        for line in ('-----BEGIN OPENSSH PRIVATE KEY-----', 'private-base64-payload', '-----END OPENSSH PRIVATE KEY-----'):
+            self.assertEqual(report.redact(line), '[REDACTED private key]')
+        self.assertEqual(report.redact('normal output'), 'normal output')
+
+    def test_silent_command_heartbeat(self):
+        _, output = self.command_output('import time; time.sleep(.2)')
+        self.assertIn('still working', output)
+
+    def test_captured_output_not_streamed_even_verbose(self):
+        result, output = self.command_output("import sys; print('private-json'); print('private-error',file=sys.stderr)", live=False, verbose=True)
+        self.assertIn(b'private-json', result.stdout)
+        self.assertIn(b'private-error', result.stderr)
+        self.assertNotIn('private-json', output)
+        self.assertNotIn('private-error', output)
+        self.assertIn('Starting', output)
+        self.assertIn('Finished', output)
+
+    def test_build_failure_keeps_actual_error_and_exit(self):
+        report = m.Diagnostics()
+        report.stage_name = 'Build app image'
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch.object(m, 'REPORT', report):
+            with self.assertRaisesRegex(m.DeployError, r'Build app image.*exit 7'):
+                m.run([sys.executable, '-c', "import sys; print('compiler diagnostic'); sys.exit(7)"], live=True)
+        self.assertIn('compiler diagnostic', output.getvalue())
+
+    def test_timeout_is_bounded_and_names_stage(self):
+        report = m.Diagnostics()
+        report.stage_name = 'Build worker image'
+        with patch.object(m, 'REPORT', report):
+            with self.assertRaisesRegex(m.DeployError, 'Build worker image.*timed out'):
+                m.run([sys.executable, '-c', 'import time; time.sleep(10)'], live=True, timeout=.15)
+
+    def test_binary_backup_unchanged_and_hidden(self):
+        report = m.Diagnostics(verbose=True)
+        output = io.StringIO()
+        with tempfile.TemporaryFile() as binary, contextlib.redirect_stdout(output), patch.object(m, 'REPORT', report):
+            m.run([sys.executable, '-c', "import sys; sys.stdout.buffer.write(b'\\x00private-dump\\xff')"], output=binary)
+            binary.seek(0)
+            self.assertEqual(binary.read(), b'\x00private-dump\xff')
+        self.assertNotIn('private-dump', output.getvalue())
+
+    def test_secret_stdin_cannot_be_streamed(self):
+        with patch.object(m, 'REPORT', m.Diagnostics()):
+            with self.assertRaises(m.DeployError):
+                m.run(['unused'], data=b'password', live=True)
+
+    def test_oversized_line_omitted_not_partially_leaked(self):
+        _, output = self.command_output("print('x' * 70000)")
+        self.assertIn('oversized line omitted', output)
+        self.assertNotIn('xxx', output)
+
+    def test_dry_run_does_not_open_logs(self):
+        d = self.deployment()
+        with patch.object(m, 'REPORT', m.Diagnostics()) as report:
+            report.open = Mock()
+            d.log_ready()
+            report.open.assert_not_called()
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'POSIX log permissions require Linux')
+    def test_private_log_and_redacted_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = m.Diagnostics()
+            with contextlib.redirect_stdout(io.StringIO()):
+                report.open(Path(temp))
+                report.emit('SETUP_TOKEN=do-not-save')
+            report.close()
+            self.assertEqual(report.path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(report.path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertNotIn('do-not-save', report.path.read_text())
 
     def test_runtime_limit_verification(self):
         d = self.deployment()

@@ -1,5 +1,35 @@
 # AMT first installation on the existing Podman VPS
 
+## Visible deployment progress and diagnostics
+
+Numbered stages and redacted build output are shown by default. Add `-v`,
+`--verbose`, or `--v` for command timings (command arguments remain hidden).
+Silent commands report elapsed time every ten seconds. Machine-readable results,
+credentials and binary backups are never streamed, even in verbose mode.
+
+After the deployment directory is initialized/validated, each mutating run creates
+a root-only log in `/opt/shop-pricelist/logs/` (directory 0700, files 0600).
+Failures show their stage, exit code and log path. Dry runs create no log files.
+Preflight failures before the directory is validated only appear in the terminal.
+Build errors are visible; errors from sensitive operations remain withheld.
+Review logs privately before sharing: redaction cannot identify arbitrary private
+business data printed by third-party build tools.
+
+To diagnose the existing failed install, update the **clean source checkout**:
+
+```sh
+cd /opt/amt-pricelist-source
+git status --short
+# Continue only when status output is empty:
+git pull --ff-only origin master
+bash deploy.sh install --resume --dry-run
+bash deploy.sh install --resume --verbose
+```
+
+The new source installer provides diagnostics even when recovery rebuilds the
+original pinned application commit. It does not replace the saved commit, port,
+credentials or data. Do not delete recovery state or run a fresh installation.
+
 This profile leaves staging and production applications running. Limits are caps,
 not guaranteed consumption: database 512 MiB, web 768 MiB, worker 1024 MiB,
 backup 256 MiB (2.5 GiB combined). Migrations have a separate 512 MiB cap.
