@@ -1,5 +1,7 @@
 # AMT Electric Price List
 
+Advanced admin features: [Excel templates, reviewed bulk rules, global quotation numbering and branding](docs/ADVANCED-ADMIN.md). Open **Admin → Imports / PDF**, **Bulk pricing rules**, or **Quotation Settings**.
+
 AMT-branded bilingual English/Arabic counter lookup, protected pricing, reviewed imports, and immutable quotation snapshots. Built with Next.js/React, TypeScript, PostgreSQL and isolated background services. This is an application with persistent backend data, not a static mockup.
 
 ## Current handoff

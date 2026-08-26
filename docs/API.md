@@ -1,5 +1,7 @@
 # REST API v1
 
+See [advanced admin interfaces](ADVANCED-ADMIN.md#new-rest-interfaces) for templates, bulk rules, import preview tokens, quotation search and branding settings. Import confirmation now requires `{version, token}` from `/imports/:id/preview-confirmation`.
+
 Base path: `/api/v1`. Same-origin JSON requests; cookies are HttpOnly, SameSite=Strict, and Secure in HTTPS deployment. Authenticate with `POST /auth/login`, retrieve the session and CSRF token through `GET /auth/me`, and send `X-CSRF-Token` on all mutations. Origin must exactly match APP_ORIGIN. Responses use `Cache-Control: no-store`.
 
 Public routes: `GET /health`, `GET /setup`, token-protected `POST /setup`, rate-limited `POST /auth/login`. Setup is serialized and disabled once any user exists.

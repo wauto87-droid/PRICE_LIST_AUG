@@ -1,4 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
@@ -12,6 +14,7 @@ import {
 } from "../auth/service";
 import { lineInput, calculate, totals } from "../pricing/engine";
 import { getProduct, toInput } from "../products/service";
+import { allocateNumber } from "./settings";
 export const quoteInput = z
   .object({
     customer: z
@@ -271,15 +274,23 @@ export async function issue(
       ...q.customer,
       name: q.customer.name || (!q.customer.number ? "Walk-in Customer" : ""),
     };
+    const allocated = await allocateNumber(tx, id, actor, settings);
+    const logo =
+      settings.quotation?.logo ||
+      "data:image/svg+xml;base64," +
+        (
+          await fs.readFile(path.join(process.cwd(), "public", "logo.svg"))
+        ).toString("base64");
     await tx.query(
-      "UPDATE quotations SET status='ISSUED',number=$2,lines=$3,totals=$4,company_snapshot=$5,customer=$6,issued_at=now(),updated_at=now(),version=version+1 WHERE id=$1",
+      "UPDATE quotations SET status='ISSUED',number=$2,lines=$3,totals=$4,company_snapshot=$5,customer=$6,serial=$7,issued_at=now(),updated_at=now(),version=version+1 WHERE id=$1",
       [
         id,
-        await nextNumber(tx, "QT", settings),
+        allocated.number,
         json(lines),
         json(totals(lines.map((l) => l.price))),
-        json(settings),
+        json({ ...settings, brandingAssets: { logo } }),
         json(customer),
+        allocated.serial,
       ],
     );
     for (const line of lines)

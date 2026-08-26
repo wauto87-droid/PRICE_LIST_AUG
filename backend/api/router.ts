@@ -8,9 +8,11 @@ import { audit, json } from "../core/audit";
 import * as auth from "../auth/service";
 import * as products from "../products/service";
 import * as quotes from "../quotations/service";
+import * as quoteSettings from "../quotations/settings";
+import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
 import * as imports from "../imports/service";
-import { calculate, lineInput } from "../pricing/engine";
+import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 const response = (
   data: unknown,
@@ -89,6 +91,80 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
+    if (root === "templates" && method === "GET") {
+      auth.requirePermission(actor, "IMPORT_CONFIRM");
+      const kind = z.enum(["simple", "advanced"]).parse(id);
+      if (kind === "advanced") auth.requirePermission(actor, "COST_VIEW");
+      return new Response(
+        await fs.readFile(
+          path.join(process.cwd(), "assets", "templates", kind + ".xlsx"),
+        ),
+        {
+          headers: {
+            "Content-Type":
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": `attachment; filename="AMT-${kind}-price-template.xlsx"`,
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+    if (root === "bulk-rules") {
+      auth.requirePermission(actor, "COST_VIEW");
+      auth.requirePermission(actor, "PRODUCT_EDIT");
+      if (!id && method === "GET")
+        return response(
+          (
+            await db.query(
+              "SELECT * FROM bulk_rules WHERE NOT deleted ORDER BY name",
+            )
+          ).rows,
+        );
+      if (!id && method === "POST")
+        return response(await bulkRules.saveRule(db, actor, await body(req)));
+      if (id === "history" && method === "GET")
+        return response(
+          (
+            await db.query(
+              "SELECT * FROM bulk_executions ORDER BY created_at DESC LIMIT 100",
+            )
+          ).rows,
+        );
+      if (id && method === "PUT")
+        return response(
+          await bulkRules.saveRule(db, actor, await body(req), uuid(id)),
+        );
+      if (id && method === "DELETE") {
+        await db.transaction(async (tx) => {
+          await tx.query(
+            "UPDATE bulk_rules SET deleted=true,active=false,version=version+1 WHERE id=$1",
+            [uuid(id)],
+          );
+          await audit(tx, actor.id, "BULK_RULE_DELETE", "bulk_rules", id);
+        });
+        return response({ ok: true });
+      }
+    }
+    if (root === "bulk-preview") {
+      if (!id && method === "POST")
+        return response(await bulkRules.preview(db, actor, await body(req)));
+      if (id && method === "GET")
+        return response(
+          await bulkRules.getPreview(
+            db,
+            actor,
+            uuid(id),
+            z.coerce
+              .number()
+              .int()
+              .min(0)
+              .max(200)
+              .parse(url.searchParams.get("page") ?? 0),
+          ),
+        );
+      if (id && method === "POST")
+        return response(await bulkRules.apply(db, actor, uuid(id)));
+    }
     if (root === "auth" && id === "me")
       return response({
         user: actor,
@@ -175,11 +251,34 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (root === "quotations") {
       if (!id && method === "GET") {
         auth.requirePermission(actor, "PRODUCT_VIEW");
+        const q = (url.searchParams.get("q") ?? "")
+          .trim()
+          .toUpperCase()
+          .slice(0, 100)
+          .replace(/[\\%_]/g, "\\$&");
+        const scope = url.searchParams.get("scope") ?? "mine";
+        if (scope === "all") auth.requirePermission(actor, "QUOTE_VIEW_ALL");
+        const status = z
+          .enum(["", "DRAFT", "ISSUED"])
+          .parse(url.searchParams.get("status") ?? "");
+        const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+        const from = url.searchParams.get("from"),
+          to = url.searchParams.get("to");
+        if (from) date.parse(from);
+        if (to) date.parse(to);
         return response(
           (
             await db.query(
-              `SELECT id,number,status,customer,totals,version,created_at FROM quotations WHERE status<>'DELETED' AND ($1 OR owner_id=$2) ORDER BY created_at DESC LIMIT 200`,
-              [auth.has(actor, "QUOTE_VIEW_ALL"), actor.id],
+              `SELECT id,number,status,customer,totals,version,created_at FROM quotations WHERE status<>'DELETED' AND ($1 OR owner_id=$2) AND ($3='' OR number ILIKE $3||'%') AND ($4='' OR status=$4) AND ($5::date IS NULL OR created_at >= ($5::date::timestamp AT TIME ZONE 'Asia/Riyadh')) AND ($6::date IS NULL OR created_at < (($6::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh')) ORDER BY CASE WHEN upper(number)=$7 THEN 0 ELSE 1 END,created_at DESC LIMIT 200`,
+              [
+                scope === "all",
+                actor.id,
+                q,
+                status,
+                from,
+                to,
+                (url.searchParams.get("q") ?? "").trim().toUpperCase(),
+              ],
             )
           ).rows,
         );
@@ -390,7 +489,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (!action && method === "GET") {
           const job = await one(
             db,
-            "SELECT id,filename,kind,status,mapping,defaults,summary,error,version FROM import_jobs WHERE id=$1",
+            "SELECT id,filename,kind,status,mode,mapping,defaults,summary,error,version FROM import_jobs WHERE id=$1",
             [id],
           );
           assert(job, 404, "Import not found");
@@ -415,18 +514,23 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await imports.reviewRows(db, actor, id, await body(req)),
           );
-        if (action === "confirm" && method === "POST")
+        if (action === "confirm" && method === "POST") {
+          const input = z
+            .object({ version: z.number().int(), token: z.string().min(1) })
+            .strict()
+            .parse(await body(req));
           return response(
             await imports.confirmImport(
               db,
               actor,
               id,
-              z
-                .object({ version: z.number().int() })
-                .strict()
-                .parse(await body(req)).version,
+              input.version,
+              input.token,
             ),
           );
+        }
+        if (action === "preview-confirmation" && method === "POST")
+          return response(await imports.previewConfirmation(db, actor, id));
         if (action === "rollback" && method === "POST")
           return response(await imports.rollback(db, actor, id));
       }
@@ -486,6 +590,71 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
     }
     if (root === "admin") {
+      if (id === "quotation-settings") {
+        if (method === "GET")
+          return response(await quoteSettings.getSettings(db, actor));
+        if (method === "PUT")
+          return response(
+            await quoteSettings.saveSettings(db, actor, await body(req)),
+          );
+        if (method === "POST" && action === "preview") {
+          auth.requirePermission(actor, "SETTINGS_MANAGE");
+          const data = await body(req),
+            config = quoteSettings.quotationSettingsSchema.parse(
+              data.quotation,
+            );
+          const logo =
+            "data:image/svg+xml;base64," +
+            (
+              await fs.readFile(path.join(process.cwd(), "public", "logo.svg"))
+            ).toString("base64");
+          const sample = {
+            number: config.prefix + "-PREVIEW",
+            status: "DRAFT",
+            created_at: new Date().toISOString(),
+            customer: { name: "Sample customer / عميل تجريبي" },
+            lines: [
+              {
+                partNumber: "AMT-SAMPLE",
+                description: "Sample electrical item / صنف كهربائي تجريبي",
+                unit: "pcs",
+                price: calculate(
+                  productInput.parse({
+                    partNumber: "AMT-SAMPLE",
+                    description: "Sample",
+                    cost: "100",
+                    markup: "0",
+                    vat: settings.vat,
+                  }),
+                  { maxDiscount: "100", canOverride: false },
+                  { quantity: "2", discount: "0", override: false, reason: "" },
+                ),
+              },
+            ],
+            totals: { subtotal: "0.00", vat: "0.00", total: "0.00" },
+          };
+          sample.totals = {
+            subtotal: sample.lines[0].price.subtotal,
+            vat: sample.lines[0].price.vatAmount,
+            total: sample.lines[0].price.total,
+          };
+          return response({
+            html: quotationHtml(
+              sample,
+              {
+                ...settings,
+                companyName: z.string().max(100).parse(data.companyName),
+                companyArabic: z.string().max(100).parse(data.companyArabic),
+                pdfUnitPrices: z
+                  .enum(["BOTH", "EXCL", "INCL"])
+                  .parse(data.pdfUnitPrices ?? settings.pdfUnitPrices),
+                quotation: config,
+              },
+              logo,
+            ),
+          });
+        }
+      }
       auth.requirePermission(actor, "ADMIN_VIEW");
       if (id === "dashboard" && method === "GET")
         return response(await admin.dashboard(db));

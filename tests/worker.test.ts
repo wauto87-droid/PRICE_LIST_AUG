@@ -143,6 +143,25 @@ test(
         companyArabic: "AMT للكهرباء",
         currency: "SAR",
         pdfUnitPrices: "BOTH",
+        quotation: {
+          legalName: "AMT Electric Trading",
+          vatRegistration: "300000000000003",
+          delivery: "Available stock / حسب التوفر",
+          payment: "Cash / نقداً",
+          termsEnglish:
+            "Prices exclude VAT unless specified. Subject to stock availability.",
+          termsArabic:
+            "الأسعار قبل الضريبة ما لم يذكر خلاف ذلك. التوريد حسب التوفر.",
+          watermark: {
+            enabled: true,
+            useLogo: true,
+            text: "AMT ELECTRIC / الكهرباء",
+            opacity: 0.08,
+            size: 260,
+            rotation: -30,
+            position: "CENTER",
+          },
+        },
       },
     };
     const pdfId = randomUUID();

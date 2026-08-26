@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import { tierColumns } from "@/backend/pricing/transfer";
+import BulkRules from "./BulkRules";
 const mappingFields = [
   "partNumber",
   "description",
@@ -23,6 +24,9 @@ const mappingFields = [
   "keywords",
   "defaultLevel",
   ...tierColumns,
+  ...["WHOLESALE", "RETAIL", "END_CUSTOMER"].map(
+    (code) => `${code}.sellingPrice`,
+  ),
 ];
 const synonyms: Record<string, string[]> = {
   partNumber: ["partnumber", "partno", "itemcode", "code", "item"],
@@ -35,6 +39,9 @@ const synonyms: Record<string, string[]> = {
 };
 export default function Imports({ t }: { t: Translate }) {
   const [jobs, setJobs] = useState<any[]>([]),
+    [mode, setMode] = useState("UPDATE_ONLY"),
+    [page, setPage] = useState(0),
+    [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
     [mapping, setMapping] = useState<Record<string, string>>({}),
     [defaults, setDefaults] = useState<any>({
@@ -77,6 +84,9 @@ export default function Imports({ t }: { t: Translate }) {
   async function open(id: string) {
     const j = await api("imports/" + id);
     setJob(j);
+    setConfirmation(null);
+    setPage(0);
+    setMode(j.mode || "UPDATE_ONLY");
     setDefaults(Object.keys(j.defaults).length ? j.defaults : defaults);
     if (Object.keys(j.mapping).length) setMapping(j.mapping);
     else {
@@ -95,6 +105,20 @@ export default function Imports({ t }: { t: Translate }) {
   }
   return (
     <>
+      <div className="actions wrap">
+        <a href="/api/v1/templates/simple">
+          {t(
+            "Download Simple Price Update (Excel)",
+            "تنزيل نموذج تحديث الأسعار",
+          )}
+        </a>
+        <a href="/api/v1/templates/advanced">
+          {t(
+            "Download Advanced Catalog (Excel)",
+            "تنزيل نموذج الكتالوج المتقدم",
+          )}
+        </a>
+      </div>
       <div className="section-title">
         <div>
           <h2>{t("Safe supplier imports", "استيراد آمن من الموردين")}</h2>
@@ -174,6 +198,17 @@ export default function Imports({ t }: { t: Translate }) {
                 {w}
               </div>
             ))}
+            {defaults.method === "LIST_DISCOUNT" &&
+              mapping.cost &&
+              !mapping.listPrice &&
+              !mapping["END_CUSTOMER.listPrice"] && (
+                <div role="alert" className="notice warning">
+                  {t(
+                    "Check mapping: the supplier price column is mapped to COST, but LIST_DISCOUNT needs a list price. Map P.L (SAR) to listPrice before validating; do not publish zero prices by mistake.",
+                    "تحقق من الربط: عمود سعر المورد مرتبط بالتكلفة بينما تسعير القائمة يحتاج سعر قائمة. اربط P.L (SAR) بسعر القائمة قبل التحقق.",
+                  )}
+                </div>
+              )}
             {job.status === "AWAITING_REVIEW" && (
               <>
                 <h3>
@@ -183,6 +218,20 @@ export default function Imports({ t }: { t: Translate }) {
                   )}
                 </h3>
                 <div className="form-grid three">
+                  <label>
+                    {t("Import mode", "وضع الاستيراد")}
+                    <select
+                      value={mode}
+                      onChange={(e) => setMode(e.target.value)}
+                    >
+                      <option value="UPDATE_ONLY">
+                        Update Existing Only / تحديث الموجود فقط
+                      </option>
+                      <option value="CREATE_UPDATE">
+                        Create & Update / إنشاء وتحديث
+                      </option>
+                    </select>
+                  </label>
                   {mappingFields.map((field) => (
                     <label key={field}>
                       {field}
@@ -248,6 +297,7 @@ export default function Imports({ t }: { t: Translate }) {
                         ),
                         defaults,
                         version: job.version,
+                        mode,
                       });
                       await open(job.id);
                     })
@@ -258,8 +308,8 @@ export default function Imports({ t }: { t: Translate }) {
                 <h3>{t("2. Review every row", "٢. مراجعة كل صف")}</h3>
                 <p className="muted">
                   {t(
-                    "UPDATE creates new products or updates matched products. KEEP/SKIP leaves live data unchanged. Verify each selected row against the original file.",
-                    "تحديث ينشئ أصنافاً جديدة أو يحدث الأصناف المطابقة. إبقاء/تخطي لا يغير البيانات. تحقق من كل صف محدد مقابل الملف الأصلي.",
+                    "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
+                    "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
                   )}
                 </p>
                 <div className="actions wrap">
@@ -293,6 +343,11 @@ export default function Imports({ t }: { t: Translate }) {
                     )}
                   </button>
                 </div>
+                <BulkRules
+                  t={t}
+                  importId={job.id}
+                  onApplied={() => open(job.id)}
+                />
               </>
             )}
             <div className="table-scroll">
@@ -307,7 +362,7 @@ export default function Imports({ t }: { t: Translate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {job.rows.map((r: any, i: number) => (
+                  {job.rows.slice(page * 50, page * 50 + 50).map((r: any) => (
                     <tr key={r.id}>
                       <td>{r.row_number}</td>
                       <td>
@@ -339,13 +394,23 @@ export default function Imports({ t }: { t: Translate }) {
                         )}
                       </td>
                       <td>
+                        {!r.duplicate_id && r.proposed?.partNumber && (
+                          <span className="pill warning">
+                            {t("UNKNOWN ITEM", "صنف غير موجود")}
+                            {job.mode === "UPDATE_ONLY"
+                              ? " · Update blocked"
+                              : ""}
+                          </span>
+                        )}
                         {r.confidence === "LOW" && (
                           <span className="pill warning">
                             {t("LOW CONFIDENCE", "ثقة منخفضة")}
                           </span>
                         )}
                         {r.duplicate_id && (
-                          <span className="pill">{t("DUPLICATE", "مكرر")}</span>
+                          <span className="pill">
+                            {t("EXISTING MATCH", "صنف موجود")}
+                          </span>
                         )}
                         <small className="error-text">
                           {r.errors.join("; ")}
@@ -359,7 +424,7 @@ export default function Imports({ t }: { t: Translate }) {
                             setJob({
                               ...job,
                               rows: job.rows.map((x: any, n: number) =>
-                                n === i
+                                x.id === r.id
                                   ? { ...x, decision: e.target.value }
                                   : x,
                               ),
@@ -381,7 +446,7 @@ export default function Imports({ t }: { t: Translate }) {
                             setJob({
                               ...job,
                               rows: job.rows.map((x: any, n: number) =>
-                                n === i
+                                x.id === r.id
                                   ? { ...x, verified: e.target.checked }
                                   : x,
                               ),
@@ -396,6 +461,19 @@ export default function Imports({ t }: { t: Translate }) {
             </div>
             {job.status === "AWAITING_REVIEW" && (
               <div className="actions footer-actions">
+                <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+                  Previous
+                </button>
+                <span>
+                  Page {page + 1} /{" "}
+                  {Math.max(1, Math.ceil(job.rows.length / 50))}
+                </span>
+                <button
+                  disabled={(page + 1) * 50 >= job.rows.length}
+                  onClick={() => setPage(page + 1)}
+                >
+                  Next
+                </button>
                 <button
                   disabled={busy}
                   onClick={() =>
@@ -415,7 +493,7 @@ export default function Imports({ t }: { t: Translate }) {
                 </button>
                 <button
                   className="primary"
-                  disabled={busy}
+                  disabled={busy || !confirmation}
                   onClick={() => {
                     if (
                       confirm(
@@ -428,6 +506,7 @@ export default function Imports({ t }: { t: Translate }) {
                       run(async () => {
                         await api("imports/" + job.id + "/confirm", "POST", {
                           version: job.version,
+                          token: confirmation.token,
                         });
                         await open(job.id);
                       });
@@ -435,6 +514,57 @@ export default function Imports({ t }: { t: Translate }) {
                 >
                   {t("Confirm import", "تأكيد الاستيراد")}
                 </button>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () =>
+                      setConfirmation(
+                        await api(
+                          "imports/" + job.id + "/preview-confirmation",
+                          "POST",
+                          {},
+                        ),
+                      ),
+                    )
+                  }
+                >
+                  Preview saved prices / معاينة الأسعار المحفوظة
+                </button>
+              </div>
+            )}
+            {confirmation && (
+              <div className="table-scroll">
+                <h3>Final reviewed prices / الأسعار النهائية</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Part</th>
+                      <th>Decision</th>
+                      <th>Before → After (excl. VAT)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {confirmation.items
+                      .slice(page * 50, page * 50 + 50)
+                      .map((r: any) => (
+                        <tr key={r.id}>
+                          <td>{r.proposed?.partNumber}</td>
+                          <td>
+                            {r.decision} ·{" "}
+                            {r.verified ? "Verified" : "Not verified"}
+                          </td>
+                          <td>
+                            {r.differences.map((d: any) => (
+                              <div key={d.code}>
+                                {d.code}: {d.before ?? "New"} → {d.after} (
+                                {d.changePercent ?? "—"}%)
+                              </div>
+                            ))}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             )}
             {job.status === "IMPORTED" && (

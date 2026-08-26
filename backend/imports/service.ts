@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -13,6 +13,65 @@ import {
 } from "../pricing/engine";
 import { saveProduct, getProduct, toInput } from "../products/service";
 import { importCandidate } from "../pricing/transfer";
+import { levelDifferences } from "../bulk/service";
+import { lockActor } from "../auth/service";
+
+async function confirmationState(
+  db: DB,
+  actor: Actor,
+  id: string,
+  stamp: string,
+) {
+  const job = await one(
+    db,
+    "SELECT version,mode FROM import_jobs WHERE id=$1",
+    [id],
+  );
+  assert(job, 404, "Import not found");
+  const config = await one(db, "SELECT version FROM settings WHERE id=1");
+  const rows = (
+    await db.query(
+      "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number",
+      [id],
+    )
+  ).rows;
+  const items = [];
+  for (const row of rows) {
+    const current = row.duplicate_id
+      ? await getProduct(db, row.duplicate_id)
+      : null;
+    let differences: any[] = [];
+    try {
+      differences = levelDifferences(
+        current ? toInput(current) : undefined,
+        productInput.parse(row.proposed),
+      );
+    } catch {}
+    items.push({
+      ...row,
+      currentVersion: current?.version ?? null,
+      differences,
+    });
+  }
+  const fingerprint = createHash("sha256")
+    .update(
+      json({
+        stamp,
+        job,
+        config,
+        items,
+        actor: actor.id,
+        permissions: actor.permissions,
+      }),
+    )
+    .digest("hex");
+  return { token: stamp + "." + fingerprint, items };
+}
+export async function previewConfirmation(db: DB, actor: Actor, id: string) {
+  requirePermission(actor, "IMPORT_CONFIRM");
+  requirePermission(actor, "COST_VIEW");
+  return confirmationState(db, actor, id, String(Date.now()));
+}
 export async function upload(db: DB, actor: Actor, file: File) {
   const ext = path.extname(file.name).toLowerCase();
   assert(
@@ -61,6 +120,7 @@ export async function mapRows(
       mapping: z.record(z.string(), z.string()),
       defaults: z.record(z.string(), z.unknown()),
       version: z.number().int(),
+      mode: z.enum(["UPDATE_ONLY", "CREATE_UPDATE"]).optional(),
     })
     .strict()
     .parse(input);
@@ -76,6 +136,8 @@ export async function mapRows(
       "Import is not ready for mapping",
     );
     assert(job.version === data.version, 409, "Import changed. Reload");
+    const mode = data.mode ?? job.mode;
+    if (mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
     const rows = (
       await tx.query(
         "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number",
@@ -85,7 +147,11 @@ export async function mapRows(
     for (const row of rows) {
       let proposed: Record<string, any> = {};
       for (const [field, column] of Object.entries(data.mapping))
-        if (row.raw[column] !== undefined && row.raw[column] !== "")
+        if (
+          row.raw[column] !== undefined &&
+          row.raw[column] !== null &&
+          String(row.raw[column]).trim() !== ""
+        )
           proposed[field] = String(row.raw[column]).trim();
       if (typeof proposed.minimumEnabled === "string")
         proposed.minimumEnabled = ["true", "1", "yes", "on"].includes(
@@ -111,6 +177,10 @@ export async function mapRows(
           duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined,
         );
         parsed = validateProduct(productInput.parse(proposed));
+        if (!duplicate && mode === "UPDATE_ONLY")
+          errors.push(
+            "Unknown part number: Update Existing Only does not create products",
+          );
       } catch (e) {
         errors.push(
           e instanceof z.ZodError
@@ -130,8 +200,8 @@ export async function mapRows(
       );
     }
     await tx.query(
-      "UPDATE import_jobs SET mapping=$2,defaults=$3,version=version+1,updated_at=now() WHERE id=$1",
-      [id, json(data.mapping), json(data.defaults)],
+      "UPDATE import_jobs SET mapping=$2,defaults=$3,mode=$4,version=version+1,updated_at=now() WHERE id=$1",
+      [id, json(data.mapping), json(data.defaults), mode],
     );
     return { ok: true };
   });
@@ -215,6 +285,7 @@ export async function confirmImport(
   actor: Actor,
   id: string,
   version: number,
+  token?: string,
 ) {
   requirePermission(actor, "IMPORT_CONFIRM");
   requirePermission(actor, "PRODUCT_EDIT");
@@ -231,6 +302,23 @@ export async function confirmImport(
       409,
       "Import changed or is not awaiting review",
     );
+    await tx.query("SELECT id FROM settings WHERE id=1 FOR UPDATE");
+    await lockActor(tx, actor);
+    if (token !== undefined) {
+      const stamp = token.split(".")[0],
+        age = Date.now() - Number(stamp);
+      assert(
+        Number.isFinite(age) && age >= 0 && age < 30 * 60 * 1000,
+        409,
+        "Import preview expired. Preview again",
+      );
+      const current = await confirmationState(tx, actor, id, stamp);
+      assert(
+        current.token === token,
+        409,
+        "Import, product, settings or permissions changed. Preview again",
+      );
+    }
     const rows = (
       await tx.query(
         "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number",
@@ -274,6 +362,14 @@ export async function confirmImport(
         409,
         `Product changed since review: ${p.partNumber}`,
       );
+      if (!current) {
+        assert(
+          job.mode === "CREATE_UPDATE",
+          400,
+          "Unknown part number: select Create & Update and review again",
+        );
+        requirePermission(actor, "PRODUCT_CREATE");
+      }
       await saveProduct(
         tx,
         actor,

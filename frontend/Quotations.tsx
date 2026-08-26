@@ -1,6 +1,6 @@
 "use client";
 import { levelLabel } from "./levels";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
 export default function Quotations({
   t,
@@ -17,10 +17,30 @@ export default function Quotations({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [pdf, setPdf] = useState<any>(null);
-  const load = () =>
-    api("quotations")
-      .then(setRows)
-      .catch((e) => setError(e.message));
+  const [filters, setFilters] = useState({
+    q: "",
+    status: "",
+    from: "",
+    to: "",
+    scope: "mine",
+  });
+  const searchGeneration = useRef(0);
+  const load = () => {
+    const generation = ++searchGeneration.current;
+    return api(
+      "quotations?" +
+        new URLSearchParams(Object.entries(filters).filter(([, v]) => v)),
+    )
+      .then((value) => {
+        if (generation === searchGeneration.current) {
+          setRows(value);
+          setError("");
+        }
+      })
+      .catch((e) => {
+        if (generation === searchGeneration.current) setError(e.message);
+      });
+  };
   useEffect(() => {
     load();
   }, []);
@@ -56,6 +76,63 @@ export default function Quotations({
         </div>
         <button onClick={load}>{t("Refresh", "تحديث")}</button>
       </div>
+      <form
+        className="form-grid three"
+        onSubmit={(e) => {
+          e.preventDefault();
+          load();
+        }}
+      >
+        <label>
+          {t("Quotation number / prefix", "رقم عرض السعر")}
+          <input
+            value={filters.q}
+            onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+          />
+        </label>
+        <label>
+          {t("Status", "الحالة")}
+          <select
+            value={filters.status}
+            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+          >
+            <option value="">All / الكل</option>
+            <option>DRAFT</option>
+            <option>ISSUED</option>
+          </select>
+        </label>
+        <label>
+          {t("From", "من")}
+          <input
+            type="date"
+            value={filters.from}
+            onChange={(e) => setFilters({ ...filters, from: e.target.value })}
+          />
+        </label>
+        <label>
+          {t("To", "إلى")}
+          <input
+            type="date"
+            value={filters.to}
+            onChange={(e) => setFilters({ ...filters, to: e.target.value })}
+          />
+        </label>
+        {user.permissions.includes("QUOTE_VIEW_ALL") && (
+          <label>
+            {t("Scope", "النطاق")}
+            <select
+              value={filters.scope}
+              onChange={(e) =>
+                setFilters({ ...filters, scope: e.target.value })
+              }
+            >
+              <option value="mine">My quotations / عروضي</option>
+              <option value="all">All quotations / جميع العروض</option>
+            </select>
+          </label>
+        )}
+        <button type="submit">{t("Search", "بحث")}</button>
+      </form>
       {error && (
         <div className="notice error" role="alert">
           {error}

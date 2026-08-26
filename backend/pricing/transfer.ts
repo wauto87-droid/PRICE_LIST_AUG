@@ -35,6 +35,12 @@ export function importCandidate(
     p.aliases = p.aliases.split("|").filter(Boolean);
   const changes = codes.flatMap((code) => {
     const values: Record<string, any> = {};
+    const sellingPrice = p[`${code}.sellingPrice`];
+    delete p[`${code}.sellingPrice`];
+    if (sellingPrice !== undefined && sellingPrice !== "") {
+      values.method = "FIXED";
+      values.fixedPrice = sellingPrice;
+    }
     for (const field of levelFields) {
       const key = `${code}.${field}`;
       if (p[key] !== undefined && p[key] !== "")

@@ -4,10 +4,19 @@ import { sectionData, validateAdminData, type AdminResult } from "./admin-data";
 import { api, type Translate } from "./api";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
+import BulkRules from "./BulkRules";
+import QuotationSettings from "./QuotationSettings";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
 const sections = [
+  ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
+  [
+    "quotation-settings",
+    "Quotation Settings",
+    "إعدادات عروض الأسعار",
+    "SETTINGS_MANAGE",
+  ],
   ["dashboard", "Dashboard", "لوحة التحكم", "ADMIN_VIEW"],
   ["products", "Products", "الأصناف", "PRODUCT_EDIT"],
   ["imports", "Imports / PDF", "الاستيراد / PDF", "IMPORT_CONFIRM"],
@@ -51,7 +60,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
-    if (section === "imports") return;
+    if (["imports", "rules", "quotation-settings"].includes(section)) return;
     try {
       const payload = await api(
         section === "products"
@@ -138,7 +147,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       <section className="card admin-content">
         <div className="section-title">
           <h2>{t(heading[1], heading[2])}</h2>
-          {section !== "imports" && (
+          {!["imports", "rules", "quotation-settings"].includes(section) && (
             <button disabled={busy} onClick={load}>
               {t("Refresh", "تحديث")}
             </button>
@@ -151,6 +160,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         )}
         {section === "imports" ? (
           <Imports t={t} />
+        ) : section === "rules" ? (
+          <BulkRules t={t} />
+        ) : section === "quotation-settings" ? (
+          <QuotationSettings t={t} />
         ) : !data ? (
           <p>
             {error
@@ -591,9 +604,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       <tr key={r.id}>
                         <td>{new Date(r.created_at).toLocaleString()}</td>
                         <td>
-                          <strong>{describeHistory(r,t).title}</strong>
-                          <div>{describeHistory(r,t).subject}</div>
-                          <small>{describeHistory(r,t).source}</small>
+                          <strong>{describeHistory(r, t).title}</strong>
+                          <div>{describeHistory(r, t).subject}</div>
+                          <small>{describeHistory(r, t).source}</small>
                         </td>
                         <td>{r.actor || t("System", "النظام")}</td>
                         <td>
@@ -836,7 +849,6 @@ function Settings({
     currency: ["Currency", "العملة"],
     vat: ["Default VAT %", "الضريبة الافتراضية %"],
     draftPrefix: ["Draft prefix", "بادئة المسودة"],
-    quotePrefix: ["Quotation prefix", "بادئة العرض"],
     staffDiscount: ["Staff discount limit %", "حد خصم الموظف %"],
     minimumVisible: [
       "Show minimum prices to staff",

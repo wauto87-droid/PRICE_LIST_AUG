@@ -590,6 +590,16 @@ strong + small {
 .form-grid.three {
   grid-template-columns: repeat(3, 1fr);
 }
+.bulk-rules .form-grid > *,
+.quotation-settings .form-grid > * {
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .bulk-rules .form-grid.three,
+  .quotation-settings .form-grid.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .section-title {
   display: flex;
   align-items: center;

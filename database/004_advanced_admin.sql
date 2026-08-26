@@ -1,0 +1,13 @@
+CREATE SEQUENCE quotation_serial_seq AS bigint START WITH 1 NO CYCLE;
+SELECT setval('quotation_serial_seq', GREATEST(1,COALESCE((SELECT max(substring(number from '([0-9]+)$')::bigint)+1 FROM quotations WHERE status='ISSUED'),1)),false);
+ALTER TABLE quotations ADD COLUMN serial bigint UNIQUE;
+CREATE TABLE quotation_allocations(serial bigint PRIMARY KEY, number text UNIQUE NOT NULL, quotation_id uuid NOT NULL UNIQUE REFERENCES quotations(id), actor_id uuid NOT NULL REFERENCES users(id), allocated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX quotations_number_prefix ON quotations(number text_pattern_ops);
+CREATE INDEX quotations_owner_number ON quotations(owner_id,number text_pattern_ops);
+ALTER TABLE import_jobs ADD COLUMN mode text NOT NULL DEFAULT 'UPDATE_ONLY' CHECK(mode IN ('UPDATE_ONLY','CREATE_UPDATE'));
+ALTER TABLE import_rows ADD COLUMN rule_metadata jsonb NOT NULL DEFAULT '{}';
+CREATE TABLE bulk_rules(id uuid PRIMARY KEY,name text NOT NULL,definition jsonb NOT NULL,active boolean NOT NULL DEFAULT true,deleted boolean NOT NULL DEFAULT false,version integer NOT NULL DEFAULT 1,created_by uuid NOT NULL REFERENCES users(id),created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE bulk_previews(id uuid PRIMARY KEY,actor_id uuid NOT NULL REFERENCES users(id),scope text NOT NULL,import_id uuid REFERENCES import_jobs(id),rule_id uuid REFERENCES bulk_rules(id),definition jsonb NOT NULL,items jsonb NOT NULL,import_version integer,result jsonb,expires_at timestamptz NOT NULL DEFAULT now()+interval '30 minutes',created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE bulk_executions(id uuid PRIMARY KEY,preview_id uuid NOT NULL UNIQUE REFERENCES bulk_previews(id),rule_id uuid REFERENCES bulk_rules(id),actor_id uuid NOT NULL REFERENCES users(id),scope text NOT NULL,matched integer NOT NULL,definition jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE bulk_previews ADD COLUMN settings_version integer NOT NULL;
+UPDATE settings SET data=data || jsonb_build_object('quotation',jsonb_build_object('prefix','AMT-QT','padding',6));

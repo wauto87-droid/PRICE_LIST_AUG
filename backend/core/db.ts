@@ -70,8 +70,11 @@ export async function migrate(db: DB) {
     }
 }
 const globalDB = globalThis as unknown as { amtDB?: Promise<DB> };
+// Recheck additive migrations after development hot reload, reusing the open
+// embedded database rather than opening a second writer or restarting the app.
+let developmentSchema: Promise<DB> | undefined;
 export function getDB(): Promise<DB> {
-  return (globalDB.amtDB ??= (async () => {
+  const database = (globalDB.amtDB ??= (async () => {
     if (
       process.env.DEV_EMBEDDED_DB === "true" &&
       process.env.NODE_ENV !== "production"
@@ -98,6 +101,15 @@ export function getDB(): Promise<DB> {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
     return postgres(process.env.DATABASE_URL);
   })());
+  if (
+    process.env.DEV_EMBEDDED_DB === "true" &&
+    process.env.NODE_ENV !== "production"
+  )
+    return (developmentSchema ??= database.then(async (db) => {
+      await migrate(db);
+      return db;
+    }));
+  return database;
 }
 export async function one<T = Record<string, any>>(
   db: DB,

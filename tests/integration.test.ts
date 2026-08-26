@@ -17,6 +17,15 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     body?: any,
     expected = 200,
   ) {
+    // The HTTP contract requires an explicit preview acceptance before confirmation.
+    if (path.endsWith("/confirm") && method === "POST" && !body.token) {
+      const preview = await request(
+        path.replace(/\/confirm$/, "/preview-confirmation"),
+        "POST",
+        {},
+      );
+      body = { ...body, token: preview.data.token };
+    }
     const res = await handle(
       new Request("http://localhost:18180/api/v1/" + path, {
         method,
@@ -528,6 +537,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
           ],
         );
       await request("imports/" + iid + "/mapping", "POST", {
+        mode: "CREATE_UPDATE",
         mapping: { partNumber: "CODE", description: "DESC", cost: "COST" },
         defaults: { method: "COST_MARKUP", markup: "25" },
         version: 1,

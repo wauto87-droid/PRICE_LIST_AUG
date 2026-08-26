@@ -24,7 +24,7 @@ elif source.suffix.lower() == '.xlsx':
         if sum(f.file_size for f in archive.infolist()) > 100 * 1024 * 1024:
             raise ValueError('Expanded workbook exceeds 100 MB')
     book = openpyxl.load_workbook(source, read_only=True, data_only=False)
-    sheet = book.active
+    sheet = book.worksheets[0]
     iterator = sheet.iter_rows()
     headers = [str(c.value or f'Column {i+1}') for i,c in enumerate(next(iterator))]
     if len(headers)>100 or len(set(headers))!=len(headers):
