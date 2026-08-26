@@ -1,4 +1,6 @@
 FROM node:24-bookworm-slim AS app
+ARG AMT_VERIFY_BUILD_LIMIT=0
+RUN if [ "$AMT_VERIFY_BUILD_LIMIT" = 1 ]; then limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes); case "$limit" in ''|*[!0-9]*) exit 1;; esac; test "$limit" -gt 0 && test "$limit" -le 2147483648; fi
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm@11.19.0

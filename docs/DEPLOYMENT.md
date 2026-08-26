@@ -1,5 +1,10 @@
 # Isolated deployment to the existing VPS
 
+For the current guided installer and smaller memory profile, follow
+[LOW_MEMORY_INSTALL.md](LOW_MEMORY_INSTALL.md). Its Git-release workflow replaces
+the legacy manual installation commands below; do not mix their environment files
+or directory layouts.
+
 Target host: `76.13.244.160`. Target directory: `/opt/shop-pricelist`. Compose project: `amt-pricelist`. No remote changes have been made by this implementation.
 
 Read-only inspection on 2026-08-26 confirmed Podman 5.7.0 behind the `docker` command, Docker Compose 2.32.4-3, and active Caddy (Nginx inactive). Port 18180 was free, the target directory did not exist, and approximately 43 GB disk / 4.6 GB RAM were available. Eight unrelated containers were running. Preserve this engine and proxy; do not install replacements. Recheck capacity and ports immediately before deployment. Compose compatibility (health/dependency conditions, resource limits, logging, internal networking and volume ownership) must be verified on this Podman runtime before launch.

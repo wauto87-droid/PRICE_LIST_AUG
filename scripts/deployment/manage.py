@@ -20,6 +20,7 @@ ROOT = Path('/opt/shop-pricelist')
 PROJECT = 'amt-pricelist'
 DB_IMAGE = 'postgres:17-bookworm'
 SERVICES = ('app', 'worker', 'backup')
+MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
 ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR'}
 
 class DeployError(Exception):
@@ -98,6 +99,11 @@ def project_label(labels):
     labels = labels or {}
     return labels.get('com.docker.compose.project') or labels.get('io.podman.compose.project')
 
+def check_memory(available_kib, command):
+    # Status/stop/recovery inspection must remain usable under memory pressure.
+    minimum = 3 * 1024**2 if command in ('install', 'upgrade') else (512 * 1024 if command in ('start', 'restore-check') else 0)
+    require(available_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available RAM; no other service will be stopped')
+
 def port_rows(text):
     rows = {}
     for line in text.splitlines():
@@ -168,6 +174,7 @@ class Deployment:
                         require(resource.get('Internal') is True, 'Dedicated network is not internal')
         for item in self.inventory():
             if not self.owned(item):
+                require(not any(m.get('Name') in [f'{PROJECT}_{v}' for v in ('database', 'uploads', 'backups')] for m in item.get('Mounts', [])), 'Another project mounts AMT storage; refusing changes')
                 continue
             service = item.get('Config', {}).get('Labels', {}).get('com.docker.compose.service')
             if service == 'db':
@@ -192,24 +199,46 @@ class Deployment:
 
     def preflight(self):
         require(sys.platform.startswith('linux'), 'Run deployment on the Linux VPS; local tests do not deploy')
+        require(sys.version_info >= (3, 12), 'Python 3.12 or newer is required for safe archive extraction')
         require(os.geteuid() == 0, 'Run through an authorized root/sudo session')
         for tool in ['docker', 'git', 'ss', 'curl', 'systemctl']:
             require(shutil.which(tool), f'Missing prerequisite: {tool}. No packages were installed')
         self.engine('version')
         self.engine('compose', 'version')
-        require(shutil.disk_usage('/opt').free >= 12 * 1024**3, 'At least 12 GiB free disk is required')
+        if self.args.command in ('install', 'upgrade'):
+            require(shutil.disk_usage('/opt').free >= 12 * 1024**3, 'At least 12 GiB free disk is required')
+            require(shutil.which('podman'), 'This bounded-build installer requires the existing native Podman runtime; no replacement is installed')
+            require('podman' in decoded(self.engine('info')).lower(), 'Docker endpoint is not the local Podman runtime; refuse an unbounded daemon build')
+            info = json.loads(decoded(run(['podman', 'info', '--format', 'json'])))
+            require(info['host']['cgroupVersion'] == 'v2' and not info['host']['security']['rootless'], 'Bounded builds require rootful Podman with cgroup v2')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
-        require(int(memory['MemAvailable'].split()[0]) >= 4 * 1024**2, 'At least 4 GiB available RAM is required')
+        check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
         self.ownership(first=not self.root.exists())
         print('Runtime, capacity and project ownership checks passed. Shared proxy/firewall configuration is unchanged.')
 
     def current(self):
+        self.load_environment()
+        self.release = (self.root / 'current').resolve(strict=True)
+        require(self.release.parent == self.root / 'releases' and self.release.is_dir(), 'Current release points outside the deployment')
+
+    def load_environment(self):
         require(self.root.is_dir() and not self.root.is_symlink(), 'Deployment root is missing or unsafe')
         require((self.root / '.amt-owner').read_text().strip() == PROJECT, 'Deployment directory ownership marker mismatch')
         require(self.root.stat().st_uid == 0 and self.root.stat().st_mode & 0o077 == 0, 'Deployment root must be root-owned mode 0700')
-        self.release = (self.root / 'current').resolve(strict=True)
-        require(self.release.parent == self.root / 'releases' and self.release.is_dir(), 'Current release points outside the deployment')
         self.env = read_env(self.envfile)
+
+    def initialize_volumes(self):
+        self.ownership()
+        existing = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
+        for volume in ('database', 'uploads', 'backups'):
+            name = f'{PROJECT}_{volume}'
+            if name not in existing:
+                self.engine('volume', 'create', '--label', f'com.docker.compose.project={PROJECT}',
+                            '--label', f'com.docker.compose.volume={volume}', name)
+        self.ownership()
+        for volume in ('uploads', 'backups'):
+            self.engine('run', '--rm', '--network', 'none', '--label', f'com.docker.compose.project={PROJECT}',
+                        '-v', f'{PROJECT}_{volume}:/data', DB_IMAGE, 'chown', '1000:1000', '/data')
 
     @contextlib.contextmanager
     def locked(self):
@@ -269,7 +298,21 @@ class Deployment:
         self.ownership()
         self.port(int(self.env['APP_PORT']))  # Immediate fail-closed recheck; never kill a listener.
         self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
+        try:
+            self.verify_limits(*SERVICES)
+        except DeployError:
+            self.stop()
+            raise
         self.healthy()
+
+    def verify_limits(self, *services):
+        for service in services:
+            ids = decoded(self.compose('ps', '-q', service)).split()
+            require(len(ids) == 1, f'Expected exactly one {service} container to verify memory cap')
+            container = json.loads(decoded(self.engine('inspect', ids[0])))[0]
+            limit = container.get('HostConfig', {}).get('Memory', 0)
+            require(isinstance(limit, int) and 0 < limit <= MEMORY_MIB[service] * 1024**2,
+                    f'Runtime did not enforce the {service} memory cap; stopping AMT startup')
 
     def stop(self):
         self.compose('stop', '-t', '60', *SERVICES)
@@ -363,8 +406,16 @@ class Deployment:
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         atomic(release / 'release.json', json.dumps({'commit': commit, 'migrations': self.migration_files(release)}))
         self.compose('config', '--quiet', release=release)
-        self.compose('build', 'app', 'worker', 'backup', release=release, timeout=3600)
+        self.build_release(release, commit)
         return release
+
+    def build_release(self, release, commit):
+        # Native Podman is intentional: Docker daemon builds can ignore client limits.
+        # The Dockerfile checks the effective cgroup limit before installing packages.
+        for target in ('app', 'worker', 'backup'):
+            run(['podman', 'build', '--jobs=1', '--memory=2g', '--memory-swap=2g',
+                 '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
+                 '--tag', f'{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600)
 
     @staticmethod
     def migration_files(release):
@@ -378,8 +429,19 @@ class Deployment:
 
     def deploy(self, first):
         source, commit = self.source()
-        if first:
+        journal = self.state / 'install.json'
+        recovery = None
+        if first and self.args.resume:
+            self.load_environment()
+            require(journal.is_file(), 'No resumable first installation; retain files for manual review')
+            recovery = json.loads(journal.read_text())
+            require(not recovery.get('completed'), 'Installation is already complete; use upgrade')
+            commit = recovery['commit']
+            require(re.fullmatch(r'[a-f0-9]{40,64}', commit), 'Invalid recovery commit')
+            self.port(int(self.env['APP_PORT']))
+        elif first:
             require(not self.root.exists(), 'Install refuses an existing deployment directory')
+            self.ownership(first=True)
             port = self.port()
             self.root.mkdir(mode=0o700)
             for directory in ['shared', 'state', 'releases', 'recovery']:
@@ -387,23 +449,33 @@ class Deployment:
             atomic(self.root / '.amt-owner', PROJECT + '\n')
             self.env = new_env(port)
             atomic(self.envfile, env_text(self.env))
+            atomic(journal, json.dumps({'commit': commit, 'candidate': None}))
         else:
             self.current()
         previous = self.release
-        release = self.prepare_release(source, commit)
+        if recovery and recovery.get('candidate'):
+            require(re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', recovery['candidate']), 'Invalid recovery release')
+            release = self.root / 'releases' / recovery['candidate']
+            require(release.is_dir() and not release.is_symlink(), 'Recovery release missing or unsafe')
+            require(json.loads((release / 'release.json').read_text())['commit'] == commit, 'Recovery release commit mismatch')
+        else:
+            release = self.prepare_release(source, commit)
+            if first:
+                atomic(journal, json.dumps({'commit': commit, 'candidate': release.name}))
         self.checkpoint('BUILT', previous=previous.name if previous else None, candidate=release.name)
         if previous:
+            require(self.migration_files(previous).items() <= self.migration_files(release).items(), 'Migration removal/change is not an additive upgrade')
             self.stop()
             self.snapshot()
-            require(self.migration_files(previous).items() <= self.migration_files(release).items(), 'Migration removal/change is not an additive upgrade')
         self.release = release
+        if first and self.args.resume:
+            self.stop()
+        self.initialize_volumes()
         self.compose('up', '-d', '--no-deps', '--no-build', 'db')
+        self.verify_limits('db')
         self.wait_db()
         self.checkpoint('MIGRATING', previous=previous.name if previous else None, candidate=release.name)
         self.compose('run', '--rm', '--no-deps', 'migrate', timeout=600)
-        # Initialize only the dedicated volumes; no host/chown of unrelated application data.
-        for volume in ['uploads', 'backups']:
-            self.engine('run', '--rm', '--network', 'none', '-v', f'{PROJECT}_{volume}:/data', DB_IMAGE, 'chown', '1000:1000', '/data')
         self.start()
         self.activate(release)
         unit = release / 'docker/amt-pricelist.service'
@@ -415,6 +487,8 @@ class Deployment:
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'enable', 'amt-pricelist.service'])
         self.checkpoint('HEALTHY', current=release.name, previous=previous.name if previous else None)
+        if first:
+            atomic(journal, json.dumps({'commit': commit, 'candidate': release.name, 'completed': True}))
         self.event('INSTALLED' if first else 'UPGRADED', commit=commit, release=release.name)
         if not first and self.args.rotate:
             self.rotate()
@@ -475,6 +549,13 @@ class Deployment:
 
     def execute(self):
         self.preflight()
+        if self.args.command == 'install':
+            if self.args.resume:
+                self.load_environment()
+                self.port(int(self.env['APP_PORT']))
+            else:
+                require(not self.root.exists(), 'Existing installation directory: use install --resume only for an interrupted first install')
+                self.port()
         if self.args.command != 'install':
             self.current()
             self.port(int(self.env['APP_PORT']))
@@ -529,7 +610,7 @@ def arguments(argv=None):
     parser.add_argument('--yes', action='store_true', help='Explicit non-interactive approval; never implies secret rotation')
     parser.add_argument('--access-verified', action='store_true', help='Operator confirms SSH-key access and separately rotated VPS root password')
     parser.add_argument('--rotate', action='store_true', help='Explicitly opt into app-secret rotation after a successful upgrade')
-    parser.add_argument('--resume', action='store_true', help='Recover an interrupted credential rotation')
+    parser.add_argument('--resume', action='store_true', help='Recover an interrupted first install or credential rotation')
     args = parser.parse_args(argv)
     if not args.command:
         require(sys.stdin.isatty(), 'Non-interactive use requires an explicit command and --yes')

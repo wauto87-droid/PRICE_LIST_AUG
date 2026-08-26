@@ -9,3 +9,5 @@ test-results/
 *.log
 backups/
 uploads/
+__pycache__/
+*.pyc
