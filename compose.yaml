@@ -1,0 +1,97 @@
+name: amt-pricelist
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB}
+  NODE_ENV: production
+  APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
+  UPLOAD_DIR: /data/uploads
+  BACKUP_DIR: /data/backups
+  PDF_MAX_PAGES: ${PDF_MAX_PAGES:-100}
+  UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-20}
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test:
+        [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 1g
+    cpus: 1.0
+    logging: &logging
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+  migrate:
+    build: { context: ., target: app }
+    environment: *app-environment
+    command: [pnpm, migrate]
+    depends_on: { db: { condition: service_healthy } }
+    networks: [private]
+    restart: "no"
+    logging: *logging
+  app:
+    build: { context: ., target: app }
+    restart: unless-stopped
+    environment: *app-environment
+    ports: ["127.0.0.1:${APP_PORT:-18180}:3000"]
+    volumes: [uploads:/data/uploads]
+    networks: [private]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+  worker:
+    build: { context: ., target: worker }
+    restart: unless-stopped
+    environment: *app-environment
+    volumes: [uploads:/data/uploads]
+    networks: [private]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 1536m
+    cpus: 0.75
+    pids_limit: 160
+    tmpfs: [/tmp:size=256m, mode=1777]
+    logging: *logging
+  backup:
+    build: { context: ., target: backup }
+    restart: unless-stopped
+    environment: *app-environment
+    volumes: [backups:/data/backups]
+    networks: [private]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    cpus: 0.25
+    logging: *logging
+networks:
+  private:
+    internal: true
+volumes:
+  database:
+  uploads:
+  backups:

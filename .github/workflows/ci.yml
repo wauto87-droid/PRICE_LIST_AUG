@@ -1,0 +1,25 @@
+name: AMT validation
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: npm install -g pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm audit --prod
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara fonts-noto-core
+      - run: python3 -m venv .venv && .venv/bin/pip install -r scripts/requirements.txt
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec tsx --test --test-force-exit tests/worker.test.ts
+        env:
+          RUN_WORKER_TESTS: "true"
+          PYTHON_BIN: .venv/bin/python
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: validation-output, path: test-results/ }

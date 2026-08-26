@@ -1,0 +1,380 @@
+"use client";
+import { useState, useEffect } from "react";
+import {
+  masterPrice,
+  money,
+  sellingLevels,
+  levelPrice,
+  productInput,
+  validateProduct,
+  canonicalProduct,
+} from "@/backend/pricing/engine";
+import { levelCodes, levelLabel } from "./levels";
+import Decimal from "decimal.js";
+import { api, type Translate } from "./api";
+export const blankProduct = {
+  partNumber: "",
+  description: "",
+  brand: "",
+  category: "",
+  keywords: "",
+  aliases: [],
+  method: "COST_MARKUP",
+  cost: "0",
+  markup: "25",
+  listPrice: "0",
+  baseDiscount: "0",
+  vat: "15",
+  minimumEnabled: false,
+  minimum: "0",
+  unit: "pcs",
+  quantityPrecision: 0,
+  active: true,
+};
+export default function ProductEditor({
+  t,
+  initial,
+  onSave,
+  onClose,
+}: {
+  t: Translate;
+  initial: any;
+  onSave: (p: any) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [p, setP] = useState<any>(() => ({
+      ...blankProduct,
+      ...initial,
+      levels: sellingLevels({ ...blankProduct, ...initial }),
+      defaultLevel: initial.defaultLevel ?? "END_CUSTOMER",
+    })),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [preview, setPreview] = useState(false),
+    [brands, setBrands] = useState<any[]>([]),
+    [categories, setCategories] = useState<any[]>([]);
+  useEffect(() => {
+    api("admin/brands")
+      .then(setBrands)
+      .catch(() => {});
+    api("admin/categories")
+      .then(setCategories)
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  const set = (key: string, value: any) => {
+    const match =
+      key === "brand" && !initial.id
+        ? brands.find((b) => b.name === value)
+        : null;
+    setP({
+      ...p,
+      [key]: value,
+      ...(match
+        ? {
+            method: match.default_method,
+            levels: p.levels.map((l: any) => ({
+              ...l,
+              method: match.default_method,
+            })),
+          }
+        : {}),
+    });
+    setPreview(false);
+  };
+  let price = "—",
+    incl = "—";
+  try {
+    price = masterPrice(p).toFixed(2);
+    incl = money(
+      new Decimal(price).mul(new Decimal(1).add(new Decimal(p.vat).div(100))),
+    );
+  } catch {}
+  const input = (key: string, en: string, ar: string, type = "text") => (
+    <label>
+      {t(en, ar)}
+      <input
+        type={type}
+        step={type === "number" ? "any" : undefined}
+        min={type === "number" ? "0" : undefined}
+        value={p[key]}
+        list={
+          key === "brand"
+            ? "amt-brands"
+            : key === "category"
+              ? "amt-categories"
+              : undefined
+        }
+        onChange={(e) => set(key, e.target.value)}
+        required={["partNumber", "description"].includes(key)}
+      />
+    </label>
+  );
+  return (
+    <div className="modal-backdrop">
+      <datalist id="amt-brands">
+        {brands
+          .filter((b) => b.active)
+          .map((b) => (
+            <option key={b.id} value={b.name} />
+          ))}
+      </datalist>
+      <datalist id="amt-categories">
+        {categories
+          .filter((c) => c.active)
+          .map((c) => (
+            <option key={c.id} value={c.name} />
+          ))}
+      </datalist>
+      <form
+        className="modal"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            validateProduct(
+              productInput.parse((({ id, version, ...data }) => data)(p)),
+            );
+          } catch (e) {
+            setError((e as Error).message);
+            return;
+          }
+          setError("");
+          if (!preview) {
+            setPreview(true);
+            return;
+          }
+          setBusy(true);
+          try {
+            const { id, version, ...data } = p;
+            await onSave({
+              ...canonicalProduct(productInput.parse(data)),
+              ...(version ? { version } : {}),
+            });
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="section-title">
+          <h2>{t("Product & pricing", "الصنف والتسعير")}</h2>
+          <button type="button" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="form-grid">
+          {input("partNumber", "Part number", "رقم الصنف")}
+          {input("description", "Description", "الوصف")}
+          {input("brand", "Brand", "العلامة التجارية")}
+          {input("category", "Category", "الفئة")}
+          {input("vat", "VAT %", "الضريبة %", "number")}
+          {input(
+            "cost",
+            "Shared purchase cost",
+            "تكلفة الشراء المشتركة",
+            "number",
+          )}
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={p.minimumEnabled}
+              onChange={(e) => set("minimumEnabled", e.target.checked)}
+            />
+            {t("Minimum price protection", "حماية الحد الأدنى للسعر")}
+          </label>
+          {input(
+            "minimum",
+            "Minimum price excl. VAT",
+            "الحد الأدنى قبل الضريبة",
+            "number",
+          )}
+          {input("unit", "Unit (pcs, m, box…)", "الوحدة (قطعة، متر، صندوق)")}
+          <label>
+            {t("Quantity precision", "دقة الكمية")}
+            <select
+              value={p.quantityPrecision}
+              onChange={(e) => set("quantityPrecision", Number(e.target.value))}
+            >
+              {[0, 1, 2, 3].map((n) => (
+                <option value={n} key={n}>
+                  {n === 0
+                    ? t("Whole quantities", "كميات صحيحة")
+                    : n + " " + t("decimal places", "منازل عشرية")}
+                </option>
+              ))}
+            </select>
+          </label>
+          {input("keywords", "Keywords", "كلمات البحث")}
+          <label>
+            {t("Aliases (separate with |)", "أرقام بديلة (افصل بـ |)")}
+            <input
+              value={p.aliases.join("|")}
+              onChange={(e) =>
+                set("aliases", e.target.value.split("|").filter(Boolean))
+              }
+            />
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={p.active}
+              onChange={(e) => set("active", e.target.checked)}
+            />
+            {t("Active product", "صنف نشط")}
+          </label>
+        </div>
+        <h3>{t("Selling levels", "مستويات أسعار البيع")}</h3>
+        <p>
+          {t(
+            "Enable available levels and choose the default. All prices are before VAT. The minimum protects every level.",
+            "فعّل المستويات المتاحة واختر الافتراضي. جميع الأسعار قبل الضريبة. الحد الأدنى يحمي كل المستويات.",
+          )}
+        </p>
+        {levelCodes.map((code) => {
+          const level = p.levels.find((l: any) => l.code === code);
+          const edit = (field: string, value: any) =>
+            set(
+              "levels",
+              p.levels.map((l: any) =>
+                l.code === code ? { ...l, [field]: value } : l,
+              ),
+            );
+          let amount = "—";
+          try {
+            if (level) amount = levelPrice(p, level).toFixed(2);
+          } catch {}
+          return (
+            <fieldset key={code} className="level-editor">
+              <legend>{levelLabel(code, t)}</legend>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!level?.active}
+                  onChange={(e) => {
+                    if (level) edit("active", e.target.checked);
+                    else
+                      set("levels", [
+                        ...p.levels,
+                        {
+                          code,
+                          active: true,
+                          method: "FIXED",
+                          fixedPrice: "0",
+                          markup: "0",
+                          listPrice: "0",
+                          baseDiscount: "0",
+                        },
+                      ]);
+                  }}
+                />
+                {t("Available to staff", "متاح للموظفين")}
+              </label>
+              {level?.active && (
+                <>
+                  <label className="check">
+                    <input
+                      type="radio"
+                      name="defaultLevel"
+                      checked={p.defaultLevel === code}
+                      onChange={() => set("defaultLevel", code)}
+                    />
+                    {t("Default selling level", "مستوى البيع الافتراضي")}
+                  </label>
+                  <div className="form-grid">
+                    <label>
+                      {t("Pricing method", "طريقة التسعير")}
+                      <select
+                        value={level.method}
+                        onChange={(e) => edit("method", e.target.value)}
+                      >
+                        <option value="FIXED">
+                          {t("Fixed price", "سعر ثابت")}
+                        </option>
+                        <option value="COST_MARKUP">
+                          {t("Cost + markup", "التكلفة + الزيادة")}
+                        </option>
+                        <option value="LIST_DISCOUNT">
+                          {t("List price − discount", "سعر القائمة − الخصم")}
+                        </option>
+                      </select>
+                    </label>
+                    {(level.method === "FIXED"
+                      ? [
+                          [
+                            "fixedPrice",
+                            "Fixed price excl. VAT",
+                            "السعر الثابت قبل الضريبة",
+                          ],
+                        ]
+                      : level.method === "COST_MARKUP"
+                        ? [["markup", "Markup %", "نسبة الزيادة %"]]
+                        : [
+                            ["listPrice", "List price", "سعر القائمة"],
+                            [
+                              "baseDiscount",
+                              "Supplier discount %",
+                              "خصم المورد %",
+                            ],
+                          ]
+                    ).map(([key, en, ar]) => (
+                      <label key={key}>
+                        {t(en, ar)}
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={level[key]}
+                          onChange={(e) => edit(key, e.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <p>
+                    {t("Selling excl. VAT", "البيع قبل الضريبة")}:{" "}
+                    <strong>SAR {amount}</strong>
+                  </p>
+                </>
+              )}
+            </fieldset>
+          );
+        })}
+        <div className="price-pair preview-prices">
+          <div>
+            <label>{t("Selling excl. VAT", "البيع قبل الضريبة")}</label>
+            <strong>{price}</strong>
+          </div>
+          <div>
+            <label>{t("Selling incl. VAT", "البيع شامل الضريبة")}</label>
+            <strong>{incl}</strong>
+          </div>
+        </div>
+        {preview && (
+          <div className="notice">
+            {t(
+              "Review the values above. Confirm to publish this product and record its price history.",
+              "راجع القيم أعلاه. أكد لنشر الصنف وتسجيل سجل الأسعار.",
+            )}
+          </div>
+        )}
+        {error && <div className="notice error">{error}</div>}
+        <div className="actions footer-actions">
+          <button type="button" onClick={onClose}>
+            {t("Cancel", "إلغاء")}
+          </button>
+          <button className="primary" disabled={busy}>
+            {preview
+              ? t("Confirm & publish", "تأكيد ونشر")
+              : t("Preview changes", "معاينة التغييرات")}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

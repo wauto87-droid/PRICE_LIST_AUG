@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 560" width="500" height="560">
+  <rect width="500" height="560" fill="white"/>
+  <polygon points="185,60 295,170 185,280 75,170" fill="white" stroke="#1a1a1a" stroke-width="26" stroke-linejoin="miter"/>
+  <polygon points="315,60 425,170 315,280 205,170" fill="white" stroke="#cc0000" stroke-width="26" stroke-linejoin="miter"/>
+  <clipPath id="clip-black-left"><polygon points="0,0 250,0 250,560 0,560"/></clipPath>
+  <polygon points="185,60 295,170 185,280 75,170" fill="none" stroke="#1a1a1a" stroke-width="26" stroke-linejoin="miter" clip-path="url(#clip-black-left)"/>
+  <path d="M263,113 L241,168 L258,168 L234,223 L274,161 L256,161 Z" fill="#1a1a1a"/>
+  <text x="48" y="398" font-family="'Arial Black','Impact','Franklin Gothic Heavy',sans-serif" font-size="120" font-weight="900" fill="#1a1a1a">A</text>
+  <text x="178" y="398" font-family="'Arial Black','Impact','Franklin Gothic Heavy',sans-serif" font-size="120" font-weight="900" fill="#cc0000">M</text>
+  <text x="338" y="398" font-family="'Arial Black','Impact','Franklin Gothic Heavy',sans-serif" font-size="120" font-weight="900" fill="#1a1a1a">T</text>
+  <text x="250" y="460" font-family="'Arial','Helvetica',sans-serif" font-size="40" font-weight="700" fill="#cc0000" text-anchor="middle" letter-spacing="11">ELECTRIC</text>
+</svg>

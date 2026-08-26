@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.env
+.env.local
+.data/
+coverage/
+test-results/
+*.tsbuildinfo
+*.log
+backups/
+uploads/

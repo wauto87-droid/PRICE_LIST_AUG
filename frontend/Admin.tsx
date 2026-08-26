@@ -1,0 +1,913 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { sectionData, validateAdminData, type AdminResult } from "./admin-data";
+import { api, type Translate } from "./api";
+import ProductEditor, { blankProduct } from "./ProductEditor";
+import Imports from "./Imports";
+import { levelCodes, levelLabel } from "./levels";
+import HistoryDetails from "./HistoryDetails";
+import { describeHistory } from "./history-details";
+const sections = [
+  ["dashboard", "Dashboard", "لوحة التحكم", "ADMIN_VIEW"],
+  ["products", "Products", "الأصناف", "PRODUCT_EDIT"],
+  ["imports", "Imports / PDF", "الاستيراد / PDF", "IMPORT_CONFIRM"],
+  ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
+  ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
+  ["users", "Users", "المستخدمون", "USER_MANAGE"],
+  ["roles", "Roles", "الأدوار", "USER_MANAGE"],
+  ["history", "Price history", "سجل الأسعار", "PRICE_HISTORY_VIEW"],
+  ["audit", "Audit log", "سجل التدقيق", "AUDIT_VIEW"],
+  ["backups", "Backups", "النسخ الاحتياطية", "BACKUP_MANAGE"],
+  ["settings", "Settings", "الإعدادات", "SETTINGS_MANAGE"],
+];
+export default function Admin({ t, user }: { t: Translate; user: any }) {
+  const [section, setSection] = useState("dashboard"),
+    [result, setResult] = useState<AdminResult>(null),
+    [error, setError] = useState(""),
+    [query, setQuery] = useState(""),
+    [edit, setEdit] = useState<any>(null),
+    [busy, setBusy] = useState(false),
+    [selected, setSelected] = useState<string[]>([]),
+    [bulk, setBulk] = useState<any>({ operation: "MARKUP", value: "25" }),
+    [preview, setPreview] = useState<any>(null),
+    [roles, setRoles] = useState<any>(null),
+    [exportJob, setExportJob] = useState<any>(null);
+  const data = sectionData(result, section);
+  const requestGeneration = useRef(0),
+    currentSection = useRef(section);
+  currentSection.current = section;
+  useEffect(() => {
+    if (!exportJob || ["DONE", "FAILED"].includes(exportJob.status)) return;
+    const timer = setInterval(
+      () =>
+        api("exports/" + exportJob.id)
+          .then(setExportJob)
+          .catch((e) => setError(e.message)),
+      1500,
+    );
+    return () => clearInterval(timer);
+  }, [exportJob]);
+  async function load() {
+    if (currentSection.current !== section) return;
+    const generation = ++requestGeneration.current;
+    setError("");
+    if (section === "imports") return;
+    try {
+      const payload = await api(
+        section === "products"
+          ? "products?q=" + encodeURIComponent(query)
+          : "admin/" + section,
+      );
+      if (
+        generation !== requestGeneration.current ||
+        currentSection.current !== section
+      )
+        return;
+      setResult({ section, payload: validateAdminData(section, payload) });
+    } catch (e) {
+      if (
+        generation === requestGeneration.current &&
+        currentSection.current === section
+      ) {
+        setResult(null);
+        setError((e as Error).message);
+      }
+    }
+  }
+  useEffect(() => {
+    setResult(null);
+    setEdit(null);
+    setSelected([]);
+    setPreview(null);
+    load();
+    return () => {
+      requestGeneration.current++;
+    };
+  }, [section]);
+  useEffect(() => {
+    if (user.permissions.includes("USER_MANAGE"))
+      api("admin/roles")
+        .then((value) => setRoles(validateAdminData("roles", value)))
+        .catch(() => {});
+  }, [user]);
+  async function run(fn: () => Promise<any>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const heading = sections.find((s) => s[0] === section)!;
+  const editField = (key: string, label: string, type = "text") => (
+    <label key={key}>
+      {label}
+      <input
+        type={type}
+        value={edit?.[key] ?? ""}
+        onChange={(e) => setEdit({ ...edit, [key]: e.target.value })}
+      />
+    </label>
+  );
+  return (
+    <div className="admin-layout">
+      <aside className="admin-menu">
+        <div className="eyebrow">{t("ADMINISTRATION", "الإدارة")}</div>
+        {sections
+          .filter((s) => user.permissions.includes(s[3]))
+          .map(([key, en, ar]) => (
+            <button
+              className={section === key ? "active" : ""}
+              key={key}
+              onClick={() => {
+                if (key === section) return;
+                requestGeneration.current++;
+                currentSection.current = key;
+                setEdit(null);
+                setSection(key);
+              }}
+            >
+              {t(en, ar)}
+            </button>
+          ))}
+      </aside>
+      <section className="card admin-content">
+        <div className="section-title">
+          <h2>{t(heading[1], heading[2])}</h2>
+          {section !== "imports" && (
+            <button disabled={busy} onClick={load}>
+              {t("Refresh", "تحديث")}
+            </button>
+          )}
+        </div>
+        {error && (
+          <div role="alert" className="notice error">
+            {error}
+          </div>
+        )}
+        {section === "imports" ? (
+          <Imports t={t} />
+        ) : !data ? (
+          <p>
+            {error
+              ? t(
+                  "This section could not be loaded. Use Refresh to retry.",
+                  "تعذر تحميل هذا القسم. استخدم تحديث للمحاولة مجدداً.",
+                )
+              : t("Loading…", "جارٍ التحميل…")}
+          </p>
+        ) : (
+          <>
+            {section === "dashboard" && (
+              <div className="stat-grid">
+                {[
+                  ["Total products", "إجمالي الأصناف", data.products.total],
+                  ["Active products", "أصناف نشطة", data.products.active],
+                  ["Cost + markup", "التكلفة + الزيادة", data.products.markup],
+                  [
+                    "List − discount",
+                    "القائمة − الخصم",
+                    data.products.discount,
+                  ],
+                  [
+                    "Minimum protected",
+                    "محمية بالحد الأدنى",
+                    data.products.protected,
+                  ],
+                  ["Updated today", "محدثة اليوم", data.products.updated],
+                  ["Draft quotations", "مسودات", data.quotes.drafts],
+                  ["Issued today", "صادرة اليوم", data.quotes.today],
+                  ["Pending imports", "استيراد معلق", data.imports.pending],
+                  ["Import errors", "أخطاء الاستيراد", data.imports.errors],
+                  ["Duplicate rows", "صفوف مكررة", data.duplicates],
+                ].map(([en, ar, n]) => (
+                  <div className="stat" key={en}>
+                    <span>{t(en, ar)}</span>
+                    <strong>{n}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+            {section === "products" && (
+              <>
+                <div className="actions wrap">
+                  <input
+                    className="grow"
+                    placeholder={t("Find a product…", "ابحث عن صنف…")}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") load();
+                    }}
+                  />
+                  <button onClick={load}>{t("Search", "بحث")}</button>
+                  <button
+                    className="primary"
+                    onClick={() =>
+                      run(async () => {
+                        const s = await api("auth/me");
+                        setEdit({ ...blankProduct, vat: s.settings.vat });
+                      })
+                    }
+                  >
+                    {t("＋ Add product", "＋ إضافة صنف")}
+                  </button>
+                  {user.permissions.includes("EXPORT") && (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () =>
+                          setExportJob(await api("exports", "POST", {})),
+                        )
+                      }
+                    >
+                      {t("Export XLSX", "تصدير XLSX")}
+                    </button>
+                  )}
+                  {exportJob &&
+                    (exportJob.status === "DONE" ? (
+                      <a
+                        className="button primary"
+                        href={"/api/v1/exports/" + exportJob.id + "/download"}
+                      >
+                        {t("Download workbook", "تنزيل الملف")}
+                      </a>
+                    ) : (
+                      <span className="muted">
+                        {exportJob.status === "FAILED"
+                          ? exportJob.error
+                          : t("Preparing export…", "جارٍ تجهيز التصدير…")}
+                      </span>
+                    ))}
+                </div>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>{t("Part / description", "الصنف / الوصف")}</th>
+                        <th>{t("Method", "الطريقة")}</th>
+                        <th>{t("Brand", "العلامة")}</th>
+                        <th>{t("Status", "الحالة")}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.map((p: any) => (
+                        <tr key={p.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              aria-label={"Select " + p.partNumber}
+                              checked={selected.includes(p.id)}
+                              onChange={(e) => {
+                                setSelected(
+                                  e.target.checked
+                                    ? [...selected, p.id]
+                                    : selected.filter((id) => id !== p.id),
+                                );
+                                setPreview(null);
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <strong>{p.partNumber}</strong>
+                            <small>{p.description}</small>
+                          </td>
+                          <td>{p.method}</td>
+                          <td>{p.brand}</td>
+                          <td>
+                            {p.active
+                              ? t("Active", "نشط")
+                              : t("Archived", "مؤرشف")}
+                          </td>
+                          <td>
+                            <button onClick={() => setEdit(p)}>
+                              {t("Edit", "تعديل")}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {!data.length && (
+                  <p className="empty-state">
+                    {t(
+                      "No products yet. Add one or import a supplier price list.",
+                      "لا توجد أصناف. أضف صنفاً أو استورد قائمة أسعار.",
+                    )}
+                  </p>
+                )}
+                {!!selected.length && (
+                  <div className="review-panel">
+                    <h3>
+                      {t("Bulk pricing update", "تحديث أسعار جماعي")} (
+                      {selected.length})
+                    </h3>
+                    <div className="actions wrap">
+                      <select
+                        value={bulk.operation}
+                        onChange={(e) => {
+                          setBulk({ ...bulk, operation: e.target.value });
+                          setPreview(null);
+                        }}
+                      >
+                        {[
+                          "COST_INCREASE",
+                          "COST_DECREASE",
+                          "MARKUP",
+                          "BASE_DISCOUNT",
+                          "MINIMUM",
+                          "REMOVE_MINIMUM",
+                          "VAT",
+                          "FIXED_PRICE",
+                        ].map((o) => (
+                          <option key={o}>{o}</option>
+                        ))}
+                      </select>
+                      {["MARKUP", "BASE_DISCOUNT", "FIXED_PRICE"].includes(
+                        bulk.operation,
+                      ) && (
+                        <select
+                          aria-label={t("Selling level", "مستوى سعر البيع")}
+                          value={bulk.sellingLevel ?? "DEFAULT"}
+                          onChange={(e) => {
+                            setBulk({ ...bulk, sellingLevel: e.target.value });
+                            setPreview(null);
+                          }}
+                        >
+                          <option value="DEFAULT">
+                            {t("Product default", "افتراضي الصنف")}
+                          </option>
+                          <option value="ALL">
+                            {t("All active levels", "كل المستويات النشطة")}
+                          </option>
+                          {levelCodes.map((code) => (
+                            <option value={code} key={code}>
+                              {levelLabel(code, t)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        className="compact"
+                        value={bulk.value}
+                        onChange={(e) => {
+                          setBulk({ ...bulk, value: e.target.value });
+                          setPreview(null);
+                        }}
+                      />
+                      <button
+                        onClick={() =>
+                          run(async () =>
+                            setPreview(
+                              await api("products/bulk", "POST", {
+                                ...bulk,
+                                items: data
+                                  .filter((p: any) => selected.includes(p.id))
+                                  .map((p: any) => ({
+                                    id: p.id,
+                                    version: p.version,
+                                  })),
+                                confirm: false,
+                              }),
+                            ),
+                          )
+                        }
+                      >
+                        {t("Preview", "معاينة")}
+                      </button>
+                    </div>
+                    {preview && (
+                      <>
+                        <div className="table-scroll">
+                          <table>
+                            <tbody>
+                              {preview.preview.map((r: any) => (
+                                <tr key={r.id}>
+                                  <td>{r.partNumber}</td>
+                                  <td>
+                                    {r.levels.map((l: any) => (
+                                      <div key={l.code}>
+                                        {levelLabel(l.code, t)}: {l.before} →{" "}
+                                        {l.after}
+                                      </div>
+                                    ))}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <button
+                          className="primary"
+                          disabled={busy}
+                          onClick={() =>
+                            run(async () => {
+                              await api("products/bulk", "POST", {
+                                ...bulk,
+                                items: data
+                                  .filter((p: any) => selected.includes(p.id))
+                                  .map((p: any) => ({
+                                    id: p.id,
+                                    version: p.version,
+                                  })),
+                                confirm: true,
+                              });
+                              setSelected([]);
+                              setPreview(null);
+                            })
+                          }
+                        >
+                          {t("Confirm bulk update", "تأكيد التحديث الجماعي")}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {["brands", "categories"].includes(section) && (
+              <>
+                <button
+                  className="primary"
+                  onClick={() =>
+                    setEdit({
+                      name: "",
+                      active: true,
+                      defaultMethod: "COST_MARKUP",
+                    })
+                  }
+                >
+                  {t("Add", "إضافة")}
+                </button>
+                <table>
+                  <tbody>
+                    {data.map((row: any) => (
+                      <tr key={row.id}>
+                        <td>{row.name}</td>
+                        <td>
+                          {row.active
+                            ? t("Active", "نشط")
+                            : t("Archived", "مؤرشف")}
+                        </td>
+                        <td>
+                          <button
+                            onClick={() =>
+                              setEdit({
+                                id: row.id,
+                                name: row.name,
+                                active: row.active,
+                                defaultMethod:
+                                  row.default_method || "COST_MARKUP",
+                              })
+                            }
+                          >
+                            {t("Edit", "تعديل")}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+            {section === "users" && (
+              <>
+                <button
+                  className="primary"
+                  onClick={() =>
+                    setEdit({
+                      username: "",
+                      name: "",
+                      role: "STAFF",
+                      permissions: [],
+                      maxDiscount: null,
+                      disabled: false,
+                      password: "",
+                    })
+                  }
+                >
+                  {t("Add user", "إضافة مستخدم")}
+                </button>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("Name", "الاسم")}</th>
+                      <th>{t("Role", "الدور")}</th>
+                      <th>{t("Status", "الحالة")}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map((u: any) => (
+                      <tr key={u.id}>
+                        <td>
+                          {u.name}
+                          <small>{u.username}</small>
+                        </td>
+                        <td>{u.role_id}</td>
+                        <td>
+                          {u.disabled
+                            ? t("Disabled", "معطل")
+                            : t("Active", "نشط")}
+                        </td>
+                        <td>
+                          <button
+                            onClick={() =>
+                              setEdit({
+                                id: u.id,
+                                username: u.username,
+                                name: u.name,
+                                role: u.role_id,
+                                permissions: u.permissions,
+                                maxDiscount: u.max_discount,
+                                disabled: u.disabled,
+                              })
+                            }
+                          >
+                            {t(
+                              "Edit / reset password",
+                              "تعديل / إعادة تعيين كلمة المرور",
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+            {section === "roles" && (
+              <>
+                <button
+                  onClick={() =>
+                    setEdit({ id: "", permissions: [], maxDiscount: "5" })
+                  }
+                >
+                  {t("Add role", "إضافة دور")}
+                </button>
+                {data.roles.map((r: any) => (
+                  <div className="quote-line" key={r.id}>
+                    <span>
+                      <strong>{r.id}</strong>
+                      <small>{r.permissions.join(", ")}</small>
+                    </span>
+                    <span>{r.max_discount}%</span>
+                    <button
+                      disabled={r.id === "ADMIN"}
+                      onClick={() =>
+                        setEdit({
+                          id: r.id,
+                          permissions: r.permissions,
+                          maxDiscount: r.max_discount,
+                        })
+                      }
+                    >
+                      {t("Edit", "تعديل")}
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+            {["history", "audit"].includes(section) && (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("Date", "التاريخ")}</th>
+                      <th>{t("Action / product", "الإجراء / الصنف")}</th>
+                      <th>{t("User", "المستخدم")}</th>
+                      <th>{t("Details", "التفاصيل")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map((r: any) => (
+                      <tr key={r.id}>
+                        <td>{new Date(r.created_at).toLocaleString()}</td>
+                        <td>
+                          <strong>{describeHistory(r,t).title}</strong>
+                          <div>{describeHistory(r,t).subject}</div>
+                          <small>{describeHistory(r,t).source}</small>
+                        </td>
+                        <td>{r.actor || t("System", "النظام")}</td>
+                        <td>
+                          <HistoryDetails row={r} t={t} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {section === "backups" && (
+              <>
+                <p className="notice">
+                  {t(
+                    "Backups run in a dedicated service and persist outside the application container. Restore using the documented isolated restore procedure.",
+                    "تعمل النسخ الاحتياطية في خدمة مستقلة وتحفظ خارج حاوية التطبيق. استخدم دليل الاستعادة المعزولة.",
+                  )}
+                </p>
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => run(() => api("admin/backups", "POST", {}))}
+                >
+                  {t("Back up now", "نسخ احتياطي الآن")}
+                </button>
+                <table>
+                  <tbody>
+                    {data.map((b: any) => (
+                      <tr key={b.id}>
+                        <td>{new Date(b.created_at).toLocaleString()}</td>
+                        <td>{b.status}</td>
+                        <td>
+                          {b.filename || "—"}
+                          <small>{b.error}</small>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+            {section === "settings" && (
+              <Settings
+                t={t}
+                initial={data}
+                onSave={(p) => run(() => api("admin/settings", "PUT", p))}
+              />
+            )}
+          </>
+        )}
+        {edit && section === "products" && (
+          <ProductEditor
+            t={t}
+            initial={edit}
+            onClose={() => setEdit(null)}
+            onSave={async (p) => {
+              await api(
+                "products" + (edit.id ? "/" + edit.id : ""),
+                edit.id ? "PUT" : "POST",
+                p,
+              );
+              setEdit(null);
+              await load();
+            }}
+          />
+        )}
+        {edit && section !== "products" && (
+          <div className="modal-backdrop">
+            <form
+              className="modal"
+              onSubmit={(e) => {
+                e.preventDefault();
+                run(async () => {
+                  const { id, ...rest } = edit;
+                  const payload =
+                    section === "roles"
+                      ? edit
+                      : {
+                          ...rest,
+                          ...(rest.password === ""
+                            ? { password: undefined }
+                            : {}),
+                        };
+                  await api(
+                    "admin/" +
+                      section +
+                      (section !== "roles" && id ? "/" + id : ""),
+                    "POST",
+                    payload,
+                  );
+                  setEdit(null);
+                });
+              }}
+            >
+              <div className="section-title">
+                <h2>{t("Edit record", "تعديل السجل")}</h2>
+                <button type="button" onClick={() => setEdit(null)}>
+                  ×
+                </button>
+              </div>
+              <div className="form-grid">
+                {section === "roles"
+                  ? editField("id", t("Role ID", "معرف الدور"))
+                  : editField("name", t("Name", "الاسم"))}
+                {section === "users" && (
+                  <>
+                    {editField("username", t("Username", "اسم المستخدم"))}
+                    {editField(
+                      "password",
+                      t(
+                        "New password (12+ characters)",
+                        "كلمة مرور جديدة (١٢ حرفاً أو أكثر)",
+                      ),
+                      "password",
+                    )}
+                    <label>
+                      {t("Role", "الدور")}
+                      <select
+                        value={edit.role}
+                        onChange={(e) =>
+                          setEdit({ ...edit, role: e.target.value })
+                        }
+                      >
+                        {roles?.roles.map((r: any) => (
+                          <option key={r.id}>{r.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={edit.disabled}
+                        onChange={(e) =>
+                          setEdit({ ...edit, disabled: e.target.checked })
+                        }
+                      />
+                      {t("Disabled", "معطل")}
+                    </label>
+                  </>
+                )}
+                {["users", "roles"].includes(section) && (
+                  <>
+                    <label>
+                      {t(
+                        "Maximum discount % (empty = role default)",
+                        "الحد الأقصى للخصم % (فارغ = افتراضي الدور)",
+                      )}
+                      <input
+                        value={edit.maxDiscount ?? ""}
+                        onChange={(e) =>
+                          setEdit({
+                            ...edit,
+                            maxDiscount: e.target.value || null,
+                          })
+                        }
+                      />
+                    </label>
+                    <fieldset>
+                      <legend>
+                        {t("Explicit permissions", "صلاحيات صريحة")}
+                      </legend>
+                      {(roles?.permissions || data?.permissions || []).map(
+                        (p: string) => (
+                          <label className="check" key={p}>
+                            <input
+                              type="checkbox"
+                              checked={edit.permissions.includes(p)}
+                              onChange={(e) =>
+                                setEdit({
+                                  ...edit,
+                                  permissions: e.target.checked
+                                    ? [...edit.permissions, p]
+                                    : edit.permissions.filter(
+                                        (v: string) => v !== p,
+                                      ),
+                                })
+                              }
+                            />
+                            {p}
+                          </label>
+                        ),
+                      )}
+                    </fieldset>
+                  </>
+                )}
+                {["brands", "categories"].includes(section) && (
+                  <>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={edit.active}
+                        onChange={(e) =>
+                          setEdit({ ...edit, active: e.target.checked })
+                        }
+                      />
+                      {t("Active", "نشط")}
+                    </label>
+                    {section === "brands" && (
+                      <label>
+                        {t("Default method", "الطريقة الافتراضية")}
+                        <select
+                          value={edit.defaultMethod}
+                          onChange={(e) =>
+                            setEdit({ ...edit, defaultMethod: e.target.value })
+                          }
+                        >
+                          <option>COST_MARKUP</option>
+                          <option>LIST_DISCOUNT</option>
+                        </select>
+                      </label>
+                    )}
+                  </>
+                )}
+              </div>
+              {error && <div className="notice error">{error}</div>}
+              <button className="primary" disabled={busy}>
+                {t("Save changes", "حفظ التغييرات")}
+              </button>
+            </form>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+function Settings({
+  t,
+  initial,
+  onSave,
+}: {
+  t: Translate;
+  initial: any;
+  onSave: (p: any) => Promise<any>;
+}) {
+  const [p, setP] = useState(initial);
+  const labels: Record<string, [string, string]> = {
+    companyName: ["Company name", "اسم الشركة"],
+    companyArabic: ["Arabic company name", "اسم الشركة بالعربية"],
+    currency: ["Currency", "العملة"],
+    vat: ["Default VAT %", "الضريبة الافتراضية %"],
+    draftPrefix: ["Draft prefix", "بادئة المسودة"],
+    quotePrefix: ["Quotation prefix", "بادئة العرض"],
+    staffDiscount: ["Staff discount limit %", "حد خصم الموظف %"],
+    minimumVisible: [
+      "Show minimum prices to staff",
+      "عرض الحد الأدنى للموظفين",
+    ],
+    showMaxDiscount: ["Show maximum discount", "عرض الحد الأقصى للخصم"],
+    allowOfflineCache: [
+      "Allow offline cached prices",
+      "السماح بأسعار مخزنة دون اتصال",
+    ],
+    pdfUnitPrices: ["PDF unit prices", "أسعار الوحدة في PDF"],
+    backupRetentionDays: ["Backup retention days", "أيام الاحتفاظ بالنسخ"],
+  };
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(p);
+      }}
+    >
+      <div className="form-grid">
+        {Object.entries(labels).map(([k, [en, ar]]) => (
+          <label className={typeof p[k] === "boolean" ? "check" : ""} key={k}>
+            {typeof p[k] === "boolean" ? (
+              <>
+                <input
+                  type="checkbox"
+                  checked={p[k]}
+                  onChange={(e) => setP({ ...p, [k]: e.target.checked })}
+                />
+                {t(en, ar)}
+              </>
+            ) : (
+              <>
+                {t(en, ar)}
+                {k === "pdfUnitPrices" ? (
+                  <select
+                    value={p[k]}
+                    onChange={(e) => setP({ ...p, [k]: e.target.value })}
+                  >
+                    {["BOTH", "EXCL", "INCL"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    readOnly={k === "currency"}
+                    value={p[k]}
+                    onChange={(e) =>
+                      setP({
+                        ...p,
+                        [k]:
+                          k === "backupRetentionDays"
+                            ? Number(e.target.value)
+                            : e.target.value,
+                      })
+                    }
+                  />
+                )}
+              </>
+            )}
+          </label>
+        ))}
+      </div>
+      <p className="notice">
+        {t(
+          "Default VAT applies to new entries; existing product VAT changes require a reviewed bulk update. Issued quotations remain unchanged.",
+          "الضريبة الافتراضية للأصناف الجديدة. تحديث ضريبة الأصناف الحالية يتطلب مراجعة جماعية. العروض الصادرة لا تتغير.",
+        )}
+      </p>
+      <button className="primary">{t("Save settings", "حفظ الإعدادات")}</button>
+    </form>
+  );
+}
