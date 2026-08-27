@@ -20,6 +20,7 @@ import threading
 import signal
 import socket
 import tempfile
+import stat
 from urllib.parse import urlsplit
 import ipaddress
 from collections import deque
@@ -300,6 +301,13 @@ def parse_public_url(value):
                 'HTTPS requires a valid domain name')
     origin = f'{parsed.scheme}://{host}'
     return {'url': origin + BASE_PATH, 'origin': origin, 'host': host, 'scheme': parsed.scheme}
+
+def safe_entries(directory):
+    path = Path(directory)
+    if not path.exists():
+        return []
+    require(path.is_dir() and not path.is_symlink(), f'Unsafe cleanup directory: {path}')
+    return sorted(path.iterdir(), key=lambda item: item.name)
 
 def _site_blocks(text):
     """Return simple top-level Caddy site blocks; refuse structurally uncertain input."""
@@ -1037,6 +1045,57 @@ class Deployment:
         self.event('RESTORE_CHECKED', backup=backup.name, resources=str(drill))
         print(f'Restore counts and quotation sequence verified. Isolated stopped resources retained: {drill}')
 
+    def cleanup(self):
+        self.load_environment()
+        phase_file = self.state / 'deployment.json'
+        require(phase_file.is_file(), 'Cleanup requires a deployment state file')
+        phase = json.loads(phase_file.read_text()).get('phase')
+        require(phase == 'HEALTHY', 'Cleanup is allowed only after a healthy deployment')
+        current = (self.root / 'current').resolve(strict=True)
+        require(current.parent == self.root / 'releases' and current.is_dir(), 'Current release points outside the deployment')
+        current_name = current.name
+
+        releases = [entry for entry in safe_entries(self.root / 'releases') if entry.is_dir()]
+        keep_releases = {current_name}
+        for release in sorted(releases, key=lambda item: item.stat().st_mtime, reverse=True):
+            if release.name != current_name:
+                keep_releases.add(release.name)
+                break
+        removable_releases = [entry for entry in releases if entry.name not in keep_releases]
+
+        cutoff = time.time() - 14 * 24 * 60 * 60
+        removable_recovery = [entry for entry in safe_entries(self.root / 'recovery')
+                              if entry.is_dir() and entry.stat().st_mtime < cutoff]
+        removable_logs = [entry for entry in safe_entries(self.root / 'logs')
+                          if entry.is_file() and entry.stat().st_mtime < cutoff]
+
+        print('Cleanup plan:')
+        print(f'  Keep releases: {", ".join(sorted(keep_releases))}')
+        for entry in removable_releases:
+            print(f'  Remove release: {entry}')
+        for entry in removable_recovery:
+            print(f'  Remove recovery backup: {entry}')
+        for entry in removable_logs:
+            print(f'  Remove log: {entry}')
+        print('  Prune unused Podman images')
+
+        if self.args.dry_run:
+            print('Dry-run cleanup only. No releases, images, logs or recovery backups were removed.')
+            return
+
+        for entry in removable_releases:
+            shutil.rmtree(entry)
+        for entry in removable_recovery:
+            shutil.rmtree(entry)
+        for entry in removable_logs:
+            entry.unlink()
+        run(['podman', 'image', 'prune', '-a', '-f'], timeout=900, live=True)
+        self.event('CLEANUP', keptReleases=sorted(keep_releases),
+                   removedReleases=[entry.name for entry in removable_releases],
+                   removedRecovery=[entry.name for entry in removable_recovery],
+                   removedLogs=[entry.name for entry in removable_logs])
+        print('Cleanup complete. Current release, one rollback release, current state, and shared secrets were preserved.')
+
     def setup_token(self):
         self.load_environment()
         print('Current deployment setup token (handle privately; first-run setup only):')
@@ -1048,6 +1107,9 @@ class Deployment:
         if self.args.command == 'setup-token':
             self.setup_token()
             return
+        if self.args.command == 'cleanup':
+            self.cleanup()
+            return
         if self.args.command == 'install':
             if self.args.resume:
                 self.load_environment()
@@ -1055,12 +1117,15 @@ class Deployment:
             else:
                 require(not self.root.exists(), 'Existing installation directory: use install --resume only for an interrupted first install')
                 self.port()
-        if self.args.command != 'install':
+        if self.args.command not in ['install', 'status', 'start', 'stop', 'setup-token', 'cleanup']:
             self.current()
             self.port(int(self.env['APP_PORT']))
         if self.args.dry_run:
             if self.args.command == 'set-public-url':
                 self.public_url(dry_run=True)
+            if self.args.command == 'cleanup':
+                self.cleanup()
+                return
             if self.args.command in ['install', 'upgrade']:
                 _, requested_commit = self.source(fetch=False)
                 if self.args.replace_failed_release or (self.args.recover_install and requested_commit != json.loads((self.state / 'install.json').read_text()).get('commit')):
@@ -1093,6 +1158,8 @@ class Deployment:
                     self.rollback()
                 elif command == 'set-public-url':
                     self.public_url()
+                elif command == 'cleanup':
+                    self.cleanup()
                 elif command == 'start':
                     phase = json.loads((self.state / 'deployment.json').read_text()).get('phase')
                     require(phase == 'HEALTHY', 'Incomplete deployment must be recovered before boot startup')
@@ -1108,7 +1175,7 @@ class Deployment:
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description='AMT-only VPS deployment; no root/user password changes or public proxy configuration')
-    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'setup-token', 'set-public-url'])
+    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'cleanup', 'setup-token', 'set-public-url'])
     parser.add_argument('--source', default=str(Path(__file__).resolve().parents[2]), help='Clean Git checkout; not a deployed release directory')
     parser.add_argument('--ref', default='origin/master')
     parser.add_argument('--release', help='Exact retained release directory for rollback')
@@ -1126,7 +1193,7 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     if not args.command:
         require(sys.stdin.isatty(), 'Non-interactive use requires an explicit command and --yes')
-        options = ['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'setup-token', 'set-public-url']
+        options = ['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'cleanup', 'setup-token', 'set-public-url']
         for i, item in enumerate(options, 1):
             print(f'{i}. {item}')
         choice = input('Select command: ').strip()

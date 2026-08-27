@@ -80,7 +80,7 @@ class SafetyTests(unittest.TestCase):
         m.check_memory(512 * 1024, 'start')
         with self.assertRaises(m.DeployError):
             m.check_memory(511 * 1024, 'start')
-        for command in ('status', 'stop', 'backup', 'rotate-secrets', 'setup-token'):
+        for command in ('status', 'stop', 'backup', 'rotate-secrets', 'setup-token', 'cleanup'):
             m.check_memory(0, command)
 
     def test_sequential_bounded_native_builds(self):
@@ -133,6 +133,11 @@ class SafetyTests(unittest.TestCase):
         args = m.arguments(['setup-token'])
         self.assertEqual(args.command, 'setup-token')
         self.assertFalse(args.dry_run)
+
+    def test_cleanup_command_is_accepted(self):
+        args = m.arguments(['cleanup', '--dry-run'])
+        self.assertEqual(args.command, 'cleanup')
+        self.assertTrue(args.dry_run)
 
     def test_resumed_build_uses_host_network_and_original_commit(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -294,6 +299,110 @@ class SafetyTests(unittest.TestCase):
         d.current.assert_not_called()
         self.assertIn('Current deployment setup token', output.getvalue())
         self.assertIn(d.env['SETUP_TOKEN'], output.getvalue())
+
+    def test_cleanup_dry_run_keeps_current_and_latest_rollback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.args = m.arguments(['cleanup', '--dry-run'])
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'deployment.json').write_text(json.dumps({'phase': 'HEALTHY'}))
+            releases = root / 'releases'
+            releases.mkdir()
+            shared = root / 'shared'
+            shared.mkdir()
+            logs = root / 'logs'
+            logs.mkdir()
+            recovery = root / 'recovery'
+            recovery.mkdir()
+            current = releases / 'cccccccccccc-33333333'
+            older_keep = releases / 'bbbbbbbbbbbb-22222222'
+            older_drop = releases / 'aaaaaaaaaaaa-11111111'
+            for entry in (older_drop, older_keep, current):
+                entry.mkdir()
+                (entry / 'release.json').write_text('{}')
+            now = time.time()
+            os.utime(older_drop, (now - 300, now - 300))
+            os.utime(older_keep, (now - 200, now - 200))
+            os.utime(current, (now - 100, now - 100))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180)
+            d.envfile.write_text(m.env_text(d.env))
+            d.load_environment = Mock()
+            (root / 'current').symlink_to(current, target_is_directory=True)
+            old_log = logs / 'old.log'
+            old_log.write_text('x')
+            os.utime(old_log, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
+            old_backup = recovery / '20200101T000000Z-deadbeef'
+            old_backup.mkdir()
+            os.utime(old_backup, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), patch.object(m, 'run') as run:
+                d.cleanup()
+            text = output.getvalue()
+            self.assertIn(current.name, text)
+            self.assertIn(older_keep.name, text)
+            self.assertIn(str(older_drop), text)
+            self.assertIn(str(old_log), text)
+            self.assertIn(str(old_backup), text)
+            run.assert_not_called()
+            self.assertTrue(older_drop.exists())
+            self.assertTrue(old_log.exists())
+            self.assertTrue(old_backup.exists())
+
+    def test_cleanup_removes_old_artifacts_and_prunes_images(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.args = m.arguments(['cleanup'])
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'deployment.json').write_text(json.dumps({'phase': 'HEALTHY'}))
+            releases = root / 'releases'
+            releases.mkdir()
+            shared = root / 'shared'
+            shared.mkdir()
+            logs = root / 'logs'
+            logs.mkdir()
+            recovery = root / 'recovery'
+            recovery.mkdir()
+            current = releases / 'cccccccccccc-33333333'
+            older_keep = releases / 'bbbbbbbbbbbb-22222222'
+            older_drop = releases / 'aaaaaaaaaaaa-11111111'
+            for entry in (older_drop, older_keep, current):
+                entry.mkdir()
+                (entry / 'release.json').write_text('{}')
+            now = time.time()
+            os.utime(older_drop, (now - 300, now - 300))
+            os.utime(older_keep, (now - 200, now - 200))
+            os.utime(current, (now - 100, now - 100))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180)
+            d.envfile.write_text(m.env_text(d.env))
+            d.load_environment = Mock()
+            (root / 'current').symlink_to(current, target_is_directory=True)
+            old_log = logs / 'old.log'
+            old_log.write_text('x')
+            os.utime(old_log, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
+            old_backup = recovery / '20200101T000000Z-deadbeef'
+            old_backup.mkdir()
+            os.utime(old_backup, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
+            d.event = Mock()
+            with patch.object(m, 'run', return_value=result()) as run:
+                d.cleanup()
+            self.assertFalse(older_drop.exists())
+            self.assertTrue(older_keep.exists())
+            self.assertTrue(current.exists())
+            self.assertFalse(old_log.exists())
+            self.assertFalse(old_backup.exists())
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ['podman', 'image', 'prune', '-a', '-f'])
+            d.event.assert_called_once()
 
     def resume_fixture(self, temp, candidate=None):
         d = self.deployment()

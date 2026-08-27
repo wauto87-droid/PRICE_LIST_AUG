@@ -53,6 +53,21 @@ bash deploy.sh upgrade --yes --access-verified --verbose
 Use `recover-install` only when the first install was interrupted or deployment
 state is incomplete. Do not use it as the routine update path.
 
+## Clean old builds safely
+
+After a successful healthy deployment, the guided cleanup command keeps the
+current release plus one rollback release, removes older release directories,
+deletes old logs and recovery backups, and prunes unused Podman images:
+
+```sh
+bash deploy.sh cleanup --dry-run
+bash deploy.sh cleanup --yes --access-verified --verbose
+```
+
+It never removes `/opt/shop-pricelist/current`, `/opt/shop-pricelist/shared/.env`,
+or the newest rollback release. Use the dry run first and keep recovery files
+until the deployment is confirmed stable.
+
 The inspected VPS journal has an older failed build but no candidate release,
 database volume, AMT container, or migration checkpoint. After this commit is
 pushed and the VPS checkout is clean, replace only that failed release pointer:
