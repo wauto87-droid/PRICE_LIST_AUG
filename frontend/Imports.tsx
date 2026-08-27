@@ -34,11 +34,38 @@ const synonyms: Record<string, string[]> = {
   partNumber: ["partnumber", "partno", "itemcode", "code", "item"],
   description: ["description", "desc", "itemdescription"],
   cost: ["cost", "purchasecost"],
-  listPrice: ["price", "listprice"],
+  listPrice: ["price", "listprice", "publicpricelist"],
   baseDiscount: ["discount", "disc"],
   minimum: ["minprice", "minimumprice"],
   markup: ["markup"],
 };
+type DiscountPreset = {
+  finalDiscount: string;
+  wholesaleDiscount: string;
+  minimumDiscount: string;
+};
+const defaultDiscountPreset = (): DiscountPreset => ({
+  finalDiscount: "0",
+  wholesaleDiscount: "0",
+  minimumDiscount: "0",
+});
+const defaultImportDefaults = (vat = "15") => ({
+  method: "LIST_DISCOUNT",
+  markup: "25",
+  baseDiscount: "0",
+  vat,
+  minimumEnabled: false,
+});
+const previewPrice = (discount: string, listPrice = 100) => {
+  const percent = Number(discount || 0);
+  if (!Number.isFinite(percent)) return "0.00";
+  return (listPrice * (1 - percent / 100)).toFixed(2);
+};
+const cleanPreset = (preset: DiscountPreset): DiscountPreset => ({
+  finalDiscount: String(preset.finalDiscount ?? "0"),
+  wholesaleDiscount: String(preset.wholesaleDiscount ?? "0"),
+  minimumDiscount: String(preset.minimumDiscount ?? "0"),
+});
 export default function Imports({
   t,
   actionBusy,
@@ -54,13 +81,15 @@ export default function Imports({
     [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
     [mapping, setMapping] = useState<Record<string, string>>({}),
-    [defaults, setDefaults] = useState<any>({
-      method: "LIST_DISCOUNT",
-      markup: "25",
-      baseDiscount: "0",
-      vat: "15",
-      minimumEnabled: false,
-    }),
+    [defaults, setDefaults] = useState<any>(defaultImportDefaults()),
+    [guidedMode, setGuidedMode] = useState(false),
+    [guidedGroupColumn, setGuidedGroupColumn] = useState("Activity"),
+    [guidedDefaultPreset, setGuidedDefaultPreset] = useState<DiscountPreset>(
+      defaultDiscountPreset(),
+    ),
+    [guidedGroupPresets, setGuidedGroupPresets] = useState<
+      Record<string, DiscountPreset>
+    >({}),
     [editing, setEditing] = useState<any>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -70,9 +99,19 @@ export default function Imports({
   }, []);
   useEffect(() => {
     api("auth/me")
-      .then((s) => setDefaults((d: any) => ({ ...d, vat: s.settings.vat })))
+      .then((s) =>
+        setDefaults((d: any) => ({ ...defaultImportDefaults(s.settings.vat), ...d, vat: s.settings.vat })),
+      )
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    if (!guidedMode) return;
+    setDefaults((current: any) => ({
+      ...current,
+      method: "LIST_DISCOUNT",
+      minimumEnabled: true,
+    }));
+  }, [guidedMode]);
   useEffect(() => {
     if (!jobs.some((j) => ["UPLOADED", "PROCESSING"].includes(j.status)))
       return;
@@ -94,11 +133,31 @@ export default function Imports({
   }
   async function open(id: string) {
     const j = await api("imports/" + id);
+    const savedDefaults = j.defaults || {};
+    const guided = savedDefaults.guidedImport;
+    const { guidedImport, ...productDefaults } = savedDefaults;
     setJob(j);
     setConfirmation(null);
     setPage(0);
     setMode(j.mode || "UPDATE_ONLY");
-    setDefaults(Object.keys(j.defaults).length ? j.defaults : defaults);
+    setDefaults(
+      Object.keys(productDefaults).length
+        ? { ...defaultImportDefaults(productDefaults.vat || defaults.vat), ...productDefaults }
+        : defaultImportDefaults(defaults.vat),
+    );
+    setGuidedMode(guided?.mode === "PUBLIC_PRICE_DISCOUNT");
+    setGuidedGroupColumn(guided?.groupColumn || (j.summary.columns || []).find((c: string) => c === "Activity") || "Activity");
+    setGuidedDefaultPreset(
+      guided?.defaultPreset ? cleanPreset(guided.defaultPreset) : defaultDiscountPreset(),
+    );
+    setGuidedGroupPresets(
+      Object.fromEntries(
+        Object.entries(guided?.groupPresets || {}).map(([key, value]) => [
+          key,
+          cleanPreset(value as DiscountPreset),
+        ]),
+      ),
+    );
     if (Object.keys(j.mapping).length) setMapping(j.mapping);
     else {
       const auto: Record<string, string> = {};
@@ -114,6 +173,30 @@ export default function Imports({
       setMapping(auto);
     }
   }
+  const rawGroupValues = ((job?.rows || []) as any[])
+    .map((row) => String(row.raw?.[guidedGroupColumn] ?? "").trim())
+    .filter(Boolean);
+  const groupValues = [...new Set(rawGroupValues)].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const presetForGroup = (groupValue: string) =>
+    guidedGroupPresets[groupValue] || guidedDefaultPreset;
+  const saveDefaults = guidedMode
+    ? {
+        ...defaults,
+        guidedImport: {
+          mode: "PUBLIC_PRICE_DISCOUNT",
+          groupColumn: guidedGroupColumn || undefined,
+          defaultPreset: cleanPreset(guidedDefaultPreset),
+          groupPresets: Object.fromEntries(
+            Object.entries(guidedGroupPresets).map(([groupValue, preset]) => {
+              const typedPreset = preset as DiscountPreset;
+              return [groupValue, cleanPreset(typedPreset)];
+            }),
+          ),
+        },
+      }
+    : defaults;
   return (
     <>
       <div className="actions wrap">
@@ -267,6 +350,26 @@ export default function Imports({
                       </option>
                     </select>
                   </label>
+                  <label>
+                    {t("Import pricing flow", "مسار تسعير الاستيراد")}
+                    <select
+                      value={guidedMode ? "PUBLIC_PRICE_DISCOUNT" : "STANDARD"}
+                      onChange={(e) => setGuidedMode(e.target.value === "PUBLIC_PRICE_DISCOUNT")}
+                    >
+                      <option value="STANDARD">
+                        {t(
+                          "Standard field mapping",
+                          "ربط الحقول القياسي",
+                        )}
+                      </option>
+                      <option value="PUBLIC_PRICE_DISCOUNT">
+                        {t(
+                          "Discount-based public pricelist",
+                          "قائمة سعر عام مع خصومات",
+                        )}
+                      </option>
+                    </select>
+                  </label>
                   {mappingFields.map((field) => (
                     <label key={field}>
                       {field}
@@ -285,43 +388,187 @@ export default function Imports({
                       </select>
                     </label>
                   ))}
-                  <label>
-                    {t("Pricing method", "طريقة التسعير")}
-                    <select
-                      value={defaults.method}
-                      onChange={(e) =>
-                        setDefaults({ ...defaults, method: e.target.value })
-                      }
-                    >
-                      <option>COST_MARKUP</option>
-                      <option>LIST_DISCOUNT</option>
-                    </select>
-                  </label>
-                  {["markup", "baseDiscount", "vat"].map((f) => (
-                    <label key={f}>
-                      {f}
-                      <input
-                        value={defaults[f]}
-                        onChange={(e) =>
-                          setDefaults({ ...defaults, [f]: e.target.value })
-                        }
-                      />
-                    </label>
-                  ))}
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={defaults.minimumEnabled}
-                      onChange={(e) =>
-                        setDefaults({
-                          ...defaults,
-                          minimumEnabled: e.target.checked,
-                        })
-                      }
-                    />
-                    {t("Enable minimum protection", "تفعيل حماية الحد الأدنى")}
-                  </label>
+                  {guidedMode ? (
+                    <>
+                      <label>
+                        {t("Activity grouping column", "عمود تجميع النشاط")}
+                        <select
+                          value={guidedGroupColumn}
+                          onChange={(e) => setGuidedGroupColumn(e.target.value)}
+                        >
+                          <option value="">
+                            {t("No grouping", "بدون تجميع")}
+                          </option>
+                          {job.summary.columns?.map((c: string) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        {t("Default final discount %", "الخصم النهائي الافتراضي %")}
+                        <input
+                          value={guidedDefaultPreset.finalDiscount}
+                          onChange={(e) =>
+                            setGuidedDefaultPreset({
+                              ...guidedDefaultPreset,
+                              finalDiscount: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        {t("Default wholesale discount %", "خصم الجملة الافتراضي %")}
+                        <input
+                          value={guidedDefaultPreset.wholesaleDiscount}
+                          onChange={(e) =>
+                            setGuidedDefaultPreset({
+                              ...guidedDefaultPreset,
+                              wholesaleDiscount: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        {t("Default minimum discount %", "الحد الأدنى الافتراضي للخصم %")}
+                        <input
+                          value={guidedDefaultPreset.minimumDiscount}
+                          onChange={(e) =>
+                            setGuidedDefaultPreset({
+                              ...guidedDefaultPreset,
+                              minimumDiscount: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        {t("VAT %", "نسبة الضريبة %")}
+                        <input
+                          value={defaults.vat}
+                          onChange={(e) =>
+                            setDefaults({ ...defaults, vat: e.target.value })
+                          }
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        {t("Pricing method", "طريقة التسعير")}
+                        <select
+                          value={defaults.method}
+                          onChange={(e) =>
+                            setDefaults({ ...defaults, method: e.target.value })
+                          }
+                        >
+                          <option>COST_MARKUP</option>
+                          <option>LIST_DISCOUNT</option>
+                        </select>
+                      </label>
+                      {["markup", "baseDiscount", "vat"].map((f) => (
+                        <label key={f}>
+                          {f}
+                          <input
+                            value={defaults[f]}
+                            onChange={(e) =>
+                              setDefaults({ ...defaults, [f]: e.target.value })
+                            }
+                          />
+                        </label>
+                      ))}
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={defaults.minimumEnabled}
+                          onChange={(e) =>
+                            setDefaults({
+                              ...defaults,
+                              minimumEnabled: e.target.checked,
+                            })
+                          }
+                        />
+                        {t("Enable minimum protection", "تفعيل حماية الحد الأدنى")}
+                      </label>
+                    </>
+                  )}
                 </div>
+                {guidedMode && (
+                  <>
+                    <div className="notice">
+                      {t(
+                        "Guided mode treats the mapped public price column as listPrice, applies LIST_DISCOUNT pricing, creates a WHOLESALE level from the wholesale discount, and converts minimum discount % into the saved minimum final price.",
+                        "الوضع الموجه يعتبر عمود السعر العام المرتبط كسعر قائمة، ويطبق تسعير الخصم من القائمة، وينشئ مستوى جملة من خصم الجملة، ويحوّل نسبة الحد الأدنى للخصم إلى أقل سعر نهائي محفوظ.",
+                      )}
+                    </div>
+                    <div className="notice">
+                      {t(
+                        `Preview on public price 100: final ${previewPrice(guidedDefaultPreset.finalDiscount)}, wholesale ${previewPrice(guidedDefaultPreset.wholesaleDiscount)}, minimum floor ${previewPrice(guidedDefaultPreset.minimumDiscount)}.`,
+                        `مثال على سعر عام 100: النهائي ${previewPrice(guidedDefaultPreset.finalDiscount)}، الجملة ${previewPrice(guidedDefaultPreset.wholesaleDiscount)}، الحد الأدنى ${previewPrice(guidedDefaultPreset.minimumDiscount)}.`,
+                      )}
+                    </div>
+                    {!!groupValues.length && (
+                      <>
+                        <h4>
+                          {t(
+                            "Activity presets",
+                            "إعدادات النشاط",
+                          )}
+                        </h4>
+                        <div className="table-scroll">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>{t("Activity", "النشاط")}</th>
+                                <th>{t("Final discount %", "الخصم النهائي %")}</th>
+                                <th>{t("Wholesale discount %", "خصم الجملة %")}</th>
+                                <th>{t("Minimum discount %", "الحد الأدنى للخصم %")}</th>
+                                <th>{t("Preview", "معاينة")}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {groupValues.map((groupValue) => {
+                                const preset = presetForGroup(groupValue);
+                                return (
+                                  <tr key={groupValue}>
+                                    <td>{groupValue}</td>
+                                    {(
+                                      [
+                                        "finalDiscount",
+                                        "wholesaleDiscount",
+                                        "minimumDiscount",
+                                      ] as const
+                                    ).map((field) => (
+                                      <td key={field}>
+                                        <input
+                                          value={preset[field]}
+                                          onChange={(e) =>
+                                            setGuidedGroupPresets({
+                                              ...guidedGroupPresets,
+                                              [groupValue]: {
+                                                ...preset,
+                                                [field]: e.target.value,
+                                              },
+                                            })
+                                          }
+                                        />
+                                      </td>
+                                    ))}
+                                    <td>
+                                      {t("Final", "النهائي")}: {previewPrice(preset.finalDiscount)}
+                                      {" · "}
+                                      {t("Wholesale", "الجملة")}: {previewPrice(preset.wholesaleDiscount)}
+                                      {" · "}
+                                      {t("Minimum", "الحد الأدنى")}: {previewPrice(preset.minimumDiscount)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
                 <button
                   disabled={busy || actionBusy}
                   onClick={() =>
@@ -349,7 +596,7 @@ export default function Imports({
                           mapping: Object.fromEntries(
                             Object.entries(mapping).filter(([, v]) => v),
                           ),
-                          defaults,
+                          defaults: saveDefaults,
                           version: job.version,
                           mode,
                         });
@@ -429,6 +676,39 @@ export default function Imports({
                             t("Not mapped", "غير مربوط")}
                         </strong>
                         <small>{r.proposed?.description}</small>
+                        {guidedMode && mapping.listPrice && (
+                          <small>
+                            {t("Public price", "السعر العام")}:{" "}
+                            {String(r.raw?.[mapping.listPrice] ?? "—")}
+                            {guidedGroupColumn &&
+                              String(r.raw?.[guidedGroupColumn] ?? "").trim() && (
+                                <>
+                                  {" · "}
+                                  {t("Activity", "النشاط")}:{" "}
+                                  {String(r.raw?.[guidedGroupColumn] ?? "").trim()}
+                                </>
+                              )}
+                            {r.proposed?.listPrice && (
+                              <>
+                                {" · "}
+                                {t("Final", "النهائي")}:{" "}
+                                {previewPrice(String(r.proposed.baseDiscount), Number(r.proposed.listPrice))}
+                                {" · "}
+                                {t("Wholesale", "الجملة")}:{" "}
+                                {previewPrice(
+                                  String(
+                                    (r.proposed.levels || []).find(
+                                      (level: any) => level.code === "WHOLESALE",
+                                    )?.baseDiscount ?? "0",
+                                  ),
+                                  Number(r.proposed.listPrice),
+                                )}
+                                {" · "}
+                                {t("Minimum", "الحد الأدنى")}: {r.proposed.minimum}
+                              </>
+                            )}
+                          </small>
+                        )}
                         <details>
                           <summary>
                             {t("Source & differences", "المصدر والفروقات")}
@@ -644,6 +924,7 @@ export default function Imports({
                       <th>Part</th>
                       <th>Decision</th>
                       <th>Before → After (excl. VAT)</th>
+                      {guidedMode && <th>Guided pricing</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -664,6 +945,33 @@ export default function Imports({
                               </div>
                             ))}
                           </td>
+                          {guidedMode && (
+                            <td>
+                              {t("Public", "عام")}: {r.proposed?.listPrice ?? "—"}
+                              <div>
+                                {t("Final", "النهائي")}:{" "}
+                                {previewPrice(
+                                  String(r.proposed?.baseDiscount ?? "0"),
+                                  Number(r.proposed?.listPrice ?? 0),
+                                )}
+                              </div>
+                              <div>
+                                {t("Wholesale", "الجملة")}:{" "}
+                                {previewPrice(
+                                  String(
+                                    (r.proposed?.levels || []).find(
+                                      (level: any) => level.code === "WHOLESALE",
+                                    )?.baseDiscount ?? "0",
+                                  ),
+                                  Number(r.proposed?.listPrice ?? 0),
+                                )}
+                              </div>
+                              <div>
+                                {t("Minimum", "الحد الأدنى")}:{" "}
+                                {r.proposed?.minimum ?? "—"}
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       ))}
                   </tbody>

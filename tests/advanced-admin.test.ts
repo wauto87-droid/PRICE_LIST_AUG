@@ -303,6 +303,80 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
       },
     );
     await t.test(
+      "Guided public-price discount import applies Activity presets and minimum floors",
+      async () => {
+        const id = await stage(
+          [
+            {
+              part: "DISC-PPCCB",
+              description: "Preset A",
+              Activity: "PPCCB",
+              "Public Pricelist": "100",
+            },
+            {
+              part: "DISC-OTHER",
+              description: "Preset B",
+              Activity: "LIGHTING",
+              "Public Pricelist": "200",
+            },
+          ],
+          "CREATE_UPDATE",
+        );
+        await mapRows(db, actor, id, {
+          mapping: {
+            partNumber: "part",
+            description: "description",
+            listPrice: "Public Pricelist",
+          },
+          defaults: {
+            vat: "15",
+            guidedImport: {
+              mode: "PUBLIC_PRICE_DISCOUNT",
+              groupColumn: "Activity",
+              defaultPreset: {
+                finalDiscount: "60",
+                wholesaleDiscount: "55",
+                minimumDiscount: "70",
+              },
+              groupPresets: {
+                LIGHTING: {
+                  finalDiscount: "50",
+                  wholesaleDiscount: "45",
+                  minimumDiscount: "65",
+                },
+              },
+            },
+          },
+          version: 1,
+          mode: "CREATE_UPDATE",
+        });
+        const rows = (
+          await db.query(
+            "SELECT row_number,proposed,errors FROM import_rows WHERE job_id=$1 ORDER BY row_number",
+            [id],
+          )
+        ).rows;
+        assert.deepEqual(rows[0].errors, []);
+        assert.equal(rows[0].proposed.method, "LIST_DISCOUNT");
+        assert.equal(rows[0].proposed.defaultLevel, "END_CUSTOMER");
+        assert.equal(rows[0].proposed.baseDiscount, "60");
+        assert.equal(rows[0].proposed.minimum, "30.00");
+        assert.equal(
+          rows[0].proposed.levels.find((level: any) => level.code === "WHOLESALE")
+            .baseDiscount,
+          "55",
+        );
+        assert.deepEqual(rows[1].errors, []);
+        assert.equal(rows[1].proposed.baseDiscount, "50");
+        assert.equal(rows[1].proposed.minimum, "70.00");
+        assert.equal(
+          rows[1].proposed.levels.find((level: any) => level.code === "WHOLESALE")
+            .baseDiscount,
+          "45",
+        );
+      },
+    );
+    await t.test(
       "856-row selection evaluates the complete import, not preview page",
       async () => {
         const id = await stage(

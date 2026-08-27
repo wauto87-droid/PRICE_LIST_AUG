@@ -1,20 +1,106 @@
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import Decimal from "decimal.js";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
 import { audit, json } from "../core/audit";
 import { type Actor, requirePermission } from "../auth/service";
 import {
+  percent,
   productInput,
+  sellingLevels,
   validateProduct,
   normalizePart,
+  type ProductInput,
 } from "../pricing/engine";
 import { saveProduct, getProduct, toInput } from "../products/service";
 import { importCandidate } from "../pricing/transfer";
 import { levelDifferences } from "../bulk/service";
 import { lockActor } from "../auth/service";
+
+const guidedDiscountPresetSchema = z
+  .object({
+    finalDiscount: percent,
+    wholesaleDiscount: percent,
+    minimumDiscount: percent,
+  })
+  .strict();
+const guidedImportSchema = z
+  .object({
+    mode: z.literal("PUBLIC_PRICE_DISCOUNT"),
+    groupColumn: z.string().trim().max(200).optional(),
+    defaultPreset: guidedDiscountPresetSchema,
+    groupPresets: z.record(z.string(), guidedDiscountPresetSchema).default({}),
+  })
+  .strict();
+
+function splitImportDefaults(defaults: Record<string, unknown>) {
+  const { guidedImport, ...productDefaults } = defaults;
+  return {
+    productDefaults,
+    guidedImport:
+      guidedImport === undefined
+        ? null
+        : guidedImportSchema.parse(guidedImport),
+  };
+}
+
+function defaultLevelListPrice(existing: ProductInput) {
+  const code = existing.defaultLevel ?? "END_CUSTOMER";
+  return (
+    sellingLevels(existing).find((level) => level.code === code)?.listPrice ??
+    existing.listPrice
+  );
+}
+
+function applyGuidedDiscountDefaults(
+  raw: Record<string, unknown>,
+  mapped: Record<string, unknown>,
+  existing: ProductInput | undefined,
+  guidedImport: z.infer<typeof guidedImportSchema>,
+) {
+  const listPriceRaw =
+    mapped.listPrice ?? defaultLevelListPrice(existing as ProductInput);
+  assert(
+    listPriceRaw !== undefined &&
+      listPriceRaw !== null &&
+      String(listPriceRaw).trim() !== "",
+    400,
+    "Guided discount import requires a mapped Public price / listPrice value",
+  );
+  const listPrice = new Decimal(String(listPriceRaw).trim());
+  const groupValue = guidedImport.groupColumn
+    ? String(raw[guidedImport.groupColumn] ?? "").trim()
+    : "";
+  const preset =
+    (groupValue && guidedImport.groupPresets[groupValue]) ||
+    guidedImport.defaultPreset;
+  const minimum = listPrice
+    .mul(new Decimal(1).sub(new Decimal(preset.minimumDiscount).div(100)))
+    .toDecimalPlaces(2)
+    .toFixed(2);
+  const result: Record<string, unknown> = {
+    method: "LIST_DISCOUNT",
+    listPrice: listPrice.toString(),
+    baseDiscount: preset.finalDiscount,
+    minimumEnabled: true,
+    minimum,
+    "WHOLESALE.active": true,
+    "WHOLESALE.method": "LIST_DISCOUNT",
+    "WHOLESALE.listPrice": listPrice.toString(),
+    "WHOLESALE.baseDiscount": preset.wholesaleDiscount,
+  };
+  if (!existing) {
+    result.defaultLevel = "END_CUSTOMER";
+    result["END_CUSTOMER.active"] = true;
+    result["END_CUSTOMER.method"] = "LIST_DISCOUNT";
+    result["END_CUSTOMER.listPrice"] = listPrice.toString();
+    result["END_CUSTOMER.baseDiscount"] = preset.finalDiscount;
+  }
+  return result;
+}
 
 async function confirmationState(
   db: DB,
@@ -138,6 +224,9 @@ export async function mapRows(
     assert(job.version === data.version, 409, "Import changed. Reload");
     const mode = data.mode ?? job.mode;
     if (mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
+    const { productDefaults, guidedImport } = splitImportDefaults(
+      data.defaults,
+    );
     const rows = (
       await tx.query(
         "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number",
@@ -170,11 +259,22 @@ export async function mapRows(
             [normalizePart(proposed.partNumber)],
           )
         : null;
+      const current = duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined;
       try {
+        if (guidedImport)
+          proposed = {
+            ...proposed,
+            ...applyGuidedDiscountDefaults(
+              row.raw,
+              proposed,
+              current,
+              guidedImport,
+            ),
+          };
         proposed = importCandidate(
           proposed,
-          data.defaults,
-          duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined,
+          productDefaults,
+          current,
         );
         parsed = validateProduct(productInput.parse(proposed));
         if (!duplicate && mode === "UPDATE_ONLY")
