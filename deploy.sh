@@ -19,14 +19,13 @@ maybe_self_update() {
   before="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
   git -C "$SCRIPT_DIR" pull --ff-only origin master
   after="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
-  chmod 755 "$SELF_PATH" 2>/dev/null || true
 
   [[ "$before" != "$after" ]] || return 0
   changed="$(git -C "$SCRIPT_DIR" diff --name-only "$before" "$after" -- deploy.sh scripts/deployment/manage.py)"
   [[ -n "$changed" ]] || return 0
 
   echo 'deploy.sh: refreshed deployment entrypoint; restarting with latest code.' >&2
-  exec "$SELF_PATH" "$@"
+  exec bash "$SELF_PATH" "$@"
 }
 
 maybe_self_update "$@"
