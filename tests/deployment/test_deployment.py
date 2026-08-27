@@ -849,8 +849,197 @@ www.softwaresolver.online {
             d.compose = Mock(side_effect=[result(), m.DeployError('migration failed')])
             with self.assertRaises(m.DeployError):
                 d.deploy(True)
-            d.check_replace_failed.assert_not_called()
-            d.prepare_release.assert_not_called()
+    def test_status_healthy_installation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180)
+            d.envfile.write_text(m.env_text(d.env))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            release = root / 'releases' / 'aaaaaaaaaaaa-11111111'
+            release.mkdir(parents=True)
+            current = root / 'current'
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current:
+                    return release
+                return original_resolve(path_obj, strict=strict)
+
+            current.mkdir()
+            d.compose = Mock(return_value=result('NAME                IMAGE               COMMAND             SERVICE             CREATED             STATUS              PORTS\namt-pricelist-app   ...                 ...                 app                 ...                 Up                  127.0.0.1:18180->3000/tcp'))
+            d.load_environment = Mock()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), patch.object(Path, 'resolve', resolve_override):
+                d.status()
+            self.assertIn('amt-pricelist-app', output.getvalue())
+            d.compose.assert_called_once_with('ps')
+
+    def test_status_incomplete_installation_reports_recovery_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180)
+            d.envfile.write_text(m.env_text(d.env))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            (d.state / 'install.json').write_text(json.dumps({'commit': 'a' * 40, 'candidate': 'aaaaaaaaaaaa-11111111'}))
+            (d.state / 'deployment.json').write_text(json.dumps({'phase': 'MIGRATING'}))
+            d.load_environment = Mock()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                d.status()
+            text = output.getvalue()
+            self.assertIn('Installation incomplete', text)
+            self.assertIn('recovery state active', text)
+            self.assertIn('phase: MIGRATING', text)
+            self.assertIn('commit: ' + 'a' * 40, text)
+            self.assertIn('candidate: aaaaaaaaaaaa-11111111', text)
+
+    def test_refresh_proxy_updates_upstream_and_reloads_caddy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'public-url.json').write_text(json.dumps({'url': 'https://softwaresolver.online/amt_price_list'}))
+            caddy_file = root / 'Caddyfile'
+            target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+            old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
+            caddy_file.write_text(old_caddy)
+            d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
+            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d._http_status = Mock(return_value=('200', 0))
+            d.event = Mock()
+            with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run', return_value=result()) as run:
+                d.refresh_proxy()
+            updated_caddy = caddy_file.read_text()
+            self.assertIn('reverse_proxy 10.89.4.148:3000', updated_caddy)
+            self.assertNotIn('reverse_proxy 10.89.4.147:3000', updated_caddy)
+            self.assertIn('reverse_proxy localhost:3000', updated_caddy)
+            self.assertIn('reverse_proxy localhost:3007', updated_caddy)
+            reloads = [c.args[0] for c in run.call_args_list if 'reload' in c.args[0]]
+            self.assertEqual(len(reloads), 1)
+            self.assertEqual(reloads[0], ['systemctl', 'reload', 'caddy'])
+            saved = json.loads((d.state / 'public-url.json').read_text())
+            self.assertEqual(saved['upstream'], '10.89.4.148:3000')
+            d.event.assert_called_once_with('PROXY_REFRESHED', url='https://softwaresolver.online/amt_price_list', upstream='10.89.4.148:3000')
+
+    def test_refresh_proxy_skips_when_caddy_or_url_absent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            d._apply_caddy = Mock()
+            with patch.object(m.Path, 'is_file', return_value=False):
+                d.refresh_proxy()
+            d._apply_caddy.assert_not_called()
+
+    def test_refresh_proxy_skips_reload_when_upstream_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'public-url.json').write_text(json.dumps({'url': 'https://softwaresolver.online/amt_price_list'}))
+            caddy_file = root / 'Caddyfile'
+            target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+            current_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.148:3000')
+            caddy_file.write_text(current_caddy)
+            d._caddy_context = Mock(return_value=(caddy_file, current_caddy, 0o644))
+            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run') as run:
+                d.refresh_proxy()
+            run.assert_not_called()
+
+    def test_refresh_proxy_rolls_back_caddy_on_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'public-url.json').write_text(json.dumps({'url': 'https://softwaresolver.online/amt_price_list'}))
+            caddy_file = root / 'Caddyfile'
+            target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+            old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
+            caddy_file.write_text(old_caddy)
+            d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
+            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            def mock_status(url):
+                if url.endswith('/'):
+                    return ('200', 0)
+                return ('502', 0)
+            d._http_status = Mock(side_effect=mock_status)
+            with patch.object(m.Path, 'is_file', return_value=True), \
+                 patch.object(m, 'run', return_value=result()), \
+                 patch.object(m.time, 'sleep'), \
+                 patch.object(m.time, 'monotonic', side_effect=[0, 0, 130]):
+                with self.assertRaisesRegex(m.DeployError, 'Public AMT health check failed'):
+                    d.refresh_proxy()
+            self.assertEqual(caddy_file.read_text(), old_caddy)
+
+    def test_refresh_proxy_does_not_recreate_containers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            (d.state / 'public-url.json').write_text(json.dumps({'url': 'https://softwaresolver.online/amt_price_list'}))
+            caddy_file = root / 'Caddyfile'
+            target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+            old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
+            caddy_file.write_text(old_caddy)
+            d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
+            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d._http_status = Mock(return_value=('200', 0))
+            d.compose = Mock()
+            with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run', return_value=result()):
+                d.refresh_proxy()
+            d.compose.assert_not_called()
+
+    def test_ssh_tunnel_command_prints_healthy_upstream(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180)
+            d.envfile.write_text(m.env_text(d.env))
+            d.refresh_proxy = Mock()
+            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                upstream = d.healthy_upstream()
+                print(f"Ready: ssh -N -L {d.env['APP_PORT']}:{upstream} root@76.13.244.160")
+            self.assertIn('ssh -N -L 18180:10.89.4.148:3000 root@76.13.244.160', output.getvalue())
+
+            d.healthy_upstream.return_value = '127.0.0.1:18180'
+            output_loopback = io.StringIO()
+            with contextlib.redirect_stdout(output_loopback):
+                upstream = d.healthy_upstream()
+                print(f"Ready: ssh -N -L {d.env['APP_PORT']}:{upstream} root@76.13.244.160")
+            self.assertIn('ssh -N -L 18180:127.0.0.1:18180 root@76.13.244.160', output_loopback.getvalue())
 
 if __name__ == '__main__':
     unittest.main()

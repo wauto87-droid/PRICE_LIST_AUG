@@ -858,7 +858,9 @@ class Deployment:
         self.event('INSTALLED' if first else 'UPGRADED', commit=commit, release=release.name)
         if not first and self.args.rotate:
             self.rotate()
-        print(f"Ready: ssh -N -L {self.env['APP_PORT']}:127.0.0.1:{self.env['APP_PORT']} root@76.13.244.160")
+        self.refresh_proxy()
+        upstream = self.healthy_upstream()
+        print(f"Ready: ssh -N -L {self.env['APP_PORT']}:{upstream} root@76.13.244.160")
         print(f"Open {self.env['APP_ORIGIN']}{BASE_PATH}. Read the setup token privately from {self.envfile}; it is never printed here.")
 
     def check_replace_failed(self):
@@ -924,48 +926,22 @@ class Deployment:
                       '--write-out', '%{http_code}', url], check=False, timeout=20)
         return decoded(result), result.returncode
 
-    def public_url(self, dry_run=False):
-        require(self.args.url, f'set-public-url requires --url ending in {BASE_PATH}')
-        target = parse_public_url(self.args.url)
-        if target['scheme'] == 'https':
-            addresses = {item[4][0] for item in socket.getaddrinfo(target['host'], 443, type=socket.SOCK_STREAM)}
-            require('76.13.244.160' in addresses, 'Domain DNS does not point to this VPS IPv4 address')
+    def _apply_caddy(self, target, upstream):
         path, original, mode = self._caddy_context()
-        upstream = self.healthy_upstream()
         candidate, created_site = caddy_candidate(original, target, upstream)
+        if candidate == original:
+            return created_site
         proxy_dir = self.state / 'proxy'
-        if dry_run:
-            with tempfile.NamedTemporaryFile('w', prefix='amt-caddy-', suffix='.tmp', delete=False) as temp:
-                temp.write(candidate)
-                temp_path = Path(temp.name)
-            try:
-                run(['caddy', 'validate', '--config', temp_path, '--adapter', 'caddyfile'])
-            finally:
-                temp_path.unlink(missing_ok=True)
-            print(f'Dry-run URL validated for {target["url"]}; existing Caddyfile and AMT services were not changed.')
-            return
-        self.stage(f'Configure public URL {target["url"]}')
         proxy_dir.mkdir(mode=0o700, exist_ok=True)
-        require(not proxy_dir.is_symlink() and proxy_dir.stat().st_mode & 0o077 == 0, 'Proxy recovery directory is unsafe')
+        require(not proxy_dir.is_symlink() and (os.name != 'posix' or proxy_dir.stat().st_mode & 0o077 == 0), 'Proxy recovery directory is unsafe')
         checkpoint = proxy_dir / (dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + secrets.token_hex(4))
         checkpoint.mkdir(mode=0o700)
         atomic(checkpoint / 'Caddyfile.before', original)
-        atomic(checkpoint / 'env.before', env_text(self.env))
         atomic(checkpoint / 'candidate.Caddyfile', candidate)
         run(['caddy', 'validate', '--config', checkpoint / 'candidate.Caddyfile', '--adapter', 'caddyfile'])
-        old_env = dict(self.env)
-        replacement = dict(self.env, APP_ORIGIN=target['origin'], APP_BASE_PATH=BASE_PATH,
-                           COOKIE_SECURE='true' if target['scheme'] == 'https' else 'false')
         target_root_status, target_root_rc = self._http_status(target['origin'] + '/')
-        wrote_caddy = wrote_env = False
+        wrote_caddy = False
         try:
-            atomic(self.envfile, env_text(replacement))
-            self.env = replacement
-            wrote_env = True
-            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
-            self.healthy()
-            candidate, created_site = caddy_candidate(original, target, self.healthy_upstream())
-            atomic(checkpoint / 'candidate.Caddyfile', candidate)
             atomic(path, candidate)
             path.chmod(mode)
             wrote_caddy = True
@@ -982,16 +958,86 @@ class Deployment:
             if target_root_rc == 0:
                 current_root_status, rc = self._http_status(target['origin'] + '/')
                 require(rc == 0 and current_root_status == target_root_status, 'Existing root application status changed')
-            atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
-                                                               'updatedAt': dt.datetime.now(dt.timezone.utc).isoformat()}))
-            self.event('PUBLIC_URL_CHANGED', url=target['url'])
-            print(f'Public AMT URL verified: {target["url"]}. Sign in again on the new hostname.')
+            return created_site
         except Exception:
             if wrote_caddy:
                 atomic(path, original)
                 path.chmod(mode)
                 run(['caddy', 'validate', '--config', path, '--adapter', 'caddyfile'], check=False)
                 run(['systemctl', 'reload', 'caddy'], check=False)
+            raise
+
+    def refresh_proxy(self):
+        caddyfile = Path('/etc/caddy/Caddyfile')
+        if not caddyfile.is_file():
+            return
+        target_url = None
+        public_file = self.state / 'public-url.json'
+        if public_file.is_file():
+            try:
+                target_url = json.loads(public_file.read_text()).get('url')
+            except Exception:
+                pass
+        if not target_url and self.env and self.env.get('APP_ORIGIN'):
+            origin = self.env['APP_ORIGIN']
+            if origin != f"http://localhost:{self.env.get('APP_PORT')}":
+                target_url = origin + BASE_PATH
+        if not target_url:
+            try:
+                text = caddyfile.read_text()
+                match = re.search(r'# BEGIN AMT PRICE LIST (?:ROUTE|SITE)\s+(\S+)', text)
+                if match:
+                    target_url = match.group(1)
+            except Exception:
+                pass
+        if not target_url:
+            return
+        target = parse_public_url(target_url)
+        upstream = self.healthy_upstream()
+        self.stage(f'Refresh Caddy proxy upstream to {upstream}')
+        created_site = self._apply_caddy(target, upstream)
+        atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
+                                                           'upstream': upstream,
+                                                           'updatedAt': dt.datetime.now(dt.timezone.utc).isoformat()}))
+        self.event('PROXY_REFRESHED', url=target['url'], upstream=upstream)
+        print(f'AMT Caddy proxy upstream verified at {upstream} for {target["url"]}.')
+
+    def public_url(self, dry_run=False):
+        require(self.args.url, f'set-public-url requires --url ending in {BASE_PATH}')
+        target = parse_public_url(self.args.url)
+        if target['scheme'] == 'https':
+            addresses = {item[4][0] for item in socket.getaddrinfo(target['host'], 443, type=socket.SOCK_STREAM)}
+            require('76.13.244.160' in addresses, 'Domain DNS does not point to this VPS IPv4 address')
+        path, original, mode = self._caddy_context()
+        upstream = self.healthy_upstream()
+        candidate, created_site = caddy_candidate(original, target, upstream)
+        if dry_run:
+            with tempfile.NamedTemporaryFile('w', prefix='amt-caddy-', suffix='.tmp', delete=False) as temp:
+                temp.write(candidate)
+                temp_path = Path(temp.name)
+            try:
+                run(['caddy', 'validate', '--config', temp_path, '--adapter', 'caddyfile'])
+            finally:
+                temp_path.unlink(missing_ok=True)
+            print(f'Dry-run URL validated for {target["url"]}; existing Caddyfile and AMT services were not changed.')
+            return
+        self.stage(f'Configure public URL {target["url"]}')
+        old_env = dict(self.env)
+        replacement = dict(self.env, APP_ORIGIN=target['origin'], APP_BASE_PATH=BASE_PATH,
+                           COOKIE_SECURE='true' if target['scheme'] == 'https' else 'false')
+        wrote_env = False
+        try:
+            atomic(self.envfile, env_text(replacement))
+            self.env = replacement
+            wrote_env = True
+            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+            self.healthy()
+            created_site = self._apply_caddy(target, self.healthy_upstream())
+            atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
+                                                               'updatedAt': dt.datetime.now(dt.timezone.utc).isoformat()}))
+            self.event('PUBLIC_URL_CHANGED', url=target['url'])
+            print(f'Public AMT URL verified: {target["url"]}. Sign in again on the new hostname.')
+        except Exception:
             if wrote_env:
                 atomic(self.envfile, env_text(old_env))
                 self.env = old_env
@@ -1013,6 +1059,7 @@ class Deployment:
         self.activate(target)
         self.checkpoint('HEALTHY', current=target.name)
         self.event('ROLLED_BACK', release=target.name)
+        self.refresh_proxy()
 
     def restore_check(self):
         require(self.args.backup, 'Specify --backup with an exact completed recovery directory')
@@ -1101,6 +1148,35 @@ class Deployment:
                    removedLogs=[entry.name for entry in removable_logs])
         print('Cleanup complete. Current release, one rollback release, current state, and shared secrets were preserved.')
 
+    def status(self):
+        self.load_environment()
+        current_link = self.root / 'current'
+        if current_link.exists():
+            self.current()
+            print(decoded(self.compose('ps')))
+            return
+        details = []
+        install_file = self.state / 'install.json'
+        if install_file.is_file():
+            try:
+                install_data = json.loads(install_file.read_text())
+                if install_data.get('commit'):
+                    details.append(f"commit: {install_data['commit']}")
+                if install_data.get('candidate'):
+                    details.append(f"candidate: {install_data['candidate']}")
+            except Exception:
+                pass
+        deployment_file = self.state / 'deployment.json'
+        if deployment_file.is_file():
+            try:
+                dep_data = json.loads(deployment_file.read_text())
+                if dep_data.get('phase'):
+                    details.append(f"phase: {dep_data['phase']}")
+            except Exception:
+                pass
+        recovery_info = f" ({', '.join(details)})" if details else ""
+        print(f"Installation incomplete; recovery state active{recovery_info}. Use 'install --resume' or 'recover-install' to complete.")
+
     def setup_token(self):
         self.load_environment()
         print('Current deployment setup token (handle privately; first-run setup only):')
@@ -1109,6 +1185,9 @@ class Deployment:
     def execute(self):
         self.stage('Check runtime, memory, ownership and ports')
         self.preflight()
+        if self.args.command == 'status':
+            self.status()
+            return
         if self.args.command == 'setup-token':
             self.setup_token()
             return
@@ -1136,9 +1215,6 @@ class Deployment:
                 if self.args.replace_failed_release or (self.args.recover_install and requested_commit != json.loads((self.state / 'install.json').read_text()).get('commit')):
                     self.check_replace_failed()
             print('Dry run: inspected only. No fetch, files, containers, migrations, secrets or system services changed.')
-            return
-        if self.args.command == 'status':
-            print(decoded(self.compose('ps')))
             return
         require(self.args.command in ['start', 'stop', 'setup-token'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
         with self.locked():
@@ -1171,6 +1247,7 @@ class Deployment:
                     self.compose('up', '-d', '--no-deps', '--no-build', 'db')
                     self.wait_db()
                     self.start()
+                    self.refresh_proxy()
                 elif command == 'stop':
                     self.stop()
             finally:
