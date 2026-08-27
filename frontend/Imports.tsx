@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import type { AdminActionRunner } from "./admin-actions";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import { tierColumns } from "@/backend/pricing/transfer";
@@ -38,7 +39,15 @@ const synonyms: Record<string, string[]> = {
   minimum: ["minprice", "minimumprice"],
   markup: ["markup"],
 };
-export default function Imports({ t }: { t: Translate }) {
+export default function Imports({
+  t,
+  actionBusy,
+  onAction,
+}: {
+  t: Translate;
+  actionBusy: boolean;
+  onAction: AdminActionRunner;
+}) {
   const [jobs, setJobs] = useState<any[]>([]),
     [mode, setMode] = useState("UPDATE_ONLY"),
     [page, setPage] = useState(0),
@@ -71,6 +80,7 @@ export default function Imports({ t }: { t: Translate }) {
     return () => clearInterval(timer);
   }, [jobs]);
   async function run(fn: () => Promise<any>) {
+    if (actionBusy) return;
     setBusy(true);
     setError("");
     try {
@@ -139,15 +149,36 @@ export default function Imports({ t }: { t: Translate }) {
         <input
           type="file"
           accept=".xlsx,.xls,.csv,.pdf"
-          disabled={busy}
+          disabled={busy || actionBusy}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file)
-              run(async () => {
-                const form = new FormData();
-                form.append("file", file);
-                await api("imports", "POST", form);
-              });
+              onAction(
+                {
+                  saving: t(
+                    "Uploading import…",
+                    "جارٍ رفع الاستيراد…",
+                  ),
+                  success: t(
+                    "Import uploaded",
+                    "تم رفع الاستيراد",
+                  ),
+                  successDetail: t(
+                    "The file is queued for review now.",
+                    "تمت إضافة الملف للمراجعة الآن.",
+                  ),
+                  error: t(
+                    "Import could not be uploaded",
+                    "تعذر رفع الاستيراد",
+                  ),
+                },
+                async () => {
+                  const form = new FormData();
+                  form.append("file", file);
+                  await api("imports", "POST", form);
+                  await load();
+                },
+              );
           }}
         />
       </label>
@@ -175,7 +206,10 @@ export default function Imports({ t }: { t: Translate }) {
                 </td>
                 <td>{j.summary.rows ?? "—"}</td>
                 <td>
-                  <button disabled={busy} onClick={() => run(() => open(j.id))}>
+                  <button
+                    disabled={busy || actionBusy}
+                    onClick={() => run(() => open(j.id))}
+                  >
                     {t("Review", "مراجعة")}
                   </button>
                 </td>
@@ -289,19 +323,40 @@ export default function Imports({ t }: { t: Translate }) {
                   </label>
                 </div>
                 <button
-                  disabled={busy}
+                  disabled={busy || actionBusy}
                   onClick={() =>
-                    run(async () => {
-                      await api("imports/" + job.id + "/mapping", "POST", {
-                        mapping: Object.fromEntries(
-                          Object.entries(mapping).filter(([, v]) => v),
+                    onAction(
+                      {
+                        saving: t(
+                          "Saving import mapping…",
+                          "جارٍ حفظ ربط الاستيراد…",
                         ),
-                        defaults,
-                        version: job.version,
-                        mode,
-                      });
-                      await open(job.id);
-                    })
+                        success: t(
+                          "Import mapping saved",
+                          "تم حفظ ربط الاستيراد",
+                        ),
+                        successDetail: t(
+                          "The file was validated with the new mapping.",
+                          "تم التحقق من الملف باستخدام الربط الجديد.",
+                        ),
+                        error: t(
+                          "Import mapping could not be saved",
+                          "تعذر حفظ ربط الاستيراد",
+                        ),
+                      },
+                      async () => {
+                        await api("imports/" + job.id + "/mapping", "POST", {
+                          mapping: Object.fromEntries(
+                            Object.entries(mapping).filter(([, v]) => v),
+                          ),
+                          defaults,
+                          version: job.version,
+                          mode,
+                        });
+                        await open(job.id);
+                        await load();
+                      },
+                    )
                   }
                 >
                   {t("Apply mapping & validate", "تطبيق الربط والتحقق")}
@@ -347,6 +402,8 @@ export default function Imports({ t }: { t: Translate }) {
                 <BulkRules
                   t={t}
                   importId={job.id}
+                  actionBusy={actionBusy}
+                  onAction={onAction}
                   onApplied={() => open(job.id)}
                 />
               </>
@@ -462,7 +519,10 @@ export default function Imports({ t }: { t: Translate }) {
             </div>
             {job.status === "AWAITING_REVIEW" && (
               <div className="actions footer-actions">
-                <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+                <button
+                  disabled={page === 0 || busy || actionBusy}
+                  onClick={() => setPage(page - 1)}
+                >
                   Previous
                 </button>
                 <span>
@@ -470,31 +530,52 @@ export default function Imports({ t }: { t: Translate }) {
                   {Math.max(1, Math.ceil(job.rows.length / 50))}
                 </span>
                 <button
-                  disabled={(page + 1) * 50 >= job.rows.length}
+                  disabled={(page + 1) * 50 >= job.rows.length || busy || actionBusy}
                   onClick={() => setPage(page + 1)}
                 >
                   Next
                 </button>
                 <button
-                  disabled={busy}
+                  disabled={busy || actionBusy}
                   onClick={() =>
-                    run(async () => {
-                      await api("imports/" + job.id + "/review", "POST", {
-                        rows: job.rows.map((r: any) => ({
-                          id: r.id,
-                          decision: r.decision,
-                          verified: r.verified,
-                        })),
-                      });
-                      await open(job.id);
-                    })
+                    onAction(
+                      {
+                        saving: t(
+                          "Saving review decisions…",
+                          "جارٍ حفظ قرارات المراجعة…",
+                        ),
+                        success: t(
+                          "Review decisions saved",
+                          "تم حفظ قرارات المراجعة",
+                        ),
+                        successDetail: t(
+                          "The reviewed rows were saved successfully.",
+                          "تم حفظ الصفوف المراجعة بنجاح.",
+                        ),
+                        error: t(
+                          "Review decisions could not be saved",
+                          "تعذر حفظ قرارات المراجعة",
+                        ),
+                      },
+                      async () => {
+                        await api("imports/" + job.id + "/review", "POST", {
+                          rows: job.rows.map((r: any) => ({
+                            id: r.id,
+                            decision: r.decision,
+                            verified: r.verified,
+                          })),
+                        });
+                        await open(job.id);
+                        await load();
+                      },
+                    )
                   }
                 >
                   {t("Save review decisions", "حفظ قرارات المراجعة")}
                 </button>
                 <button
                   className="primary"
-                  disabled={busy || !confirmation}
+                  disabled={busy || actionBusy || !confirmation}
                   onClick={() => {
                     if (
                       confirm(
@@ -504,19 +585,40 @@ export default function Imports({ t }: { t: Translate }) {
                         ),
                       )
                     )
-                      run(async () => {
-                        await api("imports/" + job.id + "/confirm", "POST", {
-                          version: job.version,
-                          token: confirmation.token,
-                        });
-                        await open(job.id);
-                      });
+                      onAction(
+                        {
+                          saving: t(
+                            "Confirming import…",
+                            "جارٍ تأكيد الاستيراد…",
+                          ),
+                          success: t(
+                            "Import confirmed",
+                            "تم تأكيد الاستيراد",
+                          ),
+                          successDetail: t(
+                            "The live catalog was updated from the reviewed rows.",
+                            "تم تحديث الكتالوج المباشر من الصفوف المراجعة.",
+                          ),
+                          error: t(
+                            "Import could not be confirmed",
+                            "تعذر تأكيد الاستيراد",
+                          ),
+                        },
+                        async () => {
+                          await api("imports/" + job.id + "/confirm", "POST", {
+                            version: job.version,
+                            token: confirmation.token,
+                          });
+                          await open(job.id);
+                          await load();
+                        },
+                      );
                   }}
                 >
                   {t("Confirm import", "تأكيد الاستيراد")}
                 </button>
                 <button
-                  disabled={busy}
+                  disabled={busy || actionBusy}
                   onClick={() =>
                     run(async () =>
                       setConfirmation(
@@ -571,7 +673,7 @@ export default function Imports({ t }: { t: Translate }) {
             {job.status === "IMPORTED" && (
               <button
                 className="danger"
-                disabled={busy}
+                disabled={busy || actionBusy}
                 onClick={() => {
                   if (
                     confirm(
@@ -581,10 +683,31 @@ export default function Imports({ t }: { t: Translate }) {
                       ),
                     )
                   )
-                    run(async () => {
-                      await api("imports/" + job.id + "/rollback", "POST", {});
-                      await open(job.id);
-                    });
+                    onAction(
+                      {
+                        saving: t(
+                          "Rolling back import…",
+                          "جارٍ التراجع عن الاستيراد…",
+                        ),
+                        success: t(
+                          "Import rolled back",
+                          "تم التراجع عن الاستيراد",
+                        ),
+                        successDetail: t(
+                          "The imported changes were rolled back.",
+                          "تم التراجع عن التغييرات المستوردة.",
+                        ),
+                        error: t(
+                          "Import could not be rolled back",
+                          "تعذر التراجع عن الاستيراد",
+                        ),
+                      },
+                      async () => {
+                        await api("imports/" + job.id + "/rollback", "POST", {});
+                        await open(job.id);
+                        await load();
+                      },
+                    );
                 }}
               >
                 {t("Roll back import", "التراجع عن الاستيراد")}
@@ -598,20 +721,44 @@ export default function Imports({ t }: { t: Translate }) {
         <ProductEditor
           t={t}
           initial={{ ...blankProduct, ...defaults, ...editing.proposed }}
+          actionBusy={actionBusy}
           onClose={() => setEditing(null)}
           onSave={async (p) => {
-            await api("imports/" + job.id + "/review", "POST", {
-              rows: [
-                {
-                  id: editing.id,
-                  decision: "REVIEW",
-                  verified: false,
-                  proposed: p,
-                },
-              ],
-            });
-            setEditing(null);
-            await open(job.id);
+            return onAction(
+              {
+                saving: t(
+                  "Saving corrected row…",
+                  "جارٍ حفظ الصف المصحح…",
+                ),
+                success: t(
+                  "Corrected row saved",
+                  "تم حفظ الصف المصحح",
+                ),
+                successDetail: t(
+                  "The import row was updated for review.",
+                  "تم تحديث صف الاستيراد للمراجعة.",
+                ),
+                error: t(
+                  "Corrected row could not be saved",
+                  "تعذر حفظ الصف المصحح",
+                ),
+              },
+              async () => {
+                await api("imports/" + job.id + "/review", "POST", {
+                  rows: [
+                    {
+                      id: editing.id,
+                      decision: "REVIEW",
+                      verified: false,
+                      proposed: p,
+                    },
+                  ],
+                });
+                setEditing(null);
+                await open(job.id);
+                await load();
+              },
+            );
           }}
         />
       )}

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import type { AdminActionRunner } from "./admin-actions";
 const levels = ["DEFAULT", "ALL", "WHOLESALE", "RETAIL", "END_CUSTOMER"];
 const conditionFields = [
   "partNumber",
@@ -35,10 +36,14 @@ export default function BulkRules({
   t,
   importId,
   onApplied,
+  actionBusy = false,
+  onAction,
 }: {
   t: Translate;
   importId?: string;
   onApplied?: () => Promise<void>;
+  actionBusy?: boolean;
+  onAction?: AdminActionRunner;
 }) {
   const initial = {
     match: "ALL",
@@ -76,6 +81,7 @@ export default function BulkRules({
     load().catch((e) => setError(e.message));
   }, []);
   const run = async (fn: () => Promise<void>) => {
+    if (actionBusy) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -331,23 +337,31 @@ export default function BulkRules({
           Preview all matches / معاينة المطابقات
         </button>
         <button
-          disabled={busy || !name.trim()}
+          disabled={busy || actionBusy || !name.trim()}
           onClick={() =>
-            run(async () => {
-              await api(
-                "bulk-rules" + (rule ? "/" + rule.id : ""),
-                rule ? "PUT" : "POST",
-                {
-                  name,
-                  definition,
-                  active: rule?.active ?? true,
-                  ...(rule ? { version: rule.version } : {}),
-                },
-              );
-              setRule(null);
-              await load();
-              setMessage("Rule saved");
-            })
+            (onAction ?? (async (_messages, action) => action()))(
+              {
+                saving: "Saving rule…",
+                success: "Rule saved",
+                successDetail: "The pricing rule is ready to use.",
+                error: "Rule could not be saved",
+              },
+              async () => {
+                await api(
+                  "bulk-rules" + (rule ? "/" + rule.id : ""),
+                  rule ? "PUT" : "POST",
+                  {
+                    name,
+                    definition,
+                    active: rule?.active ?? true,
+                    ...(rule ? { version: rule.version } : {}),
+                  },
+                );
+                setRule(null);
+                await load();
+                setMessage("Rule saved");
+              },
+            )
           }
         >
           Save / rename
@@ -355,51 +369,80 @@ export default function BulkRules({
         {rule && (
           <>
             <button
-              disabled={busy}
+              disabled={busy || actionBusy}
               onClick={() =>
-                run(async () => {
-                  await api("bulk-rules", "POST", {
-                    name: name + " (copy)",
-                    definition,
-                    active: true,
-                  });
-                  await load();
-                })
+                (onAction ?? (async (_messages, action) => action()))(
+                  {
+                    saving: "Duplicating rule…",
+                    success: "Rule duplicated",
+                    successDetail: "A copy of the pricing rule was created.",
+                    error: "Rule could not be duplicated",
+                  },
+                  async () => {
+                    await api("bulk-rules", "POST", {
+                      name: name + " (copy)",
+                      definition,
+                      active: true,
+                    });
+                    await load();
+                  },
+                )
               }
             >
               Duplicate
             </button>
             <button
-              disabled={busy}
+              disabled={busy || actionBusy}
               onClick={() =>
-                run(async () => {
-                  await api("bulk-rules/" + rule.id, "PUT", {
-                    name,
-                    definition,
-                    active: !rule.active,
-                    version: rule.version,
-                  });
-                  setRule(null);
-                  await load();
-                })
+                (onAction ?? (async (_messages, action) => action()))(
+                  {
+                    saving: rule.active
+                      ? "Deactivating rule…"
+                      : "Activating rule…",
+                    success: rule.active ? "Rule deactivated" : "Rule activated",
+                    successDetail: "The saved rule status was updated.",
+                    error: "Rule status could not be changed",
+                  },
+                  async () => {
+                    await api("bulk-rules/" + rule.id, "PUT", {
+                      name,
+                      definition,
+                      active: !rule.active,
+                      version: rule.version,
+                    });
+                    setRule(null);
+                    await load();
+                  },
+                )
               }
             >
               {rule.active ? "Deactivate" : "Activate"}
             </button>
             <button
-              disabled={busy}
+              disabled={busy || actionBusy}
               onClick={() =>
-                run(async () => {
+                (async () => {
                   if (
                     !confirm(
                       "Delete this saved rule? Execution history will be retained.",
                     )
                   )
                     return;
-                  await api("bulk-rules/" + rule.id, "DELETE");
-                  setRule(null);
-                  await load();
-                })
+                  await (onAction ?? (async (_messages, action) => action()))(
+                    {
+                      saving: "Deleting rule…",
+                      success: "Rule deleted",
+                      successDetail:
+                        "The saved rule was removed and its history was kept.",
+                      error: "Rule could not be deleted",
+                    },
+                    async () => {
+                      await api("bulk-rules/" + rule.id, "DELETE");
+                      setRule(null);
+                      await load();
+                    },
+                  );
+                })()
               }
             >
               Delete
@@ -538,29 +581,48 @@ export default function BulkRules({
               className="primary"
               disabled={
                 busy ||
+                actionBusy ||
                 selectionChanged ||
                 !preview.matched ||
                 preview.errors > 0
               }
               onClick={() =>
-                run(async () => {
+                (async () => {
                   if (
                     !confirm(
                       `Apply the reviewed rule to ${preview.matched} records?`,
                     )
                   )
                     return;
-                  await api("bulk-preview/" + preview.id, "POST");
-                  setPreview(null);
-                  setSelected(null);
-                  await onApplied?.();
-                  await load();
-                  setMessage(
-                    importId
-                      ? "Changes staged. Review and confirm the import."
-                      : "Catalog updated.",
+                  await (onAction ?? (async (_messages, action) => action()))(
+                    {
+                      saving: importId
+                        ? "Applying staged rule…"
+                        : "Applying rule…",
+                      success: importId
+                        ? "Rule applied to import"
+                        : "Rule applied to catalog",
+                      successDetail: importId
+                        ? "Changes were staged. Review and confirm the import."
+                        : "The catalog was updated successfully.",
+                      error: importId
+                        ? "Rule could not be applied to the import"
+                        : "Rule could not be applied to the catalog",
+                    },
+                    async () => {
+                      await api("bulk-preview/" + preview.id, "POST");
+                      setPreview(null);
+                      setSelected(null);
+                      await onApplied?.();
+                      await load();
+                      setMessage(
+                        importId
+                          ? "Changes staged. Review and confirm the import."
+                          : "Catalog updated.",
+                      );
+                    },
                   );
-                })
+                })()
               }
             >
               Apply reviewed preview

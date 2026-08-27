@@ -1,7 +1,7 @@
 {
   "id": "/amt_price_list/",
-  "name": "AMT Electric Price List",
-  "short_name": "AMT Electric",
+  "name": "PRICE LIST",
+  "short_name": "PRICE LIST",
   "start_url": "/amt_price_list/",
   "scope": "/amt_price_list/",
   "display": "standalone",

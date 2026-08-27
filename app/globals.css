@@ -179,14 +179,21 @@ label.check {
   margin-top: 12px;
 }
 .install-icon {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 58px;
   height: 58px;
   border-radius: 14px;
-  background: var(--red);
-  color: white;
-  letter-spacing: 1px;
+  background: #fff3f4;
+  border: 1px solid #f1d4d9;
+  overflow: hidden;
+}
+.install-icon img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  display: block;
 }
 .connection {
   font-size: 12px;
@@ -757,6 +764,9 @@ td button {
   padding: 24px;
   backdrop-filter: blur(3px);
 }
+.admin-action-backdrop {
+  z-index: 40;
+}
 .modal {
   background: white;
   border-radius: 18px;
@@ -768,6 +778,39 @@ td button {
 }
 .modal.wide {
   width: min(1150px, 100%);
+}
+.admin-action-modal {
+  width: min(420px, 100%);
+  text-align: center;
+}
+.admin-action-modal h2 {
+  margin: 0;
+}
+.admin-action-modal p {
+  margin: 12px 0 0;
+  color: var(--muted);
+}
+.admin-action-badge {
+  width: 58px;
+  height: 58px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 16px;
+  font-size: 28px;
+  font-weight: 700;
+}
+.admin-action-badge.saving {
+  background: #f7f7f9;
+  color: #6f6f79;
+}
+.admin-action-badge.success {
+  background: #e9f6ee;
+  color: #19734d;
+}
+.admin-action-badge.error {
+  background: #fff0f0;
+  color: #a12837;
 }
 .modal .modal-backdrop {
   z-index: 30;

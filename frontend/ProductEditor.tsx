@@ -36,11 +36,13 @@ export default function ProductEditor({
   initial,
   onSave,
   onClose,
+  actionBusy,
 }: {
   t: Translate;
   initial: any;
-  onSave: (p: any) => Promise<void>;
+  onSave: (p: any) => Promise<unknown>;
   onClose: () => void;
+  actionBusy: boolean;
 }) {
   const [p, setP] = useState<any>(() => ({
       ...blankProduct,
@@ -49,7 +51,6 @@ export default function ProductEditor({
       defaultLevel: initial.defaultLevel ?? "END_CUSTOMER",
     })),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
     [preview, setPreview] = useState(false),
     [brands, setBrands] = useState<any[]>([]),
     [categories, setCategories] = useState<any[]>([]);
@@ -63,11 +64,11 @@ export default function ProductEditor({
   }, []);
   useEffect(() => {
     const close = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !actionBusy) onClose();
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onClose]);
+  }, [actionBusy, onClose]);
   const set = (key: string, value: any) => {
     const match =
       key === "brand" && !initial.id
@@ -149,23 +150,16 @@ export default function ProductEditor({
             setPreview(true);
             return;
           }
-          setBusy(true);
-          try {
-            const { id, version, ...data } = p;
-            await onSave({
-              ...canonicalProduct(productInput.parse(data)),
-              ...(version ? { version } : {}),
-            });
-          } catch (e) {
-            setError((e as Error).message);
-          } finally {
-            setBusy(false);
-          }
+          const { id, version, ...data } = p;
+          await onSave({
+            ...canonicalProduct(productInput.parse(data)),
+            ...(version ? { version } : {}),
+          });
         }}
       >
         <div className="section-title">
           <h2>{t("Product & pricing", "الصنف والتسعير")}</h2>
-          <button type="button" onClick={onClose}>
+          <button type="button" disabled={actionBusy} onClick={onClose}>
             ×
           </button>
         </div>
@@ -365,12 +359,14 @@ export default function ProductEditor({
         )}
         {error && <div className="notice error">{error}</div>}
         <div className="actions footer-actions">
-          <button type="button" onClick={onClose}>
+          <button type="button" disabled={actionBusy} onClick={onClose}>
             {t("Cancel", "إلغاء")}
           </button>
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={actionBusy}>
             {preview
-              ? t("Confirm & publish", "تأكيد ونشر")
+              ? actionBusy
+                ? t("Saving…", "جارٍ الحفظ…")
+                : t("Confirm & publish", "تأكيد ونشر")
               : t("Preview changes", "معاينة التغييرات")}
           </button>
         </div>

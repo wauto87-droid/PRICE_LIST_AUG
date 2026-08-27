@@ -2,6 +2,12 @@
 import { useEffect, useRef, useState } from "react";
 import { sectionData, validateAdminData, type AdminResult } from "./admin-data";
 import { api, type Translate } from "./api";
+import {
+  AdminActionModal,
+  type AdminActionMessages,
+  type AdminActionRunner,
+  type AdminActionState,
+} from "./admin-actions";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
@@ -37,6 +43,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [query, setQuery] = useState(""),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
+    [actionState, setActionState] = useState<AdminActionState>({
+      phase: "idle",
+    }),
     [selected, setSelected] = useState<string[]>([]),
     [bulk, setBulk] = useState<any>({ operation: "MARKUP", value: "25" }),
     [preview, setPreview] = useState<any>(null),
@@ -44,8 +53,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [exportJob, setExportJob] = useState<any>(null);
   const data = sectionData(result, section);
   const requestGeneration = useRef(0),
-    currentSection = useRef(section);
+    currentSection = useRef(section),
+    successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   currentSection.current = section;
+  useEffect(
+    () => () => {
+      if (successTimer.current) clearTimeout(successTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (!exportJob || ["DONE", "FAILED"].includes(exportJob.status)) return;
     const timer = setInterval(
@@ -100,17 +116,54 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         .then((value) => setRoles(validateAdminData("roles", value)))
         .catch(() => {});
   }, [user]);
-  async function run(fn: () => Promise<any>) {
+  const dismissAction = () => {
+    if (actionState.phase === "saving") return;
+    if (successTimer.current) clearTimeout(successTimer.current);
+    successTimer.current = null;
+    setActionState({ phase: "idle" });
+  };
+  const runAction: AdminActionRunner = async (messages, action) => {
+    if (busy) return undefined;
+    if (successTimer.current) clearTimeout(successTimer.current);
     setBusy(true);
-    setError("");
+    setActionState({
+      phase: "saving",
+      title: messages.saving,
+      message: messages.savingDetail,
+    });
     try {
-      await fn();
-      await load();
+      const value = await action();
+      setActionState({
+        phase: "success",
+        title: messages.success,
+        message: messages.successDetail,
+      });
+      successTimer.current = setTimeout(
+        () => setActionState({ phase: "idle" }),
+        1600,
+      );
+      return value;
     } catch (e) {
-      setError((e as Error).message);
+      setActionState({
+        phase: "error",
+        title: messages.error,
+        message: (e as Error).message,
+      });
+      return undefined;
     } finally {
       setBusy(false);
     }
+  };
+  async function mutate<T>(
+    messages: AdminActionMessages,
+    fn: () => Promise<T>,
+    options: { reload?: boolean } = {},
+  ) {
+    return runAction(messages, async () => {
+      const value = await fn();
+      if (options.reload !== false) await load();
+      return value;
+    });
   }
   const heading = sections.find((s) => s[0] === section)!;
   const editField = (key: string, label: string, type = "text") => (
@@ -132,6 +185,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           .filter((s) => user.permissions.includes(s[3]))
           .map(([key, en, ar]) => (
             <button
+              disabled={busy}
               className={section === key ? "active" : ""}
               key={key}
               onClick={() => {
@@ -161,11 +215,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           </div>
         )}
         {section === "imports" ? (
-          <Imports t={t} />
+          <Imports t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "rules" ? (
-          <BulkRules t={t} />
+          <BulkRules t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "quotation-settings" ? (
-          <QuotationSettings t={t} />
+          <QuotationSettings t={t} actionBusy={busy} onAction={runAction} />
         ) : !data ? (
           <p>
             {error
@@ -223,10 +277,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   <button
                     className="primary"
                     onClick={() =>
-                      run(async () => {
+                      (async () => {
+                        if (busy) return;
                         const s = await api("auth/me");
                         setEdit({ ...blankProduct, vat: s.settings.vat });
-                      })
+                      })()
                     }
                   >
                     {t("＋ Add product", "＋ إضافة صنف")}
@@ -235,8 +290,27 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     <button
                       disabled={busy}
                       onClick={() =>
-                        run(async () =>
-                          setExportJob(await api("exports", "POST", {})),
+                        mutate(
+                          {
+                            saving: t(
+                              "Queueing export…",
+                              "جارٍ تجهيز التصدير…",
+                            ),
+                            success: t(
+                              "Export queued",
+                              "تمت إضافة التصدير",
+                            ),
+                            successDetail: t(
+                              "The workbook is being prepared now.",
+                              "يجري تجهيز ملف التصدير الآن.",
+                            ),
+                            error: t(
+                              "Export could not be started",
+                              "تعذر بدء التصدير",
+                            ),
+                          },
+                          async () => setExportJob(await api("exports", "POST", {})),
+                          { reload: false },
                         )
                       }
                     >
@@ -381,7 +455,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       />
                       <button
                         onClick={() =>
-                          run(async () =>
+                          (async () => {
+                            if (busy) return;
                             setPreview(
                               await api("products/bulk", "POST", {
                                 ...bulk,
@@ -393,8 +468,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                   })),
                                 confirm: false,
                               }),
-                            ),
-                          )
+                            );
+                          })()
                         }
                       >
                         {t("Preview", "معاينة")}
@@ -425,20 +500,40 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           className="primary"
                           disabled={busy}
                           onClick={() =>
-                            run(async () => {
-                              await api("products/bulk", "POST", {
-                                ...bulk,
-                                items: data
-                                  .filter((p: any) => selected.includes(p.id))
-                                  .map((p: any) => ({
-                                    id: p.id,
-                                    version: p.version,
-                                  })),
-                                confirm: true,
-                              });
-                              setSelected([]);
-                              setPreview(null);
-                            })
+                            mutate(
+                              {
+                                saving: t(
+                                  "Saving bulk update…",
+                                  "جارٍ حفظ التحديث الجماعي…",
+                                ),
+                                success: t(
+                                  "Bulk update saved",
+                                  "تم حفظ التحديث الجماعي",
+                                ),
+                                successDetail: t(
+                                  "The selected products were updated.",
+                                  "تم تحديث الأصناف المحددة.",
+                                ),
+                                error: t(
+                                  "Bulk update could not be saved",
+                                  "تعذر حفظ التحديث الجماعي",
+                                ),
+                              },
+                              async () => {
+                                await api("products/bulk", "POST", {
+                                  ...bulk,
+                                  items: data
+                                    .filter((p: any) => selected.includes(p.id))
+                                    .map((p: any) => ({
+                                      id: p.id,
+                                      version: p.version,
+                                    })),
+                                  confirm: true,
+                                });
+                                setSelected([]);
+                                setPreview(null);
+                              },
+                            )
                           }
                         >
                           {t("Confirm bulk update", "تأكيد التحديث الجماعي")}
@@ -633,7 +728,29 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 <button
                   className="primary"
                   disabled={busy}
-                  onClick={() => run(() => api("admin/backups", "POST", {}))}
+                  onClick={() =>
+                    mutate(
+                      {
+                        saving: t(
+                          "Starting backup…",
+                          "جارٍ بدء النسخ الاحتياطي…",
+                        ),
+                        success: t(
+                          "Backup started",
+                          "بدأ النسخ الاحتياطي",
+                        ),
+                        successDetail: t(
+                          "The backup job was queued successfully.",
+                          "تمت إضافة مهمة النسخ الاحتياطي بنجاح.",
+                        ),
+                        error: t(
+                          "Backup could not be started",
+                          "تعذر بدء النسخ الاحتياطي",
+                        ),
+                      },
+                      () => api("admin/backups", "POST", {}),
+                    )
+                  }
                 >
                   {t("Back up now", "نسخ احتياطي الآن")}
                 </button>
@@ -657,7 +774,30 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               <Settings
                 t={t}
                 initial={data}
-                onSave={(p) => run(() => api("admin/settings", "PUT", p))}
+                busy={busy}
+                onSave={(p) =>
+                  mutate(
+                    {
+                      saving: t(
+                        "Saving settings…",
+                        "جارٍ حفظ الإعدادات…",
+                      ),
+                      success: t(
+                        "Settings saved",
+                        "تم حفظ الإعدادات",
+                      ),
+                      successDetail: t(
+                        "The latest settings were saved and reloaded.",
+                        "تم حفظ الإعدادات الأخيرة وإعادة تحميلها.",
+                      ),
+                      error: t(
+                        "Settings could not be saved",
+                        "تعذر حفظ الإعدادات",
+                      ),
+                    },
+                    () => api("admin/settings", "PUT", p),
+                  )
+                }
               />
             )}
           </>
@@ -666,15 +806,38 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <ProductEditor
             t={t}
             initial={edit}
+            actionBusy={busy}
             onClose={() => setEdit(null)}
             onSave={async (p) => {
-              await api(
-                "products" + (edit.id ? "/" + edit.id : ""),
-                edit.id ? "PUT" : "POST",
-                p,
+              const ok = await mutate(
+                {
+                  saving: t(
+                    "Saving product…",
+                    "جارٍ حفظ الصنف…",
+                  ),
+                  success: t(
+                    "Product saved",
+                    "تم حفظ الصنف",
+                  ),
+                  successDetail: t(
+                    "The product and price history were updated.",
+                    "تم تحديث الصنف وسجل الأسعار.",
+                  ),
+                  error: t(
+                    "Product could not be saved",
+                    "تعذر حفظ الصنف",
+                  ),
+                },
+                async () => {
+                  await api(
+                    "products" + (edit.id ? "/" + edit.id : ""),
+                    edit.id ? "PUT" : "POST",
+                    p,
+                  );
+                  setEdit(null);
+                },
               );
-              setEdit(null);
-              await load();
+              return ok;
             }}
           />
         )}
@@ -684,31 +847,51 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               className="modal"
               onSubmit={(e) => {
                 e.preventDefault();
-                run(async () => {
-                  const { id, ...rest } = edit;
-                  const payload =
-                    section === "roles"
-                      ? edit
-                      : {
-                          ...rest,
-                          ...(rest.password === ""
-                            ? { password: undefined }
-                            : {}),
-                        };
-                  await api(
-                    "admin/" +
-                      section +
-                      (section !== "roles" && id ? "/" + id : ""),
-                    "POST",
-                    payload,
-                  );
-                  setEdit(null);
-                });
+                mutate(
+                  {
+                    saving: t(
+                      "Saving changes…",
+                      "جارٍ حفظ التغييرات…",
+                    ),
+                    success: t(
+                      "Changes saved",
+                      "تم حفظ التغييرات",
+                    ),
+                    successDetail: t(
+                      "The administration record was updated.",
+                      "تم تحديث سجل الإدارة.",
+                    ),
+                    error: t(
+                      "Changes could not be saved",
+                      "تعذر حفظ التغييرات",
+                    ),
+                  },
+                  async () => {
+                    const { id, ...rest } = edit;
+                    const payload =
+                      section === "roles"
+                        ? edit
+                        : {
+                            ...rest,
+                            ...(rest.password === ""
+                              ? { password: undefined }
+                              : {}),
+                          };
+                    await api(
+                      "admin/" +
+                        section +
+                        (section !== "roles" && id ? "/" + id : ""),
+                      "POST",
+                      payload,
+                    );
+                    setEdit(null);
+                  },
+                );
               }}
             >
               <div className="section-title">
                 <h2>{t("Edit record", "تعديل السجل")}</h2>
-                <button type="button" onClick={() => setEdit(null)}>
+                <button type="button" disabled={busy} onClick={() => setEdit(null)}>
                   ×
                 </button>
               </div>
@@ -826,13 +1009,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   </>
                 )}
               </div>
-              {error && <div className="notice error">{error}</div>}
               <button className="primary" disabled={busy}>
-                {t("Save changes", "حفظ التغييرات")}
+                {busy
+                  ? t("Saving…", "جارٍ الحفظ…")
+                  : t("Save changes", "حفظ التغييرات")}
               </button>
             </form>
           </div>
         )}
+        <AdminActionModal state={actionState} dismiss={dismissAction} t={t} />
       </section>
     </div>
   );
@@ -840,13 +1025,18 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
 function Settings({
   t,
   initial,
+  busy,
   onSave,
 }: {
   t: Translate;
   initial: any;
+  busy: boolean;
   onSave: (p: any) => Promise<any>;
 }) {
   const [p, setP] = useState(initial);
+  useEffect(() => {
+    setP(initial);
+  }, [initial]);
   const labels: Record<string, [string, string]> = {
     companyName: ["Company name", "اسم الشركة"],
     companyArabic: ["Arabic company name", "اسم الشركة بالعربية"],
@@ -924,7 +1114,9 @@ function Settings({
           "الضريبة الافتراضية للأصناف الجديدة. تحديث ضريبة الأصناف الحالية يتطلب مراجعة جماعية. العروض الصادرة لا تتغير.",
         )}
       </p>
-      <button className="primary">{t("Save settings", "حفظ الإعدادات")}</button>
+      <button className="primary" disabled={busy}>
+        {busy ? t("Saving…", "جارٍ الحفظ…") : t("Save settings", "حفظ الإعدادات")}
+      </button>
     </form>
   );
 }

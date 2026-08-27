@@ -1,7 +1,16 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
-export default function QuotationSettings({ t }: { t: Translate }) {
+import type { AdminActionRunner } from "./admin-actions";
+export default function QuotationSettings({
+  t,
+  actionBusy,
+  onAction,
+}: {
+  t: Translate;
+  actionBusy: boolean;
+  onAction: AdminActionRunner;
+}) {
   const [data, setData] = useState<any>(null),
     [error, setError] = useState(""),
     [html, setHtml] = useState(""),
@@ -252,7 +261,7 @@ export default function QuotationSettings({ t }: { t: Translate }) {
       </div>
       <div className="actions wrap">
         <button
-          disabled={busy}
+          disabled={busy || actionBusy}
           onClick={() =>
             run(async () => {
               setHtml(
@@ -272,9 +281,28 @@ export default function QuotationSettings({ t }: { t: Translate }) {
         </button>
         <button
           className="primary"
-          disabled={busy}
+          disabled={busy || actionBusy}
           onClick={() =>
-            run(async () => {
+            onAction(
+              {
+                saving: t(
+                  "Saving quotation settings…",
+                  "جارٍ حفظ إعدادات عرض السعر…",
+                ),
+                success: t(
+                  "Quotation settings saved",
+                  "تم حفظ إعدادات عرض السعر",
+                ),
+                successDetail: t(
+                  "The latest quotation settings are now active.",
+                  "أصبحت أحدث إعدادات عرض السعر مفعلة الآن.",
+                ),
+                error: t(
+                  "Quotation settings could not be saved",
+                  "تعذر حفظ إعدادات عرض السعر",
+                ),
+              },
+              async () => {
               if (
                 next &&
                 !confirm(
@@ -282,14 +310,22 @@ export default function QuotationSettings({ t }: { t: Translate }) {
                 )
               )
                 return;
-              setData(await api("admin/quotation-settings", "PUT", payload()));
-              setNext("");
-              setReason("");
-              setHtml("");
-            })
+                const saved = await api(
+                  "admin/quotation-settings",
+                  "PUT",
+                  payload(),
+                );
+                setData(saved);
+                setNext("");
+                setReason("");
+                setHtml("");
+              },
+            )
           }
         >
-          {t("Save settings", "حفظ الإعدادات")}
+          {actionBusy
+            ? t("Saving…", "جارٍ الحفظ…")
+            : t("Save settings", "حفظ الإعدادات")}
         </button>
       </div>
       {html && (

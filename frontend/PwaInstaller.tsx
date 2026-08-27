@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Translate } from "./api";
 import { installState } from "./pwa-state";
+import { appPath } from "../shared/paths";
 
 type InstallPrompt = Event & {
   prompt: () => Promise<void>;
@@ -70,8 +71,8 @@ export default function PwaInstaller({ t }: { t: Translate }) {
   const guidance =
     state === "installed"
       ? t(
-          "AMT Electric is installed on this device. Open it from your apps or Home Screen.",
-          "تطبيق AMT Electric مثبت على هذا الجهاز. افتحه من التطبيقات أو الشاشة الرئيسية.",
+          "PRICE LIST is installed on this device. Open it from your apps or Home Screen.",
+          "تطبيق PRICE LIST مثبت على هذا الجهاز. افتحه من التطبيقات أو الشاشة الرئيسية.",
         )
       : state === "development"
         ? t(
@@ -105,8 +106,8 @@ export default function PwaInstaller({ t }: { t: Translate }) {
         onClick={install}
         aria-haspopup="dialog"
         title={t(
-          "Install AMT Electric on this device",
-          "تثبيت AMT Electric على هذا الجهاز",
+          "Install PRICE LIST on this device",
+          "تثبيت PRICE LIST على هذا الجهاز",
         )}
       >
         <span aria-hidden>{state === "installed" ? "✓" : "⇩"}</span>{" "}
@@ -123,12 +124,12 @@ export default function PwaInstaller({ t }: { t: Translate }) {
             aria-labelledby="install-title"
           >
             <div className="install-icon" aria-hidden>
-              AMT
+              <img src={appPath("/icon-192.png")} alt="" />
             </div>
             <h2 id="install-title">
               {state === "installed"
                 ? t("App Installed", "التطبيق مثبت")
-                : t("Install AMT Electric", "تثبيت AMT Electric")}
+                : t("Install PRICE LIST", "تثبيت PRICE LIST")}
             </h2>
             <p>{guidance}</p>
             {state === "ios" && (

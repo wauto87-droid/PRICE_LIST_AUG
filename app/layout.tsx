@@ -3,14 +3,14 @@ import "./globals.css";
 import { appPath } from "../shared/paths";
 import ConnectionNotice from "../frontend/ConnectionNotice";
 export const metadata: Metadata = {
-  title: "AMT Electric Price List",
+  title: "PRICE LIST",
   description: "AMT Electric — secure price lookup and quotations",
   manifest: appPath("/manifest.webmanifest"),
   icons: { icon: appPath("/icon-192.png"), apple: appPath("/icon-192.png") },
   robots: { index: false, follow: false },
   appleWebApp: {
     capable: true,
-    title: "AMT Electric",
+    title: "PRICE LIST",
     statusBarStyle: "default",
   },
 };
