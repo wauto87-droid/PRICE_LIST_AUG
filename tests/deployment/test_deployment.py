@@ -7,6 +7,7 @@ import tempfile
 import contextlib
 import io
 import sys
+import re
 import unittest
 from unittest.mock import Mock, patch
 
@@ -118,7 +119,7 @@ class SafetyTests(unittest.TestCase):
                 with self.assertRaises(m.DeployError):
                     d.deploy(True)
             self.assertIn('--network=host', run.call_args.args[0])
-            self.assertIn('amt-pricelist-app:' + 'a' * 40, run.call_args.args[0])
+            self.assertIn('localhost/amt-pricelist-app:' + 'a' * 40, run.call_args.args[0])
             self.assertEqual(d.env['POSTGRES_PASSWORD'], original_password)
             d.port.assert_called_once_with(18188)
             self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'a' * 40)
@@ -364,6 +365,106 @@ class SafetyTests(unittest.TestCase):
             d.start()
         d.compose.assert_called_with('stop', '-t', '60', 'app', 'worker', 'backup')
         d.healthy.assert_not_called()
+
+    def test_public_url_validation(self):
+        target = m.parse_public_url('https://SoftwareSolver.Online/amt_price_list/')
+        self.assertEqual(target['origin'], 'https://softwaresolver.online')
+        self.assertEqual(target['url'], 'https://softwaresolver.online/amt_price_list')
+        self.assertEqual(m.parse_public_url('http://76.13.244.160/amt_price_list')['scheme'], 'http')
+        for value in ('http://softwaresolver.online/amt_price_list',
+                      'https://softwaresolver.online/other',
+                      'https://user:password@softwaresolver.online/amt_price_list',
+                      'https://softwaresolver.online:8443/amt_price_list',
+                      'https://softwaresolver.online/amt_price_list?x=1'):
+            with self.subTest(value=value), self.assertRaises(m.DeployError):
+                m.parse_public_url(value)
+
+    def caddy_fixture(self):
+        return '''softwaresolver.online {
+    encode zstd gzip
+    handle /al-ameen* {
+        reverse_proxy localhost:3007
+    }
+    reverse_proxy localhost:3000
+}
+
+www.softwaresolver.online {
+    redir https://softwaresolver.online{uri} permanent
+}
+'''
+
+    def test_caddy_route_preserves_existing_apps(self):
+        original = self.caddy_fixture()
+        target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+        candidate, created = m.caddy_candidate(original, target, 18180)
+        self.assertFalse(created)
+        self.assertIn('@amt_price_list path /amt_price_list /amt_price_list/*', candidate)
+        self.assertIn('reverse_proxy 127.0.0.1:18180', candidate)
+        self.assertEqual(candidate.count('reverse_proxy localhost:3000'), 1)
+        self.assertEqual(candidate.count('reverse_proxy localhost:3007'), 1)
+        self.assertEqual(candidate.count('www.softwaresolver.online'), 1)
+        without_amt = candidate.replace(candidate[candidate.index('    # BEGIN AMT'):candidate.index('    # END AMT') + len('    # END AMT PRICE LIST ROUTE https://softwaresolver.online/amt_price_list\n')], '')
+        self.assertEqual(re.sub(r'\n\s*\n(?=})', '\n', without_amt), original)
+        repeated, _ = m.caddy_candidate(candidate, target, 18180)
+        self.assertEqual(repeated, candidate)
+
+    def test_caddy_domain_change_removes_only_owned_route(self):
+        original = self.caddy_fixture()
+        first, _ = m.caddy_candidate(original, m.parse_public_url('https://softwaresolver.online/amt_price_list'), 18180)
+        changed, created = m.caddy_candidate(first, m.parse_public_url('https://prices.example.com/amt_price_list'), 18188)
+        self.assertTrue(created)
+        self.assertNotIn('reverse_proxy 127.0.0.1:18180', changed)
+        self.assertIn('reverse_proxy 127.0.0.1:18188', changed)
+        self.assertIn('reverse_proxy localhost:3000', changed)
+        self.assertIn('reverse_proxy localhost:3007', changed)
+
+    def test_caddy_conflict_and_import_refused(self):
+        target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
+        with self.assertRaises(m.DeployError):
+            m.caddy_candidate('import sites/*\n', target, 18180)
+        with self.assertRaises(m.DeployError):
+            m.caddy_candidate('softwaresolver.online {\n reverse_proxy /amt_price_list* localhost:9999\n}\n', target, 18180)
+
+    def test_external_images_and_local_tags_are_qualified(self):
+        dockerfile = (ROOT / 'Dockerfile').read_text()
+        compose = (ROOT / 'compose.yaml').read_text()
+        self.assertIn('FROM docker.io/library/node:24-bookworm-slim', dockerfile)
+        self.assertIn('FROM docker.io/library/postgres:17-bookworm', dockerfile)
+        self.assertIn('image: docker.io/library/postgres:17-bookworm', compose)
+        for image in ('app', 'worker', 'backup'):
+            self.assertIn(f'image: localhost/amt-pricelist-{image}:', compose)
+
+    def test_replacement_guard_rejects_database_or_containers(self):
+        d = self.deployment()
+        with tempfile.TemporaryDirectory() as temp:
+            d.root = Path(temp)
+            d.state = d.root / 'state'
+            d.state.mkdir()
+            (d.state / 'install.json').write_text('{"commit":"' + 'a' * 40 + '","candidate":null}')
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            with self.assertRaisesRegex(m.DeployError, 'Database volume'):
+                d.check_replace_failed()
+            d.engine = Mock(return_value=result(''))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {'com.docker.compose.project': m.PROJECT}}}])
+            with self.assertRaisesRegex(m.DeployError, 'containers'):
+                d.check_replace_failed()
+
+    def test_replacement_archives_journal_and_uses_requested_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.resume_fixture(temp)
+            d.args.replace_failed_release = True
+            d.args.build_network = 'host'
+            d.check_replace_failed = Mock()
+            d.event = Mock()
+            d.prepare_release = Mock(side_effect=m.DeployError('expected build failure'))
+            original_password = d.env['POSTGRES_PASSWORD']
+            with self.assertRaises(m.DeployError):
+                d.deploy(True)
+            replacement = json.loads((d.state / 'install.json').read_text())
+            self.assertEqual(replacement, {'commit': 'b' * 40, 'candidate': None})
+            self.assertTrue(list(d.state.glob('install-replaced-*.json')))
+            d.prepare_release.assert_called_once_with(ROOT, 'b' * 40)
+            self.assertEqual(d.env['POSTGRES_PASSWORD'], original_password)
 
 if __name__ == '__main__':
     unittest.main()

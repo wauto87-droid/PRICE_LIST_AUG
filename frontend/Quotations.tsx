@@ -2,6 +2,7 @@
 import { levelLabel } from "./levels";
 import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
+import { appPath } from "../shared/paths";
 export default function Quotations({
   t,
   onOpen,
@@ -328,7 +329,7 @@ export default function Quotations({
               </button>
               <a
                 className="button"
-                href={"/amt_price_list/api/v1/quotations/" + selected.id + "/print"}
+                href={appPath("/api/v1/quotations/" + selected.id + "/print")}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -371,7 +372,7 @@ export default function Quotations({
               (pdf.status === "DONE" ? (
                 <a
                   className="button primary"
-                  href={"/amt_price_list/api/v1/documents/" + pdf.id + "/download"}
+                  href={appPath("/api/v1/documents/" + pdf.id + "/download")}
                 >
                   {t("Download PDF", "تنزيل PDF")}
                 </a>

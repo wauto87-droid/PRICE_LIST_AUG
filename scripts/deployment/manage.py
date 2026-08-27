@@ -19,6 +19,7 @@ import queue
 import threading
 import signal
 import socket
+import tempfile
 from urllib.parse import urlsplit
 import ipaddress
 from collections import deque
@@ -238,7 +239,8 @@ def read_env(path):
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('POSTGRES_PASSWORD', '')), 'Database password must be a generated 64-character hex secret')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('SETUP_TOKEN', '')), 'Setup token must be generated hex')
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
-    require(values.get('APP_BASE_PATH', BASE_PATH) == BASE_PATH, 'Unexpected application base path')
+    values.setdefault('APP_BASE_PATH', BASE_PATH)
+    require(values['APP_BASE_PATH'] == BASE_PATH, 'Unexpected application base path')
     origin = values.get('APP_ORIGIN', '')
     if origin != f"http://localhost:{values['APP_PORT']}":
         parse_public_url(origin + BASE_PATH)
@@ -266,6 +268,89 @@ def check_memory(available_kib, command):
     # Status/stop/recovery inspection must remain usable under memory pressure.
     minimum = 3 * 1024**2 if command in ('install', 'upgrade') else (512 * 1024 if command in ('start', 'restore-check') else 0)
     require(available_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available RAM; no other service will be stopped')
+
+def parse_public_url(value):
+    require(isinstance(value, str) and value == value.strip(), 'Public URL has surrounding whitespace')
+    parsed = urlsplit(value)
+    require(parsed.scheme in ('http', 'https') and parsed.hostname and not parsed.username and not parsed.password,
+            'Public URL must be an HTTP(S) hostname without credentials')
+    require(parsed.path.rstrip('/') == BASE_PATH and not parsed.query and not parsed.fragment,
+            f'Public URL must end in {BASE_PATH} with no query or fragment')
+    require(parsed.port is None, 'Public URL must use the standard HTTP/HTTPS port')
+    host = parsed.hostname.lower().rstrip('.')
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if parsed.scheme == 'http':
+        require(address is not None and str(address) == '76.13.244.160', 'Temporary HTTP is permitted only for the approved VPS IP')
+    else:
+        require(address is None and re.fullmatch(r'(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}', host),
+                'HTTPS requires a valid domain name')
+    origin = f'{parsed.scheme}://{host}'
+    return {'url': origin + BASE_PATH, 'origin': origin, 'host': host, 'scheme': parsed.scheme}
+
+def _site_blocks(text):
+    """Return simple top-level Caddy site blocks; refuse structurally uncertain input."""
+    blocks, depth, active = [], 0, None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        code = line.split('#', 1)[0]
+        tokens = re.findall(r'(?<!\S)[{}](?!\S)', code)
+        if depth == 0 and '{' in tokens:
+            require(tokens.count('{') == 1 and tokens.index('{') == len(tokens) - 1, 'Unsupported Caddy top-level structure')
+            header = code[:code.rfind('{')].strip()
+            require(header and not header.startswith('('), 'Caddy snippets/imports require manual review')
+            active = {'header': header, 'start': offset, 'body_start': offset + len(line)}
+        for token in tokens:
+            depth += 1 if token == '{' else -1
+            require(depth >= 0, 'Unbalanced Caddy configuration')
+            if depth == 0 and active:
+                active.update(close=offset, end=offset + len(line))
+                blocks.append(active)
+                active = None
+        offset += len(line)
+    require(depth == 0 and active is None, 'Unbalanced Caddy configuration')
+    return blocks
+
+def _header_hosts(header):
+    hosts = set()
+    for item in re.split(r'[\s,]+', header):
+        if not item:
+            continue
+        parsed = urlsplit(item if '://' in item else '//' + item)
+        if parsed.hostname:
+            hosts.add(parsed.hostname.lower().rstrip('.'))
+    return hosts
+
+def caddy_candidate(text, target, port):
+    require('import ' not in text and re.search(r'(?m)^\s*import\s+', text) is None,
+            'Caddy imports require manual review; no proxy file was changed')
+    begin_site, end_site = '# BEGIN AMT PRICE LIST SITE', '# END AMT PRICE LIST SITE'
+    begin_route, end_route = '# BEGIN AMT PRICE LIST ROUTE', '# END AMT PRICE LIST ROUTE'
+    clean = re.sub(r'(?ms)^# BEGIN AMT PRICE LIST SITE[^\n]*\n.*?^# END AMT PRICE LIST SITE[^\n]*\n?', '', text)
+    clean = re.sub(r'(?ms)^\s*# BEGIN AMT PRICE LIST ROUTE[^\n]*\n.*?^\s*# END AMT PRICE LIST ROUTE[^\n]*\n?', '', clean)
+    require(begin_site not in clean and begin_route not in clean, 'Malformed AMT-managed Caddy markers')
+    blocks = _site_blocks(clean)
+    matches = [b for b in blocks if target['host'] in _header_hosts(b['header'])]
+    require(len(matches) <= 1, 'Multiple Caddy site blocks match the requested hostname')
+    route = (f'\n    {begin_route} {target["url"]}\n'
+             f'    @amt_price_list path {BASE_PATH} {BASE_PATH}/*\n'
+             '    handle @amt_price_list {\n'
+             f'        reverse_proxy 127.0.0.1:{port}\n'
+             '    }\n'
+             f'    {end_route} {target["url"]}\n')
+    if matches:
+        block = matches[0]
+        body = clean[block['body_start']:block['close']]
+        require(BASE_PATH not in body and '@amt_price_list' not in body, 'Requested Caddy path is already configured outside AMT ownership')
+        return clean[:block['close']] + route + clean[block['close']:], False
+    site = (f'\n{begin_site} {target["url"]}\n'
+            f'{target["origin"]} {{\n'
+            f'{route}'
+            '}\n'
+            f'{end_site} {target["url"]}\n')
+    return clean.rstrip() + '\n' + site, True
 
 def port_rows(text):
     rows = {}
@@ -615,6 +700,7 @@ class Deployment:
             self.load_environment()
             self.log_ready()
         source, commit = self.source()
+        requested_commit = commit
         journal = self.state / 'install.json'
         recovery = None
         if first and self.args.resume:
@@ -625,9 +711,9 @@ class Deployment:
             if self.args.replace_failed_release:
                 self.check_replace_failed()
                 atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
-                recovery = {'commit': commit, 'candidate': None}
+                recovery = {'commit': requested_commit, 'candidate': None}
                 atomic(journal, json.dumps(recovery))
-                self.event('FAILED_RELEASE_REPLACED', commit=commit)
+                self.event('FAILED_RELEASE_REPLACED', commit=requested_commit)
             commit = recovery['commit']
             require(re.fullmatch(r'[a-f0-9]{40,64}', commit), 'Invalid recovery commit')
             self.port(int(self.env['APP_PORT']))
@@ -701,6 +787,101 @@ class Deployment:
         volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
         require(f'{PROJECT}_database' not in volumes, 'Database volume already exists; replacement needs manual recovery review')
         require(not any(self.owned(c) for c in self.inventory()), 'AMT containers already exist; replacement refused')
+
+    def _caddy_context(self):
+        result = decoded(run(['systemctl', 'show', 'caddy', '--property=ActiveState', '--property=ExecStart', '--no-pager']))
+        require('ActiveState=active' in result and '--config /etc/caddy/Caddyfile' in result,
+                'Active Caddy service/configuration path differs from the inspected deployment')
+        path = Path('/etc/caddy/Caddyfile')
+        require(path.is_file() and not path.is_symlink() and path.stat().st_uid == 0 and path.stat().st_mode & 0o022 == 0,
+                'Caddyfile must be a root-owned, non-writable regular file')
+        text = path.read_text()
+        require('import ' not in text and re.search(r'(?m)^\s*import\s+', text) is None,
+                'Caddy imports were introduced after inspection; manual review required')
+        run(['caddy', 'validate', '--config', path, '--adapter', 'caddyfile'])
+        adapted = decoded(run(['caddy', 'adapt', '--config', '-', '--adapter', 'caddyfile'], data=text.encode()))
+        config = json.loads(adapted)
+        rendered = json.dumps(config, sort_keys=True)
+        for expected in ('softwaresolver.online', 'localhost:3000', 'localhost:3007', '/al-ameen*'):
+            require(expected in rendered, 'Existing Caddy routes differ from the inspected structural baseline')
+        return path, text, path.stat().st_mode & 0o777
+
+    @staticmethod
+    def _http_status(url):
+        result = run(['curl', '--silent', '--show-error', '--output', '/dev/null', '--max-time', '15',
+                      '--write-out', '%{http_code}', url], check=False, timeout=20)
+        return decoded(result), result.returncode
+
+    def public_url(self, dry_run=False):
+        require(self.args.url, f'set-public-url requires --url ending in {BASE_PATH}')
+        target = parse_public_url(self.args.url)
+        if target['scheme'] == 'https':
+            addresses = {item[4][0] for item in socket.getaddrinfo(target['host'], 443, type=socket.SOCK_STREAM)}
+            require('76.13.244.160' in addresses, 'Domain DNS does not point to this VPS IPv4 address')
+        path, original, mode = self._caddy_context()
+        candidate, created_site = caddy_candidate(original, target, int(self.env['APP_PORT']))
+        proxy_dir = self.state / 'proxy'
+        if dry_run:
+            with tempfile.NamedTemporaryFile('w', prefix='amt-caddy-', suffix='.tmp', delete=False) as temp:
+                temp.write(candidate)
+                temp_path = Path(temp.name)
+            try:
+                run(['caddy', 'validate', '--config', temp_path, '--adapter', 'caddyfile'])
+            finally:
+                temp_path.unlink(missing_ok=True)
+            print(f'Dry-run URL validated for {target["url"]}; existing Caddyfile and AMT services were not changed.')
+            return
+        self.stage(f'Configure public URL {target["url"]}')
+        proxy_dir.mkdir(mode=0o700, exist_ok=True)
+        require(not proxy_dir.is_symlink() and proxy_dir.stat().st_mode & 0o077 == 0, 'Proxy recovery directory is unsafe')
+        checkpoint = proxy_dir / (dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + secrets.token_hex(4))
+        checkpoint.mkdir(mode=0o700)
+        atomic(checkpoint / 'Caddyfile.before', original)
+        atomic(checkpoint / 'env.before', env_text(self.env))
+        atomic(checkpoint / 'candidate.Caddyfile', candidate)
+        run(['caddy', 'validate', '--config', checkpoint / 'candidate.Caddyfile', '--adapter', 'caddyfile'])
+        old_env = dict(self.env)
+        replacement = dict(self.env, APP_ORIGIN=target['origin'], APP_BASE_PATH=BASE_PATH,
+                           COOKIE_SECURE='true' if target['scheme'] == 'https' else 'false')
+        target_root_status, target_root_rc = self._http_status(target['origin'] + '/')
+        wrote_caddy = wrote_env = False
+        try:
+            atomic(self.envfile, env_text(replacement))
+            self.env = replacement
+            wrote_env = True
+            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+            self.healthy()
+            atomic(path, candidate)
+            path.chmod(mode)
+            wrote_caddy = True
+            run(['caddy', 'validate', '--config', path, '--adapter', 'caddyfile'])
+            run(['systemctl', 'reload', 'caddy'])
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                code, rc = self._http_status(target['url'] + '/api/v1/health')
+                if rc == 0 and code == '200':
+                    break
+                time.sleep(3)
+            else:
+                raise DeployError('Public AMT health check failed after Caddy reload')
+            if target_root_rc == 0:
+                current_root_status, rc = self._http_status(target['origin'] + '/')
+                require(rc == 0 and current_root_status == target_root_status, 'Existing root application status changed')
+            atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
+                                                               'updatedAt': dt.datetime.now(dt.timezone.utc).isoformat()}))
+            self.event('PUBLIC_URL_CHANGED', url=target['url'])
+            print(f'Public AMT URL verified: {target["url"]}. Sign in again on the new hostname.')
+        except Exception:
+            if wrote_caddy:
+                atomic(path, original)
+                path.chmod(mode)
+                run(['caddy', 'validate', '--config', path, '--adapter', 'caddyfile'], check=False)
+                run(['systemctl', 'reload', 'caddy'], check=False)
+            if wrote_env:
+                atomic(self.envfile, env_text(old_env))
+                self.env = old_env
+                self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES, check=False)
+            raise
 
     def rollback(self):
         require(self.args.release and re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', self.args.release), 'Specify an exact --release directory name')
@@ -842,6 +1023,7 @@ def arguments(argv=None):
         require(choice.isdigit() and 1 <= int(choice) <= len(options), 'Invalid selection')
         args.command = options[int(choice) - 1]
     require(not args.replace_failed_release or (args.command == 'install' and args.resume), '--replace-failed-release requires install --resume')
+    require(not args.url or args.command == 'set-public-url', '--url is valid only with set-public-url')
     if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():
         args.url = input('Public URL (including /amt_price_list): ').strip()
     if not args.dry_run and args.command not in ['status', 'start', 'stop']:

@@ -22,6 +22,48 @@ never changes runtime Compose networks, database isolation, firewall, host DNS o
 staging services. This is a workaround, not a repair or root-cause diagnosis of
 the bridge-network failure. A dry run does not exercise network connectivity.
 
+## Recover the inspected failed installation
+
+The inspected VPS journal has an older failed build but no candidate release,
+database volume, AMT container, or migration checkpoint. After this commit is
+pushed and the VPS checkout is clean, replace only that failed release pointer:
+
+```sh
+git pull --ff-only origin master
+bash deploy.sh install --resume --replace-failed-release --ref origin/master --build-network=host --dry-run
+bash deploy.sh install --resume --replace-failed-release --ref origin/master --build-network=host --verbose
+```
+
+This preserves the generated secrets, selected port, logs and cached layers. It
+archives the former journal and is rejected if database/container/migration state
+appears. External images are fully qualified; local AMT images use
+`localhost/amt-pricelist-*`.
+
+Before public activation, open the SSH tunnel printed by the installer and use
+`http://localhost:<saved-port>/amt_price_list` to complete single-use setup
+privately. Never reveal the setup token.
+
+## Public URL and later domain changes
+
+The app remains scoped to `/amt_price_list`; the hostname is a runtime setting.
+On the inspected VPS, preview and then add only AMT's route:
+
+```sh
+bash deploy.sh set-public-url --url https://softwaresolver.online/amt_price_list --dry-run
+bash deploy.sh set-public-url --url https://softwaresolver.online/amt_price_list --verbose
+```
+
+The command requires matching DNS, the inspected active Caddy path, a root-owned
+non-writable Caddyfile with no imports, and no path conflict. It preserves `/`,
+`/al-ameen*`, and `www`; validates before reload; verifies AMT and the existing
+root response; and restores its environment/proxy edit on failure. Private
+checkpoints are retained under `/opt/shop-pricelist/state/proxy/`.
+
+For a later move, point the new HTTPS domain to this VPS and run the same two
+commands with `https://new-domain/amt_price_list`. Only marker-owned AMT routing
+is removed from the old host. Port, data and path remain unchanged; sign in again.
+Structural Caddy changes/imports trigger refusal and manual review.
+
 ## Visible deployment progress and diagnostics
 
 Numbered stages and redacted build output are shown by default. Add `-v`,

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import { tierColumns } from "@/backend/pricing/transfer";
 import BulkRules from "./BulkRules";
@@ -106,13 +107,13 @@ export default function Imports({ t }: { t: Translate }) {
   return (
     <>
       <div className="actions wrap">
-        <a href="/amt_price_list/api/v1/templates/simple">
+        <a href={appPath("/api/v1/templates/simple")}>
           {t(
             "Download Simple Price Update (Excel)",
             "تنزيل نموذج تحديث الأسعار",
           )}
         </a>
-        <a href="/amt_price_list/api/v1/templates/advanced">
+        <a href={appPath("/api/v1/templates/advanced")}>
           {t(
             "Download Advanced Catalog (Excel)",
             "تنزيل نموذج الكتالوج المتقدم",

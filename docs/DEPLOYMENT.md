@@ -36,7 +36,7 @@ docker compose -p amt-pricelist config --quiet
 docker compose -p amt-pricelist build
 docker compose -p amt-pricelist up -d
 docker compose -p amt-pricelist ps
-curl --fail http://127.0.0.1:18180/api/v1/health
+curl --fail http://127.0.0.1:18180/amt_price_list/api/v1/health
 ```
 
 Do not print `docker compose config` without `--quiet` in shared logs: it contains expanded secrets. The migration service runs before the app and worker start. The database has **no published host port**. App access is bound to `127.0.0.1` only; no public firewall port is needed for testing. All persistent volumes and the internal network receive the `amt-pricelist` project prefix. The application never mounts the Docker socket.
@@ -51,7 +51,7 @@ From the operator's computer, using verified key access:
 ssh -N -L 18180:127.0.0.1:18180 root@76.13.244.160
 ```
 
-Open `http://localhost:18180`. Read the setup token privately from this project's `.env`, create the administrator and company details, then verify setup is closed. Create staff accounts with least privilege. Do not reuse the VPS root password for the application.
+Open `http://localhost:18180/amt_price_list`. Read the setup token privately from this project's `.env`, create the administrator and company details, then verify setup is closed. Create staff accounts with least privilege. Do not reuse the VPS root password for the application.
 
 ## HTTPS once the domain is supplied
 

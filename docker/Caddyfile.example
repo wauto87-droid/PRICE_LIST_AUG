@@ -3,7 +3,11 @@
 # Do not replace the server's main Caddyfile. Validate the full config before reload.
 prices.example.com {
     encode zstd gzip
-    reverse_proxy 127.0.0.1:18180
+    @amt_price_list path /amt_price_list /amt_price_list/*
+    handle @amt_price_list {
+        # Preserve the prefix: Next.js is built with this base path.
+        reverse_proxy 127.0.0.1:18180
+    }
     header {
         X-Content-Type-Options nosniff
         Referrer-Policy same-origin

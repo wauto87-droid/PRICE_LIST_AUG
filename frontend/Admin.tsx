@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { sectionData, validateAdminData, type AdminResult } from "./admin-data";
 import { api, type Translate } from "./api";
+import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
 import BulkRules from "./BulkRules";
@@ -245,7 +246,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     (exportJob.status === "DONE" ? (
                       <a
                         className="button primary"
-                        href={"/amt_price_list/api/v1/exports/" + exportJob.id + "/download"}
+                        href={appPath("/api/v1/exports/" + exportJob.id + "/download")}
                       >
                         {t("Download workbook", "تنزيل الملف")}
                       </a>

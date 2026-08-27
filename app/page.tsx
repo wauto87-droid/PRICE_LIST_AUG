@@ -183,7 +183,7 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        <a className="brand" href="/" aria-label="AMT Electric Price List">
+        <a className="brand" href={appPath("/")} aria-label="AMT Electric Price List">
           <img src={appPath("/logo.svg")} alt="AMT Electric" />
           <span>
             <strong>
