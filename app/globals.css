@@ -1300,6 +1300,60 @@ body :is(h1, h2, h3, strong, b) {
   color: var(--red);
   padding: 0 8px;
 }
+.history-details {
+  min-width: min(440px, 55vw);
+}
+.history-details > p {
+  margin: 3px 0 8px;
+}
+.history-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 9px;
+}
+.history-highlights span {
+  color: var(--red);
+  background: #fff2f3;
+  border: 1px solid #edc5c9;
+  border-radius: 7px;
+  padding: 4px 7px;
+}
+.history-highlights small {
+  flex-basis: 100%;
+}
+.history-changes {
+  margin: 10px 0 0;
+}
+.history-changes > div {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(180px, 1.2fr);
+  gap: 13px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.history-changes dt {
+  color: #555560;
+}
+.history-changes dd {
+  margin: 0;
+}
+.history-changes dd span,
+.history-changes dd strong {
+  display: block;
+}
+.history-changes dd span {
+  color: #777780;
+}
+@media (max-width: 600px) {
+  .history-details {
+    min-width: 260px;
+  }
+  .history-changes > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
 .level-editor .form-grid {
   margin: 12px 0;
 }

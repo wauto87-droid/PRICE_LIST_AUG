@@ -12,11 +12,13 @@ Date: 26 August 2026. Environment: Windows development workspace; Node.js 24; Po
 - Local database close/reopen test passes, preserving setup state and authenticated sessions. This is not a substitute for a real PostgreSQL container restart test.
 - Dependency audit: no known production vulnerabilities reported after pinning ExcelJS's UUID dependency to the patched version.
 
-Run all locally available checks with `RUN_WORKER_TESTS=true`, `PYTHON_BIN`, and `CHROMIUM_EXECUTABLE` configured. At handoff, 58 automated test entries pass (including grouped suite entries). Request-size tests verify rejection before JSON/multipart parsing.
+Run all locally available checks with `RUN_WORKER_TESTS=true`, `PYTHON_BIN`, and `CHROMIUM_EXECUTABLE` configured. At handoff, 74 automated test entries pass and one representative supplier-workbook test is skipped because its external fixture is not present. Request-size tests verify rejection before JSON/multipart parsing.
 
 Selling-level coverage includes fixed/formula levels, one/two/three choices, explicit defaults, shared floors, discounts and overrides, migration without historical snapshot mutation, staff field filtering, forged inputs, stale review rejection, unavailable levels, per-level bulk previews, partial-import preservation, retry/rollback and XLSX round trips. Admin regression checks prevent stale dashboard objects from being rendered as arrays, validate response shapes, and browser checks cover Dashboard, Products, Brands, Categories, Users, Roles, Price history, Audit log, Backups and Settings.
 
 PWA checks cover installed/development/insecure/iOS/prompt/unavailable states, manifest scope/start URL/icons, and service-worker API exclusion. The visible bilingual Install App button is present in development but explains that caching is intentionally disabled. Native prompt, installed-state and offline-launch acceptance still require a production build on localhost and the final HTTPS domain/device matrix.
+
+Production-mode localhost returned HTTP 200 with the correct content types for the scoped manifest, service worker and all three icons. The controlled in-app browser does not expose a native PWA installation prompt, so its visible fallback guidance was verified instead; no software installation was accepted during testing.
 
 ## Performance
 
