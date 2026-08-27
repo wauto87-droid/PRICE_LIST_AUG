@@ -14,7 +14,7 @@ Read-only inspection on 2026-08-26 confirmed Podman 5.7.0 behind the `docker` co
 1. Rotate the previously shared root password using a trusted server console. Do not paste its replacement into chat or files.
 2. Establish SSH-key access and verify the host fingerprint through a trusted channel. Keep a recovery console open while changing access. Do not disable password login until key access is verified.
 3. Inspect the live server read-only before copying files. Run `bash scripts/preflight.sh` from the uploaded source staging location. Record existing container names/status, ports, networks, volumes, proxy configuration, free RAM and disk.
-4. Confirm `/opt/shop-pricelist` is unused or belongs only to this project. Existing files must be inspected, not overwritten. Confirm at least about 4 GB of spare memory for the configured service limits plus enough build/disk headroom; otherwise tune limits after measuring rather than starving other apps.
+4. Confirm `/opt/shop-pricelist` is unused or belongs only to this project. Existing files must be inspected, not overwritten. Confirm at least about 3 GiB of spare memory for first install or about 2 GiB for normal upgrades, plus enough build/disk headroom; otherwise tune limits after measuring rather than starving other apps.
 5. Confirm the dedicated loopback port: try 18180, then the first free port from 18181–18199. Record the selected port in `.env`. A suggested port is not reserved; recheck immediately before startup.
 
 ## Install only this project

@@ -1,6 +1,7 @@
 """Local safety tests: no VPS, Docker engine, credentials or network required."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -8,6 +9,7 @@ import contextlib
 import io
 import sys
 import re
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -69,12 +71,17 @@ class SafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(m.DeployError, 'Conflicting network internal schemas'):
             m.resource_internal({'Internal': True, 'internal': False})
 
-    def test_install_and_upgrade_memory_threshold(self):
-        for command in ('install', 'upgrade'):
-            m.check_memory(int(3.8 * 1024**2), command)
-            m.check_memory(3 * 1024**2, command)
-            with self.assertRaises(m.DeployError):
-                m.check_memory(3 * 1024**2 - 1, command)
+    def test_install_memory_threshold(self):
+        m.check_memory(int(3.8 * 1024**2), 'install')
+        m.check_memory(3 * 1024**2, 'install')
+        with self.assertRaises(m.DeployError):
+            m.check_memory(3 * 1024**2 - 1, 'install')
+
+    def test_upgrade_memory_threshold(self):
+        m.check_memory(int(2.8 * 1024**2), 'upgrade')
+        m.check_memory(2 * 1024**2, 'upgrade')
+        with self.assertRaises(m.DeployError):
+            m.check_memory(2 * 1024**2 - 1, 'upgrade')
 
     def test_runtime_and_diagnostics_memory(self):
         m.check_memory(512 * 1024, 'start')
@@ -332,7 +339,8 @@ class SafetyTests(unittest.TestCase):
             d.env = m.new_env(18180)
             d.envfile.write_text(m.env_text(d.env))
             d.load_environment = Mock()
-            (root / 'current').symlink_to(current, target_is_directory=True)
+            current_link = root / 'current'
+            current_link.mkdir()
             old_log = logs / 'old.log'
             old_log.write_text('x')
             os.utime(old_log, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
@@ -340,7 +348,15 @@ class SafetyTests(unittest.TestCase):
             old_backup.mkdir()
             os.utime(old_backup, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
             output = io.StringIO()
-            with contextlib.redirect_stdout(output), patch.object(m, 'run') as run:
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current_link:
+                    return current
+                return original_resolve(path_obj, strict=strict)
+
+            with contextlib.redirect_stdout(output), patch.object(m, 'run') as run, \
+                    patch.object(Path, 'resolve', resolve_override):
                 d.cleanup()
             text = output.getvalue()
             self.assertIn(current.name, text)
@@ -357,7 +373,7 @@ class SafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             d = self.deployment()
-            d.args = m.arguments(['cleanup'])
+            d.args = m.arguments(['cleanup', '--yes', '--access-verified'])
             d.root = root
             d.state = root / 'state'
             d.state.mkdir(parents=True)
@@ -385,7 +401,8 @@ class SafetyTests(unittest.TestCase):
             d.env = m.new_env(18180)
             d.envfile.write_text(m.env_text(d.env))
             d.load_environment = Mock()
-            (root / 'current').symlink_to(current, target_is_directory=True)
+            current_link = root / 'current'
+            current_link.mkdir()
             old_log = logs / 'old.log'
             old_log.write_text('x')
             os.utime(old_log, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
@@ -393,7 +410,15 @@ class SafetyTests(unittest.TestCase):
             old_backup.mkdir()
             os.utime(old_backup, (now - 15 * 24 * 60 * 60, now - 15 * 24 * 60 * 60))
             d.event = Mock()
-            with patch.object(m, 'run', return_value=result()) as run:
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current_link:
+                    return current
+                return original_resolve(path_obj, strict=strict)
+
+            with patch.object(m, 'run', return_value=result()) as run, \
+                    patch.object(Path, 'resolve', resolve_override):
                 d.cleanup()
             self.assertFalse(older_drop.exists())
             self.assertTrue(older_keep.exists())

@@ -278,7 +278,12 @@ def resource_internal(resource):
 
 def check_memory(available_kib, command):
     # Status/stop/recovery inspection must remain usable under memory pressure.
-    minimum = 3 * 1024**2 if command in ('install', 'upgrade') else (512 * 1024 if command in ('start', 'restore-check') else 0)
+    minimum = (
+        3 * 1024**2 if command == 'install' else
+        2 * 1024**2 if command == 'upgrade' else
+        512 * 1024 if command in ('start', 'restore-check') else
+        0
+    )
     require(available_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available RAM; no other service will be stopped')
 
 def parse_public_url(value):

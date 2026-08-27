@@ -174,12 +174,13 @@ access available. Requirements: Python 3.12+, existing rootful Podman with cgrou
 v2, Docker-compatible Podman endpoint, Compose, Git, curl, ss and systemd.
 The installer does not replace/install engines or change proxy/firewall settings.
 
-Installation/upgrade requires 3 GiB **available** RAM and 12 GiB free disk.
-Status/stop do not require spare RAM; startup/restore checks require 512 MiB
-available headroom. Builds run sequentially through native Podman, with a 2 GiB
-memory cap and no additional build swap. A Dockerfile guard checks the effective
-build cgroup cap before dependency installation. Unsupported/unbounded builds fail
-closed. Runtime/build enforcement on the actual VPS still needs verification.
+Installation requires 3 GiB **available** RAM, while upgrade requires 2 GiB,
+plus 12 GiB free disk. Status/stop do not require spare RAM; startup/restore
+checks require 512 MiB available headroom. Builds run sequentially through
+native Podman, with a 2 GiB memory cap and no additional build swap. A
+Dockerfile guard checks the effective build cgroup cap before dependency
+installation. Unsupported/unbounded builds fail closed. Runtime/build
+enforcement on the actual VPS still needs verification.
 
 ## First install
 
