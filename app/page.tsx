@@ -305,16 +305,6 @@ export default function App() {
                     required
                   />
                 </label>
-                <div className="form-grid">
-                  <label>
-                    {t("VAT %", "الضريبة %")}
-                    <input name="vat" defaultValue="15" required />
-                  </label>
-                  <label>
-                    {t("Quotation prefix", "بادئة عرض السعر")}
-                    <input name="quotePrefix" defaultValue="QT" required />
-                  </label>
-                </div>
               </>
             )}
             <label>
@@ -332,15 +322,15 @@ export default function App() {
                 name="password"
                 type="password"
                 autoComplete={setup ? "new-password" : "current-password"}
-                minLength={setup ? 12 : undefined}
+                minLength={setup ? 4 : undefined}
                 required
               />
             </label>
             {setup && (
               <p className="muted">
                 {t(
-                  "Use at least 12 characters. Setup closes permanently after the administrator is created.",
-                  "استخدم ١٢ حرفاً على الأقل. يغلق الإعداد بعد إنشاء المسؤول.",
+                  "Use at least 4 characters. VAT and quotation prefix can be adjusted later in Admin Settings. Setup closes permanently after the administrator is created.",
+                  "استخدم ٤ أحرف على الأقل. يمكن تعديل الضريبة وبادئة عرض السعر لاحقاً من إعدادات الإدارة. يغلق الإعداد بعد إنشاء المسؤول.",
                 )}
               </p>
             )}

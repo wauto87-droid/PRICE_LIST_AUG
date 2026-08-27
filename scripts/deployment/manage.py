@@ -334,7 +334,7 @@ def _header_hosts(header):
             hosts.add(parsed.hostname.lower().rstrip('.'))
     return hosts
 
-def caddy_candidate(text, target, port):
+def caddy_candidate(text, target, upstream):
     require('import ' not in text and re.search(r'(?m)^\s*import\s+', text) is None,
             'Caddy imports require manual review; no proxy file was changed')
     begin_site, end_site = '# BEGIN AMT PRICE LIST SITE', '# END AMT PRICE LIST SITE'
@@ -348,7 +348,7 @@ def caddy_candidate(text, target, port):
     route = (f'\n    {begin_route} {target["url"]}\n'
              f'    @amt_price_list path {BASE_PATH} {BASE_PATH}/*\n'
              '    handle @amt_price_list {\n'
-             f'        reverse_proxy 127.0.0.1:{port}\n'
+             f'        reverse_proxy {upstream}\n'
              '    }\n'
              f'    {end_route} {target["url"]}\n')
     if matches:
@@ -546,6 +546,46 @@ class Deployment:
         require(len(ids) == 1, 'Expected exactly one dedicated database container')
         return ids[0]
 
+    def app_id(self):
+        ids = decoded(self.compose('ps', '-q', 'app')).split()
+        require(len(ids) == 1, 'Expected exactly one app container')
+        return ids[0]
+
+    def app_metadata(self):
+        return json.loads(decoded(self.engine('inspect', self.app_id())))[0]
+
+    def app_private_ipv4(self):
+        networks = self.app_metadata().get('NetworkSettings', {}).get('Networks') or {}
+        for network in networks.values():
+            address = network.get('IPAddress') or ''
+            if not address:
+                continue
+            try:
+                parsed = ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            if isinstance(parsed, ipaddress.IPv4Address):
+                return str(parsed)
+        raise DeployError('App container does not expose a private IPv4 address for proxy fallback')
+
+    def app_health_urls(self):
+        health_path = f'{BASE_PATH}/api/v1/health'
+        urls = [f"http://127.0.0.1:{self.env['APP_PORT']}{health_path}"]
+        try:
+            urls.append(f'http://{self.app_private_ipv4()}:3000{health_path}')
+        except DeployError:
+            pass
+        return urls
+
+    def healthy_upstream(self):
+        for url in self.app_health_urls():
+            result = run(['curl', '--silent', '--fail', '--max-time', '5', url], check=False, timeout=10)
+            if result.returncode == 0:
+                if f'127.0.0.1:{self.env["APP_PORT"]}' in url:
+                    return f"127.0.0.1:{self.env['APP_PORT']}"
+                return f'{urlsplit(url).hostname}:3000'
+        raise DeployError('AMT app health endpoint did not respond on the published port or private container IP')
+
     def database(self, sql, env=None, check=True):
         env = env or self.env
         script = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql -X -h 127.0.0.1 -U "$1" -d "$2" -At -v ON_ERROR_STOP=1'
@@ -556,11 +596,11 @@ class Deployment:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             if self.database('SELECT 1;', check=False).returncode == 0:
-                result = run(['curl', '--silent', '--fail', '--max-time', '5', f"http://127.0.0.1:{self.env['APP_PORT']}{BASE_PATH}/api/v1/health"], check=False, timeout=10)
                 ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
-                if result.returncode == 0 and len(ids) == 3:
+                if len(ids) == 3:
                     states = json.loads(decoded(self.engine('inspect', *ids)))
                     if all(c.get('State', {}).get('Running') for c in states):
+                        self.healthy_upstream()
                         return
             time.sleep(3)
         raise DeployError('Health checks failed; project remains in recovery state')
@@ -878,7 +918,8 @@ class Deployment:
             addresses = {item[4][0] for item in socket.getaddrinfo(target['host'], 443, type=socket.SOCK_STREAM)}
             require('76.13.244.160' in addresses, 'Domain DNS does not point to this VPS IPv4 address')
         path, original, mode = self._caddy_context()
-        candidate, created_site = caddy_candidate(original, target, int(self.env['APP_PORT']))
+        upstream = self.healthy_upstream()
+        candidate, created_site = caddy_candidate(original, target, upstream)
         proxy_dir = self.state / 'proxy'
         if dry_run:
             with tempfile.NamedTemporaryFile('w', prefix='amt-caddy-', suffix='.tmp', delete=False) as temp:
@@ -910,6 +951,8 @@ class Deployment:
             wrote_env = True
             self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
             self.healthy()
+            candidate, created_site = caddy_candidate(original, target, self.healthy_upstream())
+            atomic(checkpoint / 'candidate.Caddyfile', candidate)
             atomic(path, candidate)
             path.chmod(mode)
             wrote_caddy = True

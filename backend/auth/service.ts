@@ -43,12 +43,14 @@ export type Actor = {
   csrf: string;
 };
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
-export const passwordSchema = z.string().min(12).max(128);
+export const passwordSchema = z.string().min(4).max(128);
 export const usernameSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9_.-]{3,80}$/);
+  .regex(
+    /^(?:[a-z0-9_.-]{3,80}|[a-z0-9_.+\-]{1,64}@[a-z0-9.-]{1,251}\.[a-z]{2,})$/,
+  );
 export const has = (a: Actor, p: string) => a.permissions.includes(p);
 export async function lockActor(db: DB, actor: Actor) {
   const current = await one(
@@ -96,14 +98,6 @@ export async function setup(db: DB, input: unknown) {
       name: z.string().trim().min(1).max(100),
       companyName: z.string().trim().min(1).max(100),
       currency: z.literal("SAR").default("SAR"),
-      vat: z
-        .string()
-        .regex(/^\d{1,2}(\.\d{1,2})?$/)
-        .default("15"),
-      quotePrefix: z
-        .string()
-        .regex(/^[A-Z]{1,8}$/)
-        .default("QT"),
     })
     .strict()
     .parse(input);
@@ -151,8 +145,6 @@ export async function setup(db: DB, input: unknown) {
       JSON.stringify({
         companyName: data.companyName,
         currency: data.currency,
-        vat: data.vat,
-        quotePrefix: data.quotePrefix,
       }),
     ]);
     await audit(tx, id, "SETUP", "settings", "1");

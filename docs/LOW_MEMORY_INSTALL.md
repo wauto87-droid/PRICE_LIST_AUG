@@ -80,6 +80,11 @@ non-writable Caddyfile with no imports, and no path conflict. It preserves `/`,
 root response; and restores its environment/proxy edit on failure. Private
 checkpoints are retained under `/opt/shop-pricelist/state/proxy/`.
 
+If `127.0.0.1:<saved-port>` does not answer on this VPS but the app container
+itself is healthy, the command automatically falls back to the current private
+app container IP on port `3000` for the generated proxy route and health
+verification.
+
 For a later move, point the new HTTPS domain to this VPS and run the same two
 commands with `https://new-domain/amt_price_list`. Only marker-owned AMT routing
 is removed from the old host. Port, data and path remain unchanged; sign in again.

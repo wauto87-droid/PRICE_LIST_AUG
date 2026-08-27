@@ -1,5 +1,6 @@
-# Add a NEW site only after a domain and certificate have been supplied.
-# Replace price.example.com, certificate paths, and the verified free port.
+# Add only this location inside the existing TLS server block for the chosen domain.
+# Replace the placeholder upstream. Prefer 127.0.0.1:<saved-port>; if the VPS
+# loopback publish is unhealthy, use the current app container IP on port 3000.
 server {
     listen 443 ssl;
     server_name price.example.com;
@@ -7,7 +8,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/price.example.com/privkey.pem;
     client_max_body_size 21m;
     add_header Strict-Transport-Security "max-age=31536000" always;
-    location / {
+    location /amt_price_list/ {
         proxy_pass http://127.0.0.1:18180;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;

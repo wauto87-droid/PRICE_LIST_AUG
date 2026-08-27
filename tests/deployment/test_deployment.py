@@ -495,7 +495,7 @@ www.softwaresolver.online {
     def test_caddy_route_preserves_existing_apps(self):
         original = self.caddy_fixture()
         target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
-        candidate, created = m.caddy_candidate(original, target, 18180)
+        candidate, created = m.caddy_candidate(original, target, '127.0.0.1:18180')
         self.assertFalse(created)
         self.assertIn('@amt_price_list path /amt_price_list /amt_price_list/*', candidate)
         self.assertIn('reverse_proxy 127.0.0.1:18180', candidate)
@@ -504,25 +504,50 @@ www.softwaresolver.online {
         self.assertEqual(candidate.count('www.softwaresolver.online'), 1)
         without_amt = candidate.replace(candidate[candidate.index('    # BEGIN AMT'):candidate.index('    # END AMT') + len('    # END AMT PRICE LIST ROUTE https://softwaresolver.online/amt_price_list\n')], '')
         self.assertEqual(re.sub(r'\n\s*\n(?=})', '\n', without_amt), original)
-        repeated, _ = m.caddy_candidate(candidate, target, 18180)
+        repeated, _ = m.caddy_candidate(candidate, target, '127.0.0.1:18180')
         self.assertEqual(repeated, candidate)
 
     def test_caddy_domain_change_removes_only_owned_route(self):
         original = self.caddy_fixture()
-        first, _ = m.caddy_candidate(original, m.parse_public_url('https://softwaresolver.online/amt_price_list'), 18180)
-        changed, created = m.caddy_candidate(first, m.parse_public_url('https://prices.example.com/amt_price_list'), 18188)
+        first, _ = m.caddy_candidate(original, m.parse_public_url('https://softwaresolver.online/amt_price_list'), '127.0.0.1:18180')
+        changed, created = m.caddy_candidate(first, m.parse_public_url('https://prices.example.com/amt_price_list'), '10.89.4.148:3000')
         self.assertTrue(created)
         self.assertNotIn('reverse_proxy 127.0.0.1:18180', changed)
-        self.assertIn('reverse_proxy 127.0.0.1:18188', changed)
+        self.assertIn('reverse_proxy 10.89.4.148:3000', changed)
         self.assertIn('reverse_proxy localhost:3000', changed)
         self.assertIn('reverse_proxy localhost:3007', changed)
 
     def test_caddy_conflict_and_import_refused(self):
         target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
         with self.assertRaises(m.DeployError):
-            m.caddy_candidate('import sites/*\n', target, 18180)
+            m.caddy_candidate('import sites/*\n', target, '127.0.0.1:18180')
         with self.assertRaises(m.DeployError):
-            m.caddy_candidate('softwaresolver.online {\n reverse_proxy /amt_price_list* localhost:9999\n}\n', target, 18180)
+            m.caddy_candidate('softwaresolver.online {\n reverse_proxy /amt_price_list* localhost:9999\n}\n', target, '127.0.0.1:18180')
+
+    def test_healthy_upstream_prefers_loopback_when_it_answers(self):
+        d = self.deployment()
+        d.env = m.new_env(18180)
+        with patch.object(m, 'run', return_value=result('{"ok":true}')):
+            self.assertEqual(d.healthy_upstream(), '127.0.0.1:18180')
+
+    def test_healthy_upstream_falls_back_to_private_container_ip(self):
+        d = self.deployment()
+        d.env = m.new_env(18180)
+        d.app_private_ipv4 = Mock(return_value='10.89.4.148')
+        calls = [
+            subprocess.CompletedProcess([], 28, b'', b''),
+            subprocess.CompletedProcess([], 0, b'{"ok":true}', b''),
+        ]
+        with patch.object(m, 'run', side_effect=calls):
+            self.assertEqual(d.healthy_upstream(), '10.89.4.148:3000')
+
+    def test_healthy_upstream_errors_when_neither_route_answers(self):
+        d = self.deployment()
+        d.env = m.new_env(18180)
+        d.app_private_ipv4 = Mock(return_value='10.89.4.148')
+        with patch.object(m, 'run', return_value=subprocess.CompletedProcess([], 28, b'', b'')):
+            with self.assertRaisesRegex(m.DeployError, 'did not respond'):
+                d.healthy_upstream()
 
     def test_external_images_and_local_tags_are_qualified(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()

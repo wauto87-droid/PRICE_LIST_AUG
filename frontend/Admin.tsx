@@ -118,6 +118,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       {label}
       <input
         type={type}
+        minLength={type === "password" ? 4 : undefined}
         value={edit?.[key] ?? ""}
         onChange={(e) => setEdit({ ...edit, [key]: e.target.value })}
       />
@@ -719,8 +720,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     {editField(
                       "password",
                       t(
-                        "New password (12+ characters)",
-                        "كلمة مرور جديدة (١٢ حرفاً أو أكثر)",
+                        "New password (4+ characters)",
+                        "كلمة مرور جديدة (٤ أحرف أو أكثر)",
                       ),
                       "password",
                     )}
@@ -849,6 +850,7 @@ function Settings({
     companyArabic: ["Arabic company name", "اسم الشركة بالعربية"],
     currency: ["Currency", "العملة"],
     vat: ["Default VAT %", "الضريبة الافتراضية %"],
+    quotePrefix: ["Quotation prefix", "بادئة عرض السعر"],
     draftPrefix: ["Draft prefix", "بادئة المسودة"],
     staffDiscount: ["Staff discount limit %", "حد خصم الموظف %"],
     minimumVisible: [

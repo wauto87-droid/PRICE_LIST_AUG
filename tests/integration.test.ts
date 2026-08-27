@@ -56,8 +56,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         "POST",
         {
           token: "wrong",
-          username: "admin",
-          password: "Example-password-129",
+          username: "jaleel@amt.com",
+          password: "1234",
           name: "Administrator",
           companyName: "AMT Electric",
         },
@@ -65,18 +65,21 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       );
       await request("setup", "POST", {
         token: process.env.SETUP_TOKEN,
-        username: "admin",
-        password: "Example-password-129",
+        username: "jaleel@amt.com",
+        password: "1234",
         name: "Administrator",
         companyName: "AMT Electric",
       });
+      const saved = (await one(db, "SELECT data FROM settings WHERE id=1"))!.data;
+      assert.equal(saved.vat, "15");
+      assert.equal(saved.quotePrefix, "QT");
       await request(
         "setup",
         "POST",
         {
           token: process.env.SETUP_TOKEN,
           username: "other",
-          password: "Example-password-129",
+          password: "1234",
           name: "Other",
           companyName: "AMT",
         },
@@ -87,12 +90,12 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
   await request(
     "auth/login",
     "POST",
-    { username: "admin", password: "wrong" },
+    { username: "jaleel@amt.com", password: "wrong" },
     401,
   );
   const login = await request("auth/login", "POST", {
-    username: "admin",
-    password: "Example-password-129",
+    username: "jaleel@amt.com",
+    password: "1234",
   });
   cookie = login.res.headers.get("set-cookie")!.split(";")[0];
   let me = (await request("auth/me")).data;
@@ -146,15 +149,30 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test("Create staff with restricted permissions", async () => {
-    staffId = (
+      staffId = (
       await request("admin/users", "POST", {
-        username: "sales",
+        username: "sales@amt.com",
         name: "Counter Staff",
         role: "STAFF",
-        password: "Staff-password-129",
+        password: "abcd",
         maxDiscount: "20",
       })
     ).data.id;
+  });
+  await t.test("Admin settings expose VAT and quotation prefix", async () => {
+    const current = (await request("admin/settings")).data;
+    const updated = (
+      await request("admin/settings", "POST", {
+        ...current,
+        quotePrefix: "JAL",
+        vat: "10",
+      })
+    ).data;
+    assert.equal(updated.quotePrefix, "JAL");
+    assert.equal(updated.vat, "10");
+    const refreshed = (await request("admin/settings")).data;
+    assert.equal(refreshed.quotePrefix, "JAL");
+    assert.equal(refreshed.vat, "10");
   });
   await t.test("Reject CSRF and disallowed origins", async () => {
     const saved = csrf;
@@ -177,8 +195,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.equal(res.status, 403);
   });
   const staffLogin = await request("auth/login", "POST", {
-    username: "sales",
-    password: "Staff-password-129",
+    username: "sales@amt.com",
+    password: "abcd",
   });
   cookie = staffLogin.res.headers.get("set-cookie")!.split(";")[0];
   csrf = (await request("auth/me")).data.user.csrf;
@@ -323,14 +341,14 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     "Quote ownership enforced independently of knowing IDs",
     async () => {
       await request("admin/users", "POST", {
-        username: "otherstaff",
+        username: "otherstaff@amt.com",
         name: "Other",
         role: "STAFF",
-        password: "Other-password-129",
+        password: "efgh",
       });
       const other = await request("auth/login", "POST", {
-        username: "otherstaff",
-        password: "Other-password-129",
+        username: "otherstaff@amt.com",
+        password: "efgh",
       });
       cookie = other.res.headers.get("set-cookie")!.split(";")[0];
       csrf = (await request("auth/me")).data.user.csrf;
@@ -426,7 +444,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     "Disabling user revokes existing sessions and blocks login",
     async () => {
       await request("admin/users/" + staffId, "POST", {
-        username: "sales",
+        username: "sales@amt.com",
         name: "Counter Staff",
         role: "STAFF",
         maxDiscount: "20",
@@ -438,7 +456,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       await request(
         "auth/login",
         "POST",
-        { username: "sales", password: "Staff-password-129" },
+        { username: "sales@amt.com", password: "abcd" },
         401,
       );
       cookie = adminCookie;

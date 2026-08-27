@@ -5,7 +5,7 @@ For the current guided installer and smaller memory profile, follow
 the legacy manual installation commands below; do not mix their environment files
 or directory layouts.
 
-Target host: `76.13.244.160`. Target directory: `/opt/shop-pricelist`. Compose project: `amt-pricelist`. No remote changes have been made by this implementation.
+Target host: `76.13.244.160`. Target directory: `/opt/shop-pricelist`. Compose project: `amt-pricelist`.
 
 Read-only inspection on 2026-08-26 confirmed Podman 5.7.0 behind the `docker` command, Docker Compose 2.32.4-3, and active Caddy (Nginx inactive). Port 18180 was free, the target directory did not exist, and approximately 43 GB disk / 4.6 GB RAM were available. Eight unrelated containers were running. Preserve this engine and proxy; do not install replacements. Recheck capacity and ports immediately before deployment. Compose compatibility (health/dependency conditions, resource limits, logging, internal networking and volume ownership) must be verified on this Podman runtime before launch.
 
@@ -41,6 +41,12 @@ curl --fail http://127.0.0.1:18180/amt_price_list/api/v1/health
 
 Do not print `docker compose config` without `--quiet` in shared logs: it contains expanded secrets. The migration service runs before the app and worker start. The database has **no published host port**. AMT consumers connect through the project-owned `database_socket` volume, so runtime database access does not depend on container DNS. The socket is never mounted outside this Compose project. App access is bound to `127.0.0.1` only; no public firewall port is needed for testing. All persistent volumes and the internal network receive the `amt-pricelist` project prefix. The application never mounts the Docker socket.
 
+If that loopback health check hangs on this Podman host even while the app
+container is running, inspect the current app container IP and verify the same
+endpoint on `http://<container-ip>:3000/amt_price_list/api/v1/health`. The
+guided `set-public-url` flow now falls back to that private container IP when
+generating the AMT proxy route.
+
 Before and after startup, compare the recorded unrelated containers and application health checks. Do not use global Docker prune, stop-all, shared network modification, or `down -v`.
 
 ## Access before a domain exists
@@ -55,7 +61,7 @@ Open `http://localhost:18180/amt_price_list`. Read the setup token privately fro
 
 ## HTTPS once the domain is supplied
 
-Point the chosen subdomain at the VPS. The inspected server uses **Caddy**. Adapt `docker/Caddyfile.example` as a dedicated host block, following the existing configuration's import structure. Inspect the active configuration path and version first. Validate the complete resulting configuration with `caddy validate --config <active-config-path>` before a safe reload through its existing service. Do not overwrite the main Caddyfile or unrelated host blocks. The Nginx example is provided only for other deployment environments.
+Point the chosen subdomain at the VPS. The inspected server uses **Caddy**. Adapt `docker/Caddyfile.example` as a path-scoped snippet inside the existing site block, following the existing configuration's import structure. Inspect the active configuration path and version first. Validate the complete resulting configuration with `caddy validate --config <active-config-path>` before a safe reload through its existing service. Do not overwrite the main Caddyfile or unrelated host blocks. The Nginx example is provided only for other deployment environments.
 
 Obtain a certificate for this new domain without altering unrelated certificates. Set `APP_ORIGIN=https://your-subdomain` and `COOKIE_SECURE=true`. Recreate only this project's app/worker/backup services to apply environment changes. Validate the proxy configuration before a reload. Never replace the main Nginx configuration.
 
