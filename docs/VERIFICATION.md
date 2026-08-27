@@ -16,6 +16,8 @@ Run all locally available checks with `RUN_WORKER_TESTS=true`, `PYTHON_BIN`, and
 
 Selling-level coverage includes fixed/formula levels, one/two/three choices, explicit defaults, shared floors, discounts and overrides, migration without historical snapshot mutation, staff field filtering, forged inputs, stale review rejection, unavailable levels, per-level bulk previews, partial-import preservation, retry/rollback and XLSX round trips. Admin regression checks prevent stale dashboard objects from being rendered as arrays, validate response shapes, and browser checks cover Dashboard, Products, Brands, Categories, Users, Roles, Price history, Audit log, Backups and Settings.
 
+PWA checks cover installed/development/insecure/iOS/prompt/unavailable states, manifest scope/start URL/icons, and service-worker API exclusion. The visible bilingual Install App button is present in development but explains that caching is intentionally disabled. Native prompt, installed-state and offline-launch acceptance still require a production build on localhost and the final HTTPS domain/device matrix.
+
 ## Performance
 
 Isolated 100,000-product benchmark after selling-level support (one migrated level per product):

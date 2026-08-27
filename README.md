@@ -59,6 +59,8 @@ Imports are never auto-published. Map columns, inspect original data and differe
 
 Offline price caching is disabled by default. When enabled, only sanitized recent search results and the current account's draft are stored on that device. Offline prices are explicitly unconfirmed; final issue/print/PDF requires the server. Reconnect, recalculate, and explicitly save. Version conflicts stop the save so another user's changes are not silently replaced. Use trusted shop devices only; browser-local data is not an encrypted vault.
 
+The header always shows **Install App / تثبيت التطبيق**. On production HTTPS, Chrome/Edge/Android uses the native install prompt; iPhone/iPad displays Safari **Share → Add to Home Screen** instructions. The development preview explains why installation caching is disabled instead of silently hiding the control. An already installed standalone app displays **App Installed**.
+
 ## Operation guides
 
 - `docs/DEPLOYMENT.md`: isolated VPS preflight, installation, SSH tunnel and HTTPS.

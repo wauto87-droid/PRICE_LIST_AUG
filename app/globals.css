@@ -149,6 +149,45 @@ label.check {
   padding: 5px 13px;
   min-height: 36px;
 }
+.install-button {
+  white-space: nowrap;
+  min-height: 38px;
+  padding: 7px 13px;
+}
+.install-backdrop {
+  z-index: 120;
+}
+.install-dialog {
+  width: min(440px, calc(100vw - 32px));
+  background: white;
+  border-radius: 18px;
+  padding: 27px;
+  box-shadow: 0 20px 70px #0004;
+  text-align: start;
+}
+.install-dialog h2 {
+  margin: 8px 0;
+}
+.install-dialog p {
+  color: #595961;
+}
+.install-dialog ol {
+  padding-inline-start: 23px;
+}
+.install-dialog button {
+  width: 100%;
+  margin-top: 12px;
+}
+.install-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  background: var(--red);
+  color: white;
+  letter-spacing: 1px;
+}
 .connection {
   font-size: 12px;
   color: var(--green);
@@ -999,6 +1038,13 @@ fieldset label {
   .language {
     padding: 5px 9px;
     font-size: 11px;
+  }
+  .install-button {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+  .install-button span {
+    display: none;
   }
   .link-button {
     font-size: 11px;

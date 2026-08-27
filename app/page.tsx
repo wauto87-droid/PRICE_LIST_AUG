@@ -5,6 +5,7 @@ import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
 import Admin from "@/frontend/Admin";
+import PwaInstaller from "@/frontend/PwaInstaller";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "" },
@@ -28,8 +29,14 @@ export default function App() {
     update();
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
-    if (process.env.NODE_ENV === "production" && window.isSecureContext && "serviceWorker" in navigator)
-      navigator.serviceWorker.register(appPath("/sw.js"), { scope: appPath("/") }).catch(() => {});
+    if (
+      process.env.NODE_ENV === "production" &&
+      window.isSecureContext &&
+      "serviceWorker" in navigator
+    )
+      navigator.serviceWorker
+        .register(appPath("/sw.js"), { scope: appPath("/") })
+        .catch(() => {});
     return () => {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
@@ -183,7 +190,11 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        <a className="brand" href={appPath("/")} aria-label="AMT Electric Price List">
+        <a
+          className="brand"
+          href={appPath("/")}
+          aria-label="AMT Electric Price List"
+        >
           <img src={appPath("/logo.svg")} alt="AMT Electric" />
           <span>
             <strong>
@@ -199,6 +210,7 @@ export default function App() {
             <i />
             {online ? t("Connected", "متصل") : t("OFFLINE", "دون اتصال")}
           </span>
+          <PwaInstaller t={t} />
           <button
             className="language"
             onClick={() => setLang(lang === "en" ? "ar" : "en")}
