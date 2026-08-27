@@ -60,6 +60,7 @@ async function body(req: Request) {
 const uuid = (s: string) => z.string().uuid().parse(s);
 export async function handle(req: Request, db: DB): Promise<Response> {
   try {
+    const release = process.env.APP_RELEASE || "local";
     const url = new URL(req.url),
       parts = url.pathname
         .replace(/^\/amt_price_list(?=\/)/, "")
@@ -70,11 +71,12 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       method = req.method;
     if (root === "health") {
       await db.query("SELECT 1");
-      return response({ ok: true });
+      return response({ ok: true, release });
     }
     if (root === "setup" && method === "GET")
       return response({
         required: !(await one(db, "SELECT id FROM users LIMIT 1")),
+        release,
       });
     if (root === "setup" && method === "POST") {
       auth.checkOrigin(req);
@@ -168,6 +170,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     if (root === "auth" && id === "me")
       return response({
+        release,
         user: actor,
         settings: {
           companyName: settings.companyName,

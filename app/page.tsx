@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, setCsrf } from "@/frontend/api";
 import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
@@ -21,7 +21,9 @@ export default function App() {
     [cart, setCart] = useState<any>(emptyCart),
     [message, setMessage] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [updateReady, setUpdateReady] = useState(false);
+  const releaseRef = useRef("");
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
   useEffect(() => {
     setLang(localStorage.getItem("amt-language") || "en");
@@ -51,7 +53,10 @@ export default function App() {
     setLoading(true);
     try {
       const s = await api("auth/me");
+      const nextRelease = typeof s.release === "string" ? s.release : "";
       setSession(s);
+      releaseRef.current = nextRelease;
+      setUpdateReady(false);
       setCsrf(s.user.csrf);
       if (s.settings.allowOfflineCache) {
         localStorage.setItem(
@@ -87,6 +92,9 @@ export default function App() {
         try {
           const s = await api("setup");
           setSetup(s.required);
+          if (typeof s.release === "string" && !releaseRef.current) {
+            releaseRef.current = s.release;
+          }
         } catch (e) {
           setError((e as Error).message);
         }
@@ -108,6 +116,14 @@ export default function App() {
           signal: AbortSignal.timeout(5000),
         });
         setOnline(r.ok && navigator.onLine);
+        const data = await r.json().catch(() => null);
+        const nextRelease =
+          data && typeof data.release === "string" ? data.release : "";
+        if (nextRelease && !releaseRef.current) {
+          releaseRef.current = nextRelease;
+        } else if (nextRelease && releaseRef.current !== nextRelease) {
+          setUpdateReady(true);
+        }
       } catch {
         setOnline(false);
       }
@@ -233,6 +249,20 @@ export default function App() {
             "OFFLINE — Cached prices are not confirmed live prices. Final quotations and PDFs require a connection.",
             "دون اتصال — الأسعار المخزنة ليست مؤكدة. إصدار العروض وملفات PDF يتطلب الاتصال.",
           )}
+        </div>
+      )}
+      {updateReady && (
+        <div className="notice" role="status">
+          {t(
+            "A new AMT upgrade is ready. Refresh this page to load the latest version.",
+            "يوجد تحديث جديد لـ AMT. قم بتحديث الصفحة لتحميل أحدث إصدار.",
+          )}{" "}
+          <button
+            className="link-button"
+            onClick={() => window.location.reload()}
+          >
+            {t("Refresh now", "تحديث الآن")}
+          </button>
         </div>
       )}
       {loading ? (

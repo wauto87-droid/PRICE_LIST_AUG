@@ -5,6 +5,7 @@ x-app-environment: &app-environment
   APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
   APP_BASE_PATH: /amt_price_list
+  APP_RELEASE: ${APP_RELEASE:-local}
   SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
   UPLOAD_DIR: /data/uploads
   BACKUP_DIR: /data/backups

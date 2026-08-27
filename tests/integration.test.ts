@@ -6,6 +6,7 @@ import { handle } from "../backend/api/router";
 import { json } from "../backend/core/audit";
 process.env.APP_ORIGIN = "http://localhost:18180";
 process.env.SETUP_TOKEN = "integration-only-setup-token-not-production";
+process.env.APP_RELEASE = "integration-release";
 test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) => {
   const db = await embedded();
   await migrate(db);
@@ -99,6 +100,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
   });
   cookie = login.res.headers.get("set-cookie")!.split(";")[0];
   let me = (await request("auth/me")).data;
+  assert.equal(me.release, "integration-release");
   csrf = me.user.csrf;
   const adminCookie = cookie,
     adminCsrf = csrf,

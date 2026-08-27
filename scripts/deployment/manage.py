@@ -737,7 +737,13 @@ class Deployment:
             tar.extractall(release, filter='data')
         for required in ['compose.yaml', 'Dockerfile', 'pnpm-lock.yaml', 'scripts/deployment/manage.py']:
             require((release / required).is_file(), f'Release is missing {required}; commit and push deployment tooling first')
-        images = {s: {'image': f'localhost/{PROJECT}-' + ('app' if s == 'migrate' else s) + ':' + commit} for s in ['app', 'migrate', 'worker', 'backup']}
+        images = {
+            s: {
+                'image': f'localhost/{PROJECT}-' + ('app' if s == 'migrate' else s) + ':' + commit,
+                'environment': {'APP_RELEASE': commit[:12]},
+            }
+            for s in ['app', 'migrate', 'worker', 'backup']
+        }
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         atomic(release / 'release.json', json.dumps({'commit': commit, 'migrations': self.migration_files(release)}))
         self.compose('config', '--quiet', release=release)
@@ -769,6 +775,66 @@ class Deployment:
         temp.symlink_to(release, target_is_directory=True)
         os.replace(temp, self.root / 'current')
         self.release = release
+
+    def cleanup_plan(self):
+        current = (self.root / 'current').resolve(strict=True)
+        require(current.parent == self.root / 'releases' and current.is_dir(), 'Current release points outside the deployment')
+        current_name = current.name
+        releases = [entry for entry in safe_entries(self.root / 'releases') if entry.is_dir()]
+        keep_releases = {current_name}
+        for release in sorted(releases, key=lambda item: item.stat().st_mtime, reverse=True):
+            if release.name != current_name:
+                keep_releases.add(release.name)
+                break
+        cutoff = time.time() - 14 * 24 * 60 * 60
+        return {
+            'keep_releases': keep_releases,
+            'removable_releases': [entry for entry in releases if entry.name not in keep_releases],
+            'removable_recovery': [
+                entry for entry in safe_entries(self.root / 'recovery')
+                if entry.is_dir() and entry.stat().st_mtime < cutoff
+            ],
+            'removable_logs': [
+                entry for entry in safe_entries(self.root / 'logs')
+                if entry.is_file() and entry.stat().st_mtime < cutoff
+            ],
+        }
+
+    @staticmethod
+    def print_cleanup_plan(plan):
+        print('Cleanup plan:')
+        print(f'  Keep releases: {", ".join(sorted(plan["keep_releases"]))}')
+        for entry in plan['removable_releases']:
+            print(f'  Remove release: {entry}')
+        for entry in plan['removable_recovery']:
+            print(f'  Remove recovery backup: {entry}')
+        for entry in plan['removable_logs']:
+            print(f'  Remove log: {entry}')
+        print('  Prune unused Podman images')
+
+    def apply_cleanup_plan(self, plan, *, action='CLEANUP'):
+        for entry in plan['removable_releases']:
+            shutil.rmtree(entry)
+        for entry in plan['removable_recovery']:
+            shutil.rmtree(entry)
+        for entry in plan['removable_logs']:
+            entry.unlink()
+        run(['podman', 'image', 'prune', '-a', '-f'], timeout=900, live=True)
+        self.event(action, keptReleases=sorted(plan['keep_releases']),
+                   removedReleases=[entry.name for entry in plan['removable_releases']],
+                   removedRecovery=[entry.name for entry in plan['removable_recovery']],
+                   removedLogs=[entry.name for entry in plan['removable_logs']])
+        return plan
+
+    def auto_cleanup_after_upgrade(self):
+        self.stage('Clean older AMT releases and unused images')
+        try:
+            plan = self.cleanup_plan()
+            self.apply_cleanup_plan(plan, action='AUTO_CLEANUP')
+            print('Automatic cleanup complete. Kept the current release, one rollback release, current state, and shared secrets.')
+        except Exception as error:
+            message = str(error) if isinstance(error, DeployError) else 'Unexpected cleanup failure; inspect logs and prune old AMT artifacts manually'
+            print(f'Automatic cleanup skipped: {message}')
 
     def deploy(self, first):
         if self.root.exists():
@@ -859,7 +925,14 @@ class Deployment:
         if not first and self.args.rotate:
             self.rotate()
         self.refresh_proxy()
+        if not first:
+            self.auto_cleanup_after_upgrade()
         upstream = self.healthy_upstream()
+        action = 'Install' if first else 'Upgrade'
+        print(f'{action} complete: release {release.name} ({commit[:12]}).')
+        print('Auto-start on VPS reboot is enabled through systemd and the AMT containers use restart-unless-stopped.')
+        if not first:
+            print(f'Users on {self.env["APP_ORIGIN"]}{BASE_PATH} should refresh their browser now to load the new release.')
         print(f"Ready: ssh -N -L {self.env['APP_PORT']}:{upstream} root@76.13.244.160")
         print(f"Open {self.env['APP_ORIGIN']}{BASE_PATH}. Read the setup token privately from {self.envfile}; it is never printed here.")
 
@@ -1103,49 +1176,14 @@ class Deployment:
         require(phase_file.is_file(), 'Cleanup requires a deployment state file')
         phase = json.loads(phase_file.read_text()).get('phase')
         require(phase == 'HEALTHY', 'Cleanup is allowed only after a healthy deployment')
-        current = (self.root / 'current').resolve(strict=True)
-        require(current.parent == self.root / 'releases' and current.is_dir(), 'Current release points outside the deployment')
-        current_name = current.name
-
-        releases = [entry for entry in safe_entries(self.root / 'releases') if entry.is_dir()]
-        keep_releases = {current_name}
-        for release in sorted(releases, key=lambda item: item.stat().st_mtime, reverse=True):
-            if release.name != current_name:
-                keep_releases.add(release.name)
-                break
-        removable_releases = [entry for entry in releases if entry.name not in keep_releases]
-
-        cutoff = time.time() - 14 * 24 * 60 * 60
-        removable_recovery = [entry for entry in safe_entries(self.root / 'recovery')
-                              if entry.is_dir() and entry.stat().st_mtime < cutoff]
-        removable_logs = [entry for entry in safe_entries(self.root / 'logs')
-                          if entry.is_file() and entry.stat().st_mtime < cutoff]
-
-        print('Cleanup plan:')
-        print(f'  Keep releases: {", ".join(sorted(keep_releases))}')
-        for entry in removable_releases:
-            print(f'  Remove release: {entry}')
-        for entry in removable_recovery:
-            print(f'  Remove recovery backup: {entry}')
-        for entry in removable_logs:
-            print(f'  Remove log: {entry}')
-        print('  Prune unused Podman images')
+        plan = self.cleanup_plan()
+        self.print_cleanup_plan(plan)
 
         if self.args.dry_run:
             print('Dry-run cleanup only. No releases, images, logs or recovery backups were removed.')
             return
 
-        for entry in removable_releases:
-            shutil.rmtree(entry)
-        for entry in removable_recovery:
-            shutil.rmtree(entry)
-        for entry in removable_logs:
-            entry.unlink()
-        run(['podman', 'image', 'prune', '-a', '-f'], timeout=900, live=True)
-        self.event('CLEANUP', keptReleases=sorted(keep_releases),
-                   removedReleases=[entry.name for entry in removable_releases],
-                   removedRecovery=[entry.name for entry in removable_recovery],
-                   removedLogs=[entry.name for entry in removable_logs])
+        self.apply_cleanup_plan(plan)
         print('Cleanup complete. Current release, one rollback release, current state, and shared secrets were preserved.')
 
     def status(self):
@@ -1154,6 +1192,9 @@ class Deployment:
         if current_link.exists():
             self.current()
             print(decoded(self.compose('ps')))
+            enabled = decoded(run(['systemctl', 'is-enabled', 'amt-pricelist.service'], check=False)) or 'unknown'
+            active = decoded(run(['systemctl', 'is-active', 'amt-pricelist.service'], check=False)) or 'unknown'
+            print(f'Auto-start on VPS reboot: {"enabled" if enabled == "enabled" else enabled}. Systemd state: {active}.')
             return
         details = []
         install_file = self.state / 'install.json'

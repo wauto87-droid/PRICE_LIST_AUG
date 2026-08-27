@@ -876,9 +876,11 @@ www.softwaresolver.online {
             d.compose = Mock(return_value=result('NAME                IMAGE               COMMAND             SERVICE             CREATED             STATUS              PORTS\namt-pricelist-app   ...                 ...                 app                 ...                 Up                  127.0.0.1:18180->3000/tcp'))
             d.load_environment = Mock()
             output = io.StringIO()
-            with contextlib.redirect_stdout(output), patch.object(Path, 'resolve', resolve_override):
+            with contextlib.redirect_stdout(output), patch.object(Path, 'resolve', resolve_override), \
+                    patch.object(m, 'run', side_effect=[result('enabled'), result('active')]):
                 d.status()
             self.assertIn('amt-pricelist-app', output.getvalue())
+            self.assertIn('Auto-start on VPS reboot: enabled. Systemd state: active.', output.getvalue())
             d.compose.assert_called_once_with('ps')
 
     def test_status_incomplete_installation_reports_recovery_state(self):

@@ -36,7 +36,10 @@ test("backend router accepts prefixed and internal API request paths", async () 
   ]) {
     const response = await handle(new Request(url), db);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true });
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      release: process.env.APP_RELEASE || "local",
+    });
   }
   await db.close?.();
 });
