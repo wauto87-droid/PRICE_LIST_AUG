@@ -170,6 +170,76 @@ class SafetyTests(unittest.TestCase):
             d.initialize_volumes()
         d.engine.assert_not_called()
 
+    @staticmethod
+    def legacy_database_container(*, mounts=None, ports=None, service='db', project=m.PROJECT):
+        return {
+            'Name': '/amt-pricelist-db-1',
+            'Config': {'Labels': {
+                'com.docker.compose.project': project,
+                'com.docker.compose.service': service,
+            }},
+            'Mounts': mounts if mounts is not None else [{
+                'Type': 'volume', 'Name': 'amt-pricelist_database',
+                'Destination': '/var/lib/postgresql/data',
+            }],
+            'HostConfig': {'PortBindings': ports or {}},
+        }
+
+    def ownership_fixture(self, container):
+        d = self.deployment()
+        d.inventory = Mock(return_value=[container])
+        labels = {'com.docker.compose.project': m.PROJECT}
+        resources = {
+            'amt-pricelist_database': {'Labels': labels},
+            'amt-pricelist_uploads': {'Labels': labels},
+            'amt-pricelist_backups': {'Labels': labels},
+            'amt-pricelist_private': {'labels': labels, 'internal': True},
+        }
+        def engine(*args, **kwargs):
+            if args[1] == 'ls':
+                names = [name for name in resources if name.startswith('amt-pricelist_')]
+                if args[0] == 'network':
+                    names = ['amt-pricelist_private']
+                elif args[0] == 'volume':
+                    names = [name for name in names if name != 'amt-pricelist_private']
+                return result('\n'.join(names))
+            return result(json.dumps([resources[args[2]]]))
+        d.engine = Mock(side_effect=engine)
+        return d
+
+    def test_only_explicit_recovery_preflight_accepts_legacy_database_without_socket(self):
+        d = self.ownership_fixture(self.legacy_database_container())
+        with self.assertRaisesRegex(m.DeployError, 'Database socket volume mismatch'):
+            d.ownership()
+        d.ownership(allow_legacy_db=True)
+
+    def test_legacy_recovery_still_rejects_unexpected_mounts_and_published_database(self):
+        mounts = self.legacy_database_container()['Mounts'] + [{
+            'Type': 'volume', 'Name': 'foreign', 'Destination': '/unexpected',
+        }]
+        d = self.ownership_fixture(self.legacy_database_container(mounts=mounts))
+        with self.assertRaisesRegex(m.DeployError, 'unexpected mounts'):
+            d.ownership(allow_legacy_db=True)
+        d = self.ownership_fixture(self.legacy_database_container(ports={'5432/tcp': [{'HostPort': '5432'}]}))
+        with self.assertRaisesRegex(m.DeployError, 'must not publish'):
+            d.ownership(allow_legacy_db=True)
+
+    def test_preflight_enables_legacy_allowance_only_for_explicit_replacement(self):
+        d = self.deployment()
+        d.engine = Mock(return_value=result('podman'))
+        d.ownership = Mock()
+        with patch.object(m.sys, 'platform', 'linux'), patch.object(m.sys, 'version_info', (3, 12)), \
+             patch.object(m.os, 'geteuid', return_value=0, create=True), patch.object(m.shutil, 'which', return_value='/bin/tool'), \
+             patch.object(m.shutil, 'disk_usage', return_value=Mock(free=13 * 1024**3)), \
+             patch.object(m.Path, 'read_text', return_value='MemAvailable: 4194304 kB\n'), \
+             patch.object(m, 'run', return_value=result('{"host":{"cgroupVersion":"v2","security":{"rootless":false}}}')):
+            d.preflight()
+            self.assertFalse(d.ownership.call_args.kwargs['allow_legacy_db'])
+            d.args.resume = True
+            d.args.replace_failed_release = True
+            d.preflight()
+        self.assertTrue(d.ownership.call_args.kwargs['allow_legacy_db'])
+
     def test_port_recheck_prevents_start(self):
         d = self.deployment()
         d.env = m.new_env(18188)

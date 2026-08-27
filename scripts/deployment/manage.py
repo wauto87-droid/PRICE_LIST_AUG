@@ -423,7 +423,7 @@ class Deployment:
     def owned(self, container):
         return project_label(container.get('Config', {}).get('Labels')) == PROJECT
 
-    def ownership(self, first=False):
+    def ownership(self, first=False, allow_legacy_db=False):
         for item in self.inventory():
             name = item.get('Name', '').lstrip('/')
             if name.startswith(PROJECT):
@@ -450,7 +450,10 @@ class Deployment:
                 mounts = [m for m in item.get('Mounts', []) if m.get('Destination') == '/var/lib/postgresql/data']
                 require(len(mounts) == 1 and mounts[0].get('Name') == PROJECT + '_database', 'Database volume mismatch')
                 sockets = [m for m in item.get('Mounts', []) if m.get('Destination') == '/var/run/postgresql']
-                require(len(sockets) == 1 and sockets[0].get('Name') == PROJECT + '_database_socket', 'Database socket volume mismatch')
+                if not sockets and allow_legacy_db:
+                    require(len(item.get('Mounts', [])) == 1, 'Legacy database has unexpected mounts')
+                else:
+                    require(len(sockets) == 1 and sockets[0].get('Name') == PROJECT + '_database_socket', 'Database socket volume mismatch')
                 require(not any(item.get('HostConfig', {}).get('PortBindings', {}).values()), 'Database must not publish ports')
 
     def port(self, existing=None):
@@ -484,7 +487,8 @@ class Deployment:
             require(info['host']['cgroupVersion'] == 'v2' and not info['host']['security']['rootless'], 'Bounded builds require rootful Podman with cgroup v2')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
         check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
-        self.ownership(first=not self.root.exists())
+        legacy_recovery = (self.args.command == 'install' and self.args.resume and self.args.replace_failed_release)
+        self.ownership(first=not self.root.exists(), allow_legacy_db=legacy_recovery)
         print('Runtime, capacity and project ownership checks passed. Shared proxy/firewall configuration is unchanged.')
 
     def current(self):
