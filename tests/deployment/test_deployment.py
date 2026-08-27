@@ -121,6 +121,14 @@ class SafetyTests(unittest.TestCase):
             m.arguments(['install', '--dry-run', '--build-network=untrusted'])
         self.assertEqual(error.exception.code, 2)
 
+    def test_recover_install_defaults_to_safe_one_command_settings(self):
+        args = m.arguments(['recover-install', '--dry-run'])
+        self.assertEqual(args.command, 'install')
+        self.assertTrue(args.recover_install)
+        self.assertTrue(args.resume)
+        self.assertEqual(args.ref, 'origin/master')
+        self.assertEqual(args.build_network, 'host')
+
     def test_resumed_build_uses_host_network_and_original_commit(self):
         with tempfile.TemporaryDirectory() as temp:
             d = self.resume_fixture(temp)
@@ -256,7 +264,7 @@ class SafetyTests(unittest.TestCase):
             d.root = Path(temp) / 'absent'
             d.preflight = Mock()
             d.port = Mock(return_value=18180)
-            d.source = Mock()
+            d.source = Mock(return_value=(ROOT, 'a' * 40))
             d.deploy = Mock()
             d.execute()
             d.source.assert_called_once_with(fetch=False)
@@ -547,8 +555,19 @@ www.softwaresolver.online {
         self.assertIn('migrate', args)
         script = args[-1]
         self.assertIn("query('SELECT 1')", script)
-        self.assertIn("error.code!=='28P01'", script)
+        self.assertIn("error.code==='28P01'", script)
         self.assertIn('deliberately-invalid', script)
+        self.assertNotIn('new URL', script)
+        self.assertIn('connectionParameters', script)
+
+    def test_socket_precheck_reports_connection_and_policy_failures_separately(self):
+        d = self.deployment()
+        d.compose = Mock(return_value=subprocess.CompletedProcess([], 20, b'', b''))
+        with self.assertRaisesRegex(m.DeployError, 'socket connection failed'):
+            d.verify_database_socket()
+        d.compose = Mock(return_value=subprocess.CompletedProcess([], 21, b'', b''))
+        with self.assertRaisesRegex(m.DeployError, 'invalid password'):
+            d.verify_database_socket()
 
     def replacement_guard_fixture(self, temp):
         d = self.deployment()
@@ -614,6 +633,41 @@ www.softwaresolver.online {
             self.assertTrue(list(d.state.glob('install-replaced-*.json')))
             d.prepare_release.assert_called_once_with(ROOT, 'b' * 40)
             self.assertEqual(d.env['POSTGRES_PASSWORD'], original_password)
+
+    def test_recover_install_replaces_only_when_origin_commit_changed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.resume_fixture(temp)
+            d.args.recover_install = True
+            d.args.build_network = 'host'
+            d.check_replace_failed = Mock()
+            d.event = Mock()
+            d.prepare_release = Mock(side_effect=m.DeployError('expected build failure'))
+            with self.assertRaises(m.DeployError):
+                d.deploy(True)
+            d.check_replace_failed.assert_called_once()
+            self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'b' * 40)
+
+    def test_recover_install_reuses_same_commit_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            name = 'aaaaaaaaaaaa-12345678'
+            d = self.resume_fixture(temp, name)
+            d.args.recover_install = True
+            d.source = Mock(return_value=(ROOT, 'a' * 40))
+            release = d.root / 'releases' / name
+            release.mkdir(parents=True)
+            (release / 'release.json').write_text(json.dumps({'commit': 'a' * 40}))
+            d.check_replace_failed = Mock()
+            d.prepare_release = Mock()
+            d.initialize_volumes = Mock()
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
+            d.verify_database_socket = Mock()
+            d.stop = Mock()
+            d.compose = Mock(side_effect=[result(), m.DeployError('migration failed')])
+            with self.assertRaises(m.DeployError):
+                d.deploy(True)
+            d.check_replace_failed.assert_not_called()
+            d.prepare_release.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

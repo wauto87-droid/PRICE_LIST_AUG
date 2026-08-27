@@ -24,6 +24,19 @@ the bridge-network failure. A dry run does not exercise network connectivity.
 
 ## Recover the inspected failed installation
 
+The guided recovery command detects whether the saved candidate already matches
+`origin/master`. It reuses a matching candidate; otherwise it invokes the same
+empty-migration replacement guard automatically. On this VPS it selects host
+networking for image builds only:
+
+```sh
+bash deploy.sh recover-install --verbose
+```
+
+Interactive recovery uses one confirmation. Non-interactive operators must use
+both `--yes` and `--access-verified`. Runtime services never receive host
+networking.
+
 The inspected VPS journal has an older failed build but no candidate release,
 database volume, AMT container, or migration checkpoint. After this commit is
 pushed and the VPS checkout is clean, replace only that failed release pointer:

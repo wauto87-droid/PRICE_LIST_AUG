@@ -487,7 +487,8 @@ class Deployment:
             require(info['host']['cgroupVersion'] == 'v2' and not info['host']['security']['rootless'], 'Bounded builds require rootful Podman with cgroup v2')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
         check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
-        legacy_recovery = (self.args.command == 'install' and self.args.resume and self.args.replace_failed_release)
+        legacy_recovery = (self.args.command == 'install' and self.args.resume and
+                           (self.args.replace_failed_release or self.args.recover_install))
         self.ownership(first=not self.root.exists(), allow_legacy_db=legacy_recovery)
         print('Runtime, capacity and project ownership checks passed. Shared proxy/firewall configuration is unchanged.')
 
@@ -729,7 +730,9 @@ class Deployment:
             require(journal.is_file(), 'No resumable first installation; retain files for manual review')
             recovery = json.loads(journal.read_text())
             require(not recovery.get('completed'), 'Installation is already complete; use upgrade')
-            if self.args.replace_failed_release:
+            replace_release = (self.args.replace_failed_release or
+                               (self.args.recover_install and requested_commit != recovery.get('commit')))
+            if replace_release:
                 self.check_replace_failed()
                 atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
                 # The guard proved this is the sole pre-migration DB container. Recreate it
@@ -836,9 +839,13 @@ class Deployment:
 
     def verify_database_socket(self):
         result = self.compose('run', '--rm', '--no-deps', 'migrate', 'node', '-e',
-                              "const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); await good.connect(); await good.query('SELECT 1'); await good.end(); const url=new URL(process.env.DATABASE_URL); url.password='deliberately-invalid'; const bad=new Client({connectionString:url.toString()}); try{await bad.connect(); await bad.end(); throw new Error('socket accepted invalid credential')}catch(error){if(error.code!=='28P01')throw error}} main().then(()=>process.exit(0)).catch(()=>process.exit(1))",
+                              "const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); try{await good.connect(); await good.query('SELECT 1')}catch{return 20}finally{await good.end().catch(()=>{})} const p=good.connectionParameters; const bad=new Client({host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))",
                               check=False, timeout=60)
-        require(result.returncode == 0, 'Private PostgreSQL socket authentication failed before migrations; verify the socket mount and SCRAM policy')
+        if result.returncode == 20:
+            raise DeployError('Private PostgreSQL socket connection failed before migrations')
+        if result.returncode == 21:
+            raise DeployError('PostgreSQL socket accepted an invalid password; SCRAM policy is not enforced')
+        require(result.returncode == 0, 'PostgreSQL socket authentication self-test failed unexpectedly')
 
     def _caddy_context(self):
         result = decoded(run(['systemctl', 'show', 'caddy', '--property=ActiveState', '--property=ExecStart', '--no-pager']))
@@ -1001,12 +1008,12 @@ class Deployment:
             self.current()
             self.port(int(self.env['APP_PORT']))
         if self.args.dry_run:
-            if self.args.replace_failed_release:
-                self.check_replace_failed()
             if self.args.command == 'set-public-url':
                 self.public_url(dry_run=True)
             if self.args.command in ['install', 'upgrade']:
-                self.source(fetch=False)
+                _, requested_commit = self.source(fetch=False)
+                if self.args.replace_failed_release or (self.args.recover_install and requested_commit != json.loads((self.state / 'install.json').read_text()).get('commit')):
+                    self.check_replace_failed()
             print('Dry run: inspected only. No fetch, files, containers, migrations, secrets or system services changed.')
             return
         if self.args.command == 'status':
@@ -1050,7 +1057,7 @@ class Deployment:
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description='AMT-only VPS deployment; no root/user password changes or public proxy configuration')
-    parser.add_argument('command', nargs='?', choices=['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'set-public-url'])
+    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'set-public-url'])
     parser.add_argument('--source', default=str(Path(__file__).resolve().parents[2]), help='Clean Git checkout; not a deployed release directory')
     parser.add_argument('--ref', default='origin/master')
     parser.add_argument('--release', help='Exact retained release directory for rollback')
@@ -1068,21 +1075,32 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     if not args.command:
         require(sys.stdin.isatty(), 'Non-interactive use requires an explicit command and --yes')
-        options = ['install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'set-public-url']
+        options = ['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'set-public-url']
         for i, item in enumerate(options, 1):
             print(f'{i}. {item}')
         choice = input('Select command: ').strip()
         require(choice.isdigit() and 1 <= int(choice) <= len(options), 'Invalid selection')
         args.command = options[int(choice) - 1]
+    args.recover_install = args.command == 'recover-install'
+    if args.recover_install:
+        args.command = 'install'
+        args.resume = True
+        args.build_network = 'host'
     require(not args.replace_failed_release or (args.command == 'install' and args.resume), '--replace-failed-release requires install --resume')
     require(not args.url or args.command == 'set-public-url', '--url is valid only with set-public-url')
     if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():
         args.url = input('Public URL (including /amt_price_list): ').strip()
     if not args.dry_run and args.command not in ['status', 'start', 'stop']:
-        if not args.access_verified and sys.stdin.isatty():
-            args.access_verified = input('SSH-key access verified AND root password separately rotated? (y/N): ').lower() == 'y'
-        if not args.yes:
-            require(sys.stdin.isatty() and input(f'Run AMT {args.command}? Brief app-only downtime may occur. (y/N): ').lower() == 'y', 'Cancelled; use --yes for non-interactive operation')
+        if args.recover_install and not args.yes:
+            approved = (sys.stdin.isatty() and
+                        input('Recover the interrupted AMT install now? Confirm your SSH-key VPS access still works. (y/N): ').lower() == 'y')
+            require(approved, 'Cancelled; use --yes --access-verified for non-interactive recovery')
+            args.access_verified = True
+        else:
+            if not args.access_verified and sys.stdin.isatty():
+                args.access_verified = input('SSH-key access verified AND root password separately rotated? (y/N): ').lower() == 'y'
+            if not args.yes:
+                require(sys.stdin.isatty() and input(f'Run AMT {args.command}? Brief app-only downtime may occur. (y/N): ').lower() == 'y', 'Cancelled; use --yes for non-interactive operation')
         if args.command == 'upgrade' and not args.rotate and sys.stdin.isatty() and not args.yes:
             args.rotate = input('Rotate AMT app secrets after upgrade? (y/N): ').lower() == 'y'
     return args
