@@ -54,6 +54,21 @@ class SafetyTests(unittest.TestCase):
         with self.assertRaises(m.DeployError):
             m.port_rows('unexpected output')
 
+    def test_resource_inspection_accepts_docker_and_native_podman_keys(self):
+        labels = {'com.docker.compose.project': m.PROJECT}
+        for resource in ({'Labels': labels, 'Internal': True}, {'labels': labels, 'internal': True}):
+            self.assertEqual(m.project_label(m.resource_labels(resource)), m.PROJECT)
+            self.assertIs(m.resource_internal(resource), True)
+
+    def test_resource_inspection_rejects_missing_wrong_and_noninternal_metadata(self):
+        self.assertIsNone(m.project_label(m.resource_labels({})))
+        self.assertEqual(m.project_label(m.resource_labels({'labels': {'com.docker.compose.project': 'other'}})), 'other')
+        self.assertIs(m.resource_internal({'internal': False}), False)
+        with self.assertRaisesRegex(m.DeployError, 'Conflicting resource label schemas'):
+            m.resource_labels({'Labels': {'a': '1'}, 'labels': {'a': '2'}})
+        with self.assertRaisesRegex(m.DeployError, 'Conflicting network internal schemas'):
+            m.resource_internal({'Internal': True, 'internal': False})
+
     def test_install_and_upgrade_memory_threshold(self):
         for command in ('install', 'upgrade'):
             m.check_memory(int(3.8 * 1024**2), command)

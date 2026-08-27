@@ -265,6 +265,16 @@ def project_label(labels):
     labels = labels or {}
     return labels.get('com.docker.compose.project') or labels.get('io.podman.compose.project')
 
+def resource_labels(resource):
+    candidates = [resource[key] for key in ('Labels', 'labels') if resource.get(key) is not None]
+    require(not candidates or all(value == candidates[0] for value in candidates), 'Conflicting resource label schemas')
+    return candidates[0] if candidates else {}
+
+def resource_internal(resource):
+    candidates = [resource[key] for key in ('Internal', 'internal') if resource.get(key) is not None]
+    require(not candidates or all(value is candidates[0] for value in candidates), 'Conflicting network internal schemas')
+    return candidates[0] if candidates else None
+
 def check_memory(available_kib, command):
     # Status/stop/recovery inspection must remain usable under memory pressure.
     minimum = 3 * 1024**2 if command in ('install', 'upgrade') else (512 * 1024 if command in ('start', 'restore-check') else 0)
@@ -428,9 +438,9 @@ class Deployment:
                 if name in listed:
                     require(not first, 'Existing dedicated resources need manual ownership review')
                     resource = json.loads(decoded(self.engine(kind, 'inspect', name)))[0]
-                    require(project_label(resource.get('Labels')) == PROJECT, 'Volume/network ownership mismatch')
+                    require(project_label(resource_labels(resource)) == PROJECT, 'Volume/network ownership mismatch')
                     if kind == 'network':
-                        require(resource.get('Internal') is True, 'Dedicated network is not internal')
+                        require(resource_internal(resource) is True, 'Dedicated network is not internal')
         for item in self.inventory():
             if not self.owned(item):
                 require(not any(m.get('Name') in [f'{PROJECT}_{v}' for v in volumes] for m in item.get('Mounts', [])), 'Another project mounts AMT storage; refusing changes')
