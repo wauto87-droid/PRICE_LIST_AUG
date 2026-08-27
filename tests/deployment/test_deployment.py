@@ -137,13 +137,15 @@ class SafetyTests(unittest.TestCase):
         d.engine = Mock(return_value=result())
         d.initialize_volumes()
         creates = [c.args for c in d.engine.call_args_list if c.args[:2] == ('volume', 'create')]
-        self.assertEqual(len(creates), 3)
+        self.assertEqual(len(creates), 4)
         for args in creates:
             self.assertIn('com.docker.compose.project=amt-pricelist', args)
         self.assertEqual(d.ownership.call_count, 2)
         helpers = [c.args for c in d.engine.call_args_list if c.args[0] == 'run']
-        self.assertEqual(len(helpers), 2)
-        self.assertTrue(all('none' in c and 'chown' in c for c in helpers))
+        self.assertEqual(len(helpers), 3)
+        self.assertTrue(all('none' in c and any('chown' in str(part) for part in c) for c in helpers))
+        socket_helper = next(c for c in helpers if 'amt-pricelist_database_socket:/socket' in c)
+        self.assertTrue(any('chmod 0777' in str(part) for part in socket_helper))
 
     def test_ownership_failure_prevents_volume_writes(self):
         d = self.deployment()
@@ -182,7 +184,10 @@ class SafetyTests(unittest.TestCase):
         d.root = Path(temp)
         d.state = d.root / 'state'
         d.state.mkdir()
+        d.envfile = d.root / 'shared' / '.env'
+        d.envfile.parent.mkdir()
         d.env = m.new_env(18188)
+        d.envfile.write_text(m.env_text(d.env))
         d.load_environment = Mock()
         d.source = Mock(return_value=(ROOT, 'b' * 40))
         d.port = Mock(return_value=18188)
@@ -210,6 +215,7 @@ class SafetyTests(unittest.TestCase):
             d.prepare_release = Mock()
             d.initialize_volumes = Mock()
             d.wait_db = Mock()
+            d.verify_database_socket = Mock()
             d.verify_limits = Mock()
             d.stop = Mock()
             d.start = Mock()
@@ -434,19 +440,77 @@ www.softwaresolver.online {
         for image in ('app', 'worker', 'backup'):
             self.assertIn(f'image: localhost/amt-pricelist-{image}:', compose)
 
-    def test_replacement_guard_rejects_database_or_containers(self):
+    def test_runtime_database_uses_private_unix_socket(self):
+        compose = (ROOT / 'compose.yaml').read_text()
+        env = m.new_env(18180)
+        rendered = m.env_text(env)
+        self.assertIn('?host=%2Fvar%2Frun%2Fpostgresql', rendered)
+        self.assertNotIn('@db:', rendered)
+        self.assertIn('database_socket:/var/run/postgresql', compose)
+        self.assertEqual(compose.count('database_socket:/var/run/postgresql:ro'), 4)
+        self.assertIn('unix_socket_permissions=0777', compose)
+        self.assertIn('hba_file=/etc/postgresql/amt-pg_hba.conf', compose)
+        self.assertIn('local all all scram-sha-256', (ROOT / 'docker/pg_hba.conf').read_text())
+        self.assertNotRegex(compose, r'(?m)^\s*network_mode:\s*host')
+        self.assertNotRegex(compose, r'(?m)^\s*ports:.*5432')
+
+    def test_socket_precheck_requires_good_and_rejects_bad_credentials(self):
         d = self.deployment()
+        d.compose = Mock(return_value=result())
+        d.verify_database_socket()
+        args = d.compose.call_args.args
+        self.assertIn('migrate', args)
+        script = args[-1]
+        self.assertIn("query('SELECT 1')", script)
+        self.assertIn("error.code!=='28P01'", script)
+        self.assertIn('deliberately-invalid', script)
+
+    def replacement_guard_fixture(self, temp):
+        d = self.deployment()
+        d.root = Path(temp)
+        d.state = d.root / 'state'
+        d.state.mkdir()
+        name = 'aaaaaaaaaaaa-12345678'
+        release = d.root / 'releases' / name
+        release.mkdir(parents=True)
+        (release / 'release.json').write_text(json.dumps({'commit': 'a' * 40}))
+        (d.state / 'install.json').write_text(json.dumps({'commit': 'a' * 40, 'candidate': name}))
+        (d.state / 'deployment.json').write_text(json.dumps({'phase': 'MIGRATING'}))
+        return d
+
+    def test_replacement_guard_rejects_application_containers(self):
         with tempfile.TemporaryDirectory() as temp:
-            d.root = Path(temp)
-            d.state = d.root / 'state'
-            d.state.mkdir()
-            (d.state / 'install.json').write_text('{"commit":"' + 'a' * 40 + '","candidate":null}')
-            d.engine = Mock(return_value=result('amt-pricelist_database'))
-            with self.assertRaisesRegex(m.DeployError, 'Database volume'):
-                d.check_replace_failed()
+            d = self.replacement_guard_fixture(temp)
             d.engine = Mock(return_value=result(''))
-            d.inventory = Mock(return_value=[{'Config': {'Labels': {'com.docker.compose.project': m.PROJECT}}}])
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'app',
+            }}}])
             with self.assertRaisesRegex(m.DeployError, 'containers'):
+                d.check_replace_failed()
+
+    def test_replacement_guard_allows_empty_initialized_database(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}}])
+            d.database = Mock(return_value=result('0'))
+            d.check_replace_failed()
+            self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
+
+    def test_replacement_guard_rejects_applied_migrations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}}])
+            d.database = Mock(side_effect=[result('1'), result('4')])
+            with self.assertRaisesRegex(m.DeployError, 'migrations exist'):
                 d.check_replace_failed()
 
     def test_replacement_archives_journal_and_uses_requested_commit(self):

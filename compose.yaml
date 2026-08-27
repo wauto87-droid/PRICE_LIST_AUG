@@ -1,6 +1,6 @@
 name: amt-pricelist
 x-app-environment: &app-environment
-  DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB}
+  DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@/${POSTGRES_DB:?Set POSTGRES_DB}?host=%2Fvar%2Frun%2Fpostgresql
   NODE_ENV: production
   APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
@@ -18,7 +18,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
-    volumes: [database:/var/lib/postgresql/data]
+    command:
+      [postgres, -c, hba_file=/etc/postgresql/amt-pg_hba.conf, -c, unix_socket_directories=/var/run/postgresql, -c, unix_socket_permissions=0777]
+    volumes:
+      - database:/var/lib/postgresql/data
+      - database_socket:/var/run/postgresql
+      - ./docker/pg_hba.conf:/etc/postgresql/amt-pg_hba.conf:ro
     networks: [private]
     healthcheck:
       test:
@@ -39,6 +44,7 @@ services:
     command: [pnpm, migrate]
     depends_on: { db: { condition: service_healthy } }
     networks: [private]
+    volumes: [database_socket:/var/run/postgresql:ro]
     restart: "no"
     logging: *logging
   app:
@@ -47,7 +53,9 @@ services:
     restart: unless-stopped
     environment: *app-environment
     ports: ["127.0.0.1:${APP_PORT:-18180}:3000"]
-    volumes: [uploads:/data/uploads]
+    volumes:
+      - uploads:/data/uploads
+      - database_socket:/var/run/postgresql:ro
     networks: [private]
     depends_on: { migrate: { condition: service_completed_successfully } }
     security_opt: [no-new-privileges:true]
@@ -71,7 +79,9 @@ services:
     build: { context: ., target: worker }
     restart: unless-stopped
     environment: *app-environment
-    volumes: [uploads:/data/uploads]
+    volumes:
+      - uploads:/data/uploads
+      - database_socket:/var/run/postgresql:ro
     networks: [private]
     depends_on: { migrate: { condition: service_completed_successfully } }
     security_opt: [no-new-privileges:true]
@@ -86,7 +96,9 @@ services:
     build: { context: ., target: backup }
     restart: unless-stopped
     environment: *app-environment
-    volumes: [backups:/data/backups]
+    volumes:
+      - backups:/data/backups
+      - database_socket:/var/run/postgresql:ro
     networks: [private]
     depends_on: { migrate: { condition: service_completed_successfully } }
     security_opt: [no-new-privileges:true]
@@ -99,5 +111,6 @@ networks:
     internal: true
 volumes:
   database:
+  database_socket:
   uploads:
   backups:

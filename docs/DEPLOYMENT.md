@@ -39,7 +39,7 @@ docker compose -p amt-pricelist ps
 curl --fail http://127.0.0.1:18180/amt_price_list/api/v1/health
 ```
 
-Do not print `docker compose config` without `--quiet` in shared logs: it contains expanded secrets. The migration service runs before the app and worker start. The database has **no published host port**. App access is bound to `127.0.0.1` only; no public firewall port is needed for testing. All persistent volumes and the internal network receive the `amt-pricelist` project prefix. The application never mounts the Docker socket.
+Do not print `docker compose config` without `--quiet` in shared logs: it contains expanded secrets. The migration service runs before the app and worker start. The database has **no published host port**. AMT consumers connect through the project-owned `database_socket` volume, so runtime database access does not depend on container DNS. The socket is never mounted outside this Compose project. App access is bound to `127.0.0.1` only; no public firewall port is needed for testing. All persistent volumes and the internal network receive the `amt-pricelist` project prefix. The application never mounts the Docker socket.
 
 Before and after startup, compare the recorded unrelated containers and application health checks. Do not use global Docker prune, stop-all, shared network modification, or `down -v`.
 

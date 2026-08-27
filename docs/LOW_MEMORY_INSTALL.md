@@ -35,9 +35,17 @@ bash deploy.sh install --resume --replace-failed-release --ref origin/master --b
 ```
 
 This preserves the generated secrets, selected port, logs and cached layers. It
-archives the former journal and is rejected if database/container/migration state
-appears. External images are fully qualified; local AMT images use
-`localhost/amt-pricelist-*`.
+archives the former journal and is rejected if recovery state is ambiguous. An
+interrupted first install that reached PostgreSQL is accepted only when the
+installer proves that no application service exists and the migrations table is
+absent or empty. It preserves the database volume, removes only the recognized
+AMT database container, and recreates it with the project-owned Unix-socket
+volume. Any applied migration is refused. External images are fully qualified;
+local AMT images use `localhost/amt-pricelist-*`.
+
+Runtime database connections use that private socket instead of the Compose
+hostname. PostgreSQL remains unpublished and runtime services do not receive
+host networking, even when build-only host networking is selected.
 
 Before public activation, open the SSH tunnel printed by the installer and use
 `http://localhost:<saved-port>/amt_price_list` to complete single-use setup

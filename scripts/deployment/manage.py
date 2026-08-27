@@ -251,7 +251,8 @@ def read_env(path):
 
 def env_text(values):
     result = dict(values)
-    result['DATABASE_URL'] = f"postgresql://{result['POSTGRES_USER']}:{result['POSTGRES_PASSWORD']}@db:5432/{result['POSTGRES_DB']}"
+    result['DATABASE_URL'] = (f"postgresql://{result['POSTGRES_USER']}:{result['POSTGRES_PASSWORD']}@/"
+                              f"{result['POSTGRES_DB']}?host=%2Fvar%2Frun%2Fpostgresql")
     return ''.join(f'{k}={v}\n' for k, v in sorted(result.items()))
 
 def new_env(port):
@@ -419,7 +420,8 @@ class Deployment:
                 require(self.owned(item), 'Conflicting container name is not owned by this project')
             if first:
                 require(not self.owned(item), 'Project resources already exist; refusing first-install adoption')
-        for kind, names in [('volume', ['database', 'uploads', 'backups']), ('network', ['private'])]:
+        volumes = ['database', 'database_socket', 'uploads', 'backups']
+        for kind, names in [('volume', volumes), ('network', ['private'])]:
             listed = decoded(self.engine(kind, 'ls', '--format', '{{.Name}}')).splitlines()
             for suffix in names:
                 name = f'{PROJECT}_{suffix}'
@@ -431,12 +433,14 @@ class Deployment:
                         require(resource.get('Internal') is True, 'Dedicated network is not internal')
         for item in self.inventory():
             if not self.owned(item):
-                require(not any(m.get('Name') in [f'{PROJECT}_{v}' for v in ('database', 'uploads', 'backups')] for m in item.get('Mounts', [])), 'Another project mounts AMT storage; refusing changes')
+                require(not any(m.get('Name') in [f'{PROJECT}_{v}' for v in volumes] for m in item.get('Mounts', [])), 'Another project mounts AMT storage; refusing changes')
                 continue
             service = item.get('Config', {}).get('Labels', {}).get('com.docker.compose.service')
             if service == 'db':
                 mounts = [m for m in item.get('Mounts', []) if m.get('Destination') == '/var/lib/postgresql/data']
                 require(len(mounts) == 1 and mounts[0].get('Name') == PROJECT + '_database', 'Database volume mismatch')
+                sockets = [m for m in item.get('Mounts', []) if m.get('Destination') == '/var/run/postgresql']
+                require(len(sockets) == 1 and sockets[0].get('Name') == PROJECT + '_database_socket', 'Database socket volume mismatch')
                 require(not any(item.get('HostConfig', {}).get('PortBindings', {}).values()), 'Database must not publish ports')
 
     def port(self, existing=None):
@@ -487,12 +491,15 @@ class Deployment:
     def initialize_volumes(self):
         self.ownership()
         existing = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
-        for volume in ('database', 'uploads', 'backups'):
+        for volume in ('database', 'database_socket', 'uploads', 'backups'):
             name = f'{PROJECT}_{volume}'
             if name not in existing:
                 self.engine('volume', 'create', '--label', f'com.docker.compose.project={PROJECT}',
                             '--label', f'com.docker.compose.volume={volume}', name)
         self.ownership()
+        self.engine('run', '--rm', '--network', 'none', '--label', f'com.docker.compose.project={PROJECT}',
+                    '-v', f'{PROJECT}_database_socket:/socket', DB_IMAGE, 'sh', '-c',
+                    'chown postgres:postgres /socket && chmod 0777 /socket')
         for volume in ('uploads', 'backups'):
             self.engine('run', '--rm', '--network', 'none', '--label', f'com.docker.compose.project={PROJECT}',
                         '-v', f'{PROJECT}_{volume}:/data', DB_IMAGE, 'chown', '1000:1000', '/data')
@@ -711,6 +718,12 @@ class Deployment:
             if self.args.replace_failed_release:
                 self.check_replace_failed()
                 atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
+                # The guard proved this is the sole pre-migration DB container. Recreate it
+                # from the replacement release so it receives the private socket mount.
+                if self.release is not None:
+                    self.compose('rm', '-s', '-f', 'db')
+                    self.release = None
+                atomic(self.envfile, env_text(self.env))
                 recovery = {'commit': requested_commit, 'candidate': None}
                 atomic(journal, json.dumps(recovery))
                 self.event('FAILED_RELEASE_REPLACED', commit=requested_commit)
@@ -754,6 +767,7 @@ class Deployment:
         self.compose('up', '-d', '--no-deps', '--no-build', 'db')
         self.verify_limits('db')
         self.wait_db()
+        self.verify_database_socket()
         self.checkpoint('MIGRATING', previous=previous.name if previous else None, candidate=release.name)
         self.stage('Run database migrations')
         self.compose('run', '--rm', '--no-deps', 'migrate', timeout=600)
@@ -783,10 +797,34 @@ class Deployment:
         require(not recovery.get('completed'), 'Installation already completed')
         state_file = self.state / 'deployment.json'
         if state_file.exists():
-            require(json.loads(state_file.read_text()).get('phase') == 'BUILT', 'Replacement blocked after migrations or ambiguous recovery state')
+            require(json.loads(state_file.read_text()).get('phase') in ('BUILT', 'MIGRATING'), 'Replacement blocked after migrations or ambiguous recovery state')
         volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
-        require(f'{PROJECT}_database' not in volumes, 'Database volume already exists; replacement needs manual recovery review')
-        require(not any(self.owned(c) for c in self.inventory()), 'AMT containers already exist; replacement refused')
+        owned = [c for c in self.inventory() if self.owned(c)]
+        services = {c.get('Config', {}).get('Labels', {}).get('com.docker.compose.service') for c in owned}
+        require(services <= {'db'}, 'Application or ambiguous AMT containers already exist; replacement refused')
+        if f'{PROJECT}_database' in volumes or 'db' in services:
+            require(services == {'db'}, 'Database storage exists without exactly one recognized database container')
+            self.release = self.recovery_release(recovery)
+            exists = self.database("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='migrations';", check=False)
+            require(exists.returncode == 0 and decoded(exists) in ('0', '1'), 'Replacement refused because database state is ambiguous')
+            if decoded(exists) == '1':
+                applied = self.database('SELECT count(*) FROM migrations;', check=False)
+                require(applied.returncode == 0 and decoded(applied) == '0', 'Replacement refused because database migrations exist or database state is ambiguous')
+
+    def recovery_release(self, recovery):
+        name = recovery.get('candidate')
+        require(isinstance(name, str) and re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', name), 'Recovery release is missing or invalid')
+        release = self.root / 'releases' / name
+        require(release.is_dir() and not release.is_symlink(), 'Recovery release missing or unsafe')
+        metadata = json.loads((release / 'release.json').read_text())
+        require(metadata.get('commit') == recovery.get('commit'), 'Recovery release commit mismatch')
+        return release
+
+    def verify_database_socket(self):
+        result = self.compose('run', '--rm', '--no-deps', 'migrate', 'node', '-e',
+                              "const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); await good.connect(); await good.query('SELECT 1'); await good.end(); const url=new URL(process.env.DATABASE_URL); url.password='deliberately-invalid'; const bad=new Client({connectionString:url.toString()}); try{await bad.connect(); await bad.end(); throw new Error('socket accepted invalid credential')}catch(error){if(error.code!=='28P01')throw error}} main().then(()=>process.exit(0)).catch(()=>process.exit(1))",
+                              check=False, timeout=60)
+        require(result.returncode == 0, 'Private PostgreSQL socket authentication failed before migrations; verify the socket mount and SCRAM policy')
 
     def _caddy_context(self):
         result = decoded(run(['systemctl', 'show', 'caddy', '--property=ActiveState', '--property=ExecStart', '--no-pager']))
@@ -1011,7 +1049,7 @@ def arguments(argv=None):
     parser.add_argument('--access-verified', action='store_true', help='Operator confirms SSH-key access and separately rotated VPS root password')
     parser.add_argument('--rotate', action='store_true', help='Explicitly opt into app-secret rotation after a successful upgrade')
     parser.add_argument('--resume', action='store_true', help='Recover an interrupted first install or credential rotation')
-    parser.add_argument('--replace-failed-release', action='store_true', help='Explicitly replace the pinned first-install commit before any database initialization')
+    parser.add_argument('--replace-failed-release', action='store_true', help='Replace a pinned first-install release only before any application migration')
     parser.add_argument('--url', help='Public URL ending in /amt_price_list; HTTP only for the approved VPS IP, HTTPS for a domain')
     args = parser.parse_args(argv)
     if not args.command:
