@@ -26,8 +26,9 @@ the bridge-network failure. A dry run does not exercise network connectivity.
 
 The guided recovery command detects whether the saved candidate already matches
 `origin/master`. It reuses a matching candidate; otherwise it invokes the same
-empty-migration replacement guard automatically. On this VPS it selects host
-networking for image builds only:
+empty-migration replacement guard automatically. Use this only for interrupted
+first-install recovery. On this VPS it selects host networking for image builds
+only:
 
 ```sh
 bash deploy.sh recover-install --verbose
@@ -36,6 +37,21 @@ bash deploy.sh recover-install --verbose
 Interactive recovery uses one confirmation. Non-interactive operators must use
 both `--yes` and `--access-verified`. Runtime services never receive host
 networking.
+
+## Normal code updates
+
+For a healthy existing deployment, pull the latest code and use `upgrade`:
+
+```sh
+cd /opt/amt-pricelist-source
+git status --short
+# Continue only when status output is empty:
+git pull --ff-only origin master
+bash deploy.sh upgrade --yes --access-verified --verbose
+```
+
+Use `recover-install` only when the first install was interrupted or deployment
+state is incomplete. Do not use it as the routine update path.
 
 The inspected VPS journal has an older failed build but no candidate release,
 database volume, AMT container, or migration checkpoint. After this commit is
@@ -63,6 +79,15 @@ host networking, even when build-only host networking is selected.
 Before public activation, open the SSH tunnel printed by the installer and use
 `http://localhost:<saved-port>/amt_price_list` to complete single-use setup
 privately. Never reveal the setup token.
+
+If you need to retrieve the current first-run token from an initialized
+deployment without opening the environment file manually, use:
+
+```sh
+bash deploy.sh setup-token
+```
+
+This command is read-only and prints the current `SETUP_TOKEN` value only.
 
 ## Public URL and later domain changes
 

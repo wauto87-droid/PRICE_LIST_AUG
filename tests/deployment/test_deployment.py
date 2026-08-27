@@ -80,7 +80,7 @@ class SafetyTests(unittest.TestCase):
         m.check_memory(512 * 1024, 'start')
         with self.assertRaises(m.DeployError):
             m.check_memory(511 * 1024, 'start')
-        for command in ('status', 'stop', 'backup', 'rotate-secrets'):
+        for command in ('status', 'stop', 'backup', 'rotate-secrets', 'setup-token'):
             m.check_memory(0, command)
 
     def test_sequential_bounded_native_builds(self):
@@ -128,6 +128,11 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(args.resume)
         self.assertEqual(args.ref, 'origin/master')
         self.assertEqual(args.build_network, 'host')
+
+    def test_setup_token_command_is_accepted(self):
+        args = m.arguments(['setup-token'])
+        self.assertEqual(args.command, 'setup-token')
+        self.assertFalse(args.dry_run)
 
     def test_resumed_build_uses_host_network_and_original_commit(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -270,6 +275,25 @@ class SafetyTests(unittest.TestCase):
             d.source.assert_called_once_with(fetch=False)
             d.deploy.assert_not_called()
             self.assertFalse(d.root.exists())
+
+    def test_execute_setup_token_is_read_only(self):
+        args = m.arguments(['setup-token'])
+        d = m.Deployment(args)
+        d.preflight = Mock()
+        d.load_environment = Mock()
+        d.port = Mock()
+        d.current = Mock()
+        d.inventory = Mock(return_value=[])
+        d.env = m.new_env(18180)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            d.execute()
+        d.preflight.assert_called_once()
+        d.load_environment.assert_called_once()
+        d.port.assert_not_called()
+        d.current.assert_not_called()
+        self.assertIn('Current deployment setup token', output.getvalue())
+        self.assertIn(d.env['SETUP_TOKEN'], output.getvalue())
 
     def resume_fixture(self, temp, candidate=None):
         d = self.deployment()

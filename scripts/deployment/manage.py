@@ -1037,9 +1037,17 @@ class Deployment:
         self.event('RESTORE_CHECKED', backup=backup.name, resources=str(drill))
         print(f'Restore counts and quotation sequence verified. Isolated stopped resources retained: {drill}')
 
+    def setup_token(self):
+        self.load_environment()
+        print('Current deployment setup token (handle privately; first-run setup only):')
+        print(self.env['SETUP_TOKEN'])
+
     def execute(self):
         self.stage('Check runtime, memory, ownership and ports')
         self.preflight()
+        if self.args.command == 'setup-token':
+            self.setup_token()
+            return
         if self.args.command == 'install':
             if self.args.resume:
                 self.load_environment()
@@ -1062,7 +1070,7 @@ class Deployment:
         if self.args.command == 'status':
             print(decoded(self.compose('ps')))
             return
-        require(self.args.command in ['start', 'stop'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
+        require(self.args.command in ['start', 'stop', 'setup-token'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
         with self.locked():
             if self.root.exists():
                 self.log_ready()
@@ -1100,7 +1108,7 @@ class Deployment:
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description='AMT-only VPS deployment; no root/user password changes or public proxy configuration')
-    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'set-public-url'])
+    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'setup-token', 'set-public-url'])
     parser.add_argument('--source', default=str(Path(__file__).resolve().parents[2]), help='Clean Git checkout; not a deployed release directory')
     parser.add_argument('--ref', default='origin/master')
     parser.add_argument('--release', help='Exact retained release directory for rollback')
@@ -1118,7 +1126,7 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     if not args.command:
         require(sys.stdin.isatty(), 'Non-interactive use requires an explicit command and --yes')
-        options = ['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'set-public-url']
+        options = ['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'setup-token', 'set-public-url']
         for i, item in enumerate(options, 1):
             print(f'{i}. {item}')
         choice = input('Select command: ').strip()
@@ -1133,7 +1141,7 @@ def arguments(argv=None):
     require(not args.url or args.command == 'set-public-url', '--url is valid only with set-public-url')
     if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():
         args.url = input('Public URL (including /amt_price_list): ').strip()
-    if not args.dry_run and args.command not in ['status', 'start', 'stop']:
+    if not args.dry_run and args.command not in ['status', 'start', 'stop', 'setup-token']:
         if args.recover_install and not args.yes:
             approved = (sys.stdin.isatty() and
                         input('Recover the interrupted AMT install now? Confirm your SSH-key VPS access still works. (y/N): ').lower() == 'y')

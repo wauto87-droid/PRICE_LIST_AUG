@@ -59,6 +59,10 @@ ssh -N -L 18180:127.0.0.1:18180 root@76.13.244.160
 
 Open `http://localhost:18180/amt_price_list`. Read the setup token privately from this project's `.env`, create the administrator and company details, then verify setup is closed. Create staff accounts with least privilege. Do not reuse the VPS root password for the application.
 
+On an initialized deployment, `bash deploy.sh setup-token` prints the current
+`SETUP_TOKEN` directly for the operator. It is read-only and intended only for
+one-time first-run setup.
+
 ## HTTPS once the domain is supplied
 
 Point the chosen subdomain at the VPS. The inspected server uses **Caddy**. Adapt `docker/Caddyfile.example` as a path-scoped snippet inside the existing site block, following the existing configuration's import structure. Inspect the active configuration path and version first. Validate the complete resulting configuration with `caddy validate --config <active-config-path>` before a safe reload through its existing service. Do not overwrite the main Caddyfile or unrelated host blocks. The Nginx example is provided only for other deployment environments.
