@@ -23,7 +23,12 @@ import {
   levelPrice,
   levelCode,
 } from "../pricing/engine";
-import { getProduct, toInput, saveProduct } from "../products/service";
+import {
+  deleteProduct,
+  getProduct,
+  toInput,
+  saveProduct,
+} from "../products/service";
 export async function settings(db: DB) {
   return (await one(db, "SELECT data FROM settings WHERE id=1"))!.data;
 }
@@ -234,7 +239,6 @@ export async function saveTaxonomy(
 }
 export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
   requirePermission(actor, "PRODUCT_EDIT");
-  requirePermission(actor, "COST_VIEW");
   const data = z
     .object({
       items: z
@@ -242,6 +246,9 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
         .min(1)
         .max(1000),
       operation: z.enum([
+        "ARCHIVE",
+        "REACTIVATE",
+        "DELETE",
         "COST_INCREASE",
         "COST_DECREASE",
         "MARKUP",
@@ -251,7 +258,7 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
         "VAT",
         "FIXED_PRICE",
       ]),
-      value: decimal,
+      value: decimal.optional(),
       sellingLevel: z
         .union([levelCode, z.literal("ALL"), z.literal("DEFAULT")])
         .default("DEFAULT"),
@@ -259,13 +266,39 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
     })
     .strict()
     .parse(input);
+  const priceOperations = new Set([
+    "COST_INCREASE",
+    "COST_DECREASE",
+    "MARKUP",
+    "BASE_DISCOUNT",
+    "MINIMUM",
+    "VAT",
+    "FIXED_PRICE",
+  ]);
+  if (priceOperations.has(data.operation)) {
+    requirePermission(actor, "COST_VIEW");
+    assert(data.value !== undefined, 400, "A value is required for this bulk action");
+  }
+  if (data.operation === "DELETE") requirePermission(actor, "PRODUCT_DELETE");
+  if (["ARCHIVE", "REACTIVATE", "DELETE"].includes(data.operation))
+    assert(data.confirm, 400, "This bulk action requires confirmation");
   if (["BASE_DISCOUNT", "VAT", "COST_DECREASE"].includes(data.operation))
     assert(
-      new Decimal(data.value).lte(100),
+      new Decimal(data.value!).lte(100),
       400,
       "This percentage cannot exceed 100",
     );
   return db.transaction(async (tx) => {
+    if (data.operation === "DELETE") {
+      const deleted = [];
+      for (const item of [...data.items].sort((a, b) =>
+        a.id.localeCompare(b.id),
+      ))
+        deleted.push(
+          await deleteProduct(tx, actor, item.id, item.version, "BULK"),
+        );
+      return { applied: true, deleted };
+    }
     const preview = [];
     for (const item of [...data.items].sort((a, b) =>
       a.id.localeCompare(b.id),
@@ -281,6 +314,8 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
           ...before,
           levels: sellingLevels(before).map((l) => ({ ...l })),
         };
+      if (data.operation === "ARCHIVE") after.active = false;
+      if (data.operation === "REACTIVATE") after.active = true;
       if (
         data.operation === "COST_INCREASE" ||
         data.operation === "COST_DECREASE"
@@ -293,7 +328,7 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
         after.cost = new Decimal(after.cost)
           .mul(
             new Decimal(1).add(
-              new Decimal(data.value)
+              new Decimal(data.value!)
                 .div(100)
                 .mul(data.operation === "COST_DECREASE" ? -1 : 1),
             ),
@@ -326,14 +361,14 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
             400,
             `Operation requires ${method} for ${before.partNumber} / ${l.code}`,
           );
-          if (data.operation === "MARKUP") l.markup = data.value;
-          if (data.operation === "BASE_DISCOUNT") l.baseDiscount = data.value;
-          if (data.operation === "FIXED_PRICE") l.fixedPrice = data.value;
+          if (data.operation === "MARKUP") l.markup = data.value!;
+          if (data.operation === "BASE_DISCOUNT") l.baseDiscount = data.value!;
+          if (data.operation === "FIXED_PRICE") l.fixedPrice = data.value!;
         }
       }
-      if (data.operation === "VAT") after.vat = data.value;
+      if (data.operation === "VAT") after.vat = data.value!;
       if (data.operation === "MINIMUM") {
-        after.minimum = data.value;
+        after.minimum = data.value!;
         after.minimumEnabled = true;
       }
       if (data.operation === "REMOVE_MINIMUM") after.minimumEnabled = false;

@@ -7,6 +7,51 @@ max_pages = int(sys.argv[2])
 max_rows = int(sys.argv[3]) if len(sys.argv) > 3 else 50000
 rows, warnings = [], []
 
+IDENTIFIER_HEADERS = {
+    'partnumber',
+    'partno',
+    'partreference',
+    'partref',
+    'itemcode',
+    'item',
+    'code',
+    'sku',
+    'reference',
+}
+
+def normalize_header(value):
+    return ''.join(ch.lower() for ch in str(value or '') if ch.isalnum())
+
+def format_identifier_value(value, number_format):
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return '1' if value else '0'
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, float):
+        text = str(int(value)) if value.is_integer() else str(value)
+    else:
+        return str(value)
+    fmt = str(number_format or '')
+    zero_count = len(''.join(ch for ch in fmt if ch == '0'))
+    if zero_count and '.' not in fmt and text.lstrip('-').isdigit():
+        digits = text.lstrip('-').zfill(zero_count)
+        return ('-' if text.startswith('-') else '') + digits
+    return text
+
+def cell_text(header, cell):
+    if cell.data_type == 'f':
+        return 'FORMULA_REQUIRES_VALUE'
+    value = cell.value
+    if value == 0:
+        return '0'
+    if value is None:
+        return ''
+    if normalize_header(header) in IDENTIFIER_HEADERS:
+        return format_identifier_value(value, getattr(cell, 'number_format', ''))
+    return str(value)
+
 def append(values):
     if len(rows) >= max_rows:
         raise ValueError(f'Maximum {max_rows:,} rows')
@@ -32,7 +77,7 @@ elif source.suffix.lower() == '.xlsx':
         raise ValueError('Too many or duplicate column headings')
     for cells in iterator:
         if any(c.value is not None for c in cells):
-            append({headers[i]: ('FORMULA_REQUIRES_VALUE' if c.data_type == 'f' else str(c.value or '') if c.value != 0 else '0') for i,c in enumerate(cells) if i<len(headers)})
+            append({headers[i]: cell_text(headers[i], c) for i,c in enumerate(cells) if i<len(headers)})
     book.close()
 elif source.suffix.lower() == '.xls':
     import xlrd

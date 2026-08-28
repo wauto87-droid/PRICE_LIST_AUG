@@ -319,6 +319,72 @@ export async function saveProduct(
     );
   return { id: productId, version };
 }
+
+export async function deleteProduct(
+  db: DB,
+  actor: Actor,
+  id: string,
+  expectedVersion: number,
+  source = "MANUAL",
+) {
+  await db.query("SELECT id FROM settings WHERE id=1 FOR UPDATE");
+  const current = await getProduct(db, id, true);
+  assert(
+    current.version === expectedVersion,
+    409,
+    "Product changed. Reload its current values before deleting",
+  );
+  const before = toInput(current);
+  const quoteUse = await one(
+    db,
+    `SELECT q.number
+     FROM quotations q
+     WHERE EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(q.lines) AS line
+       WHERE line->>'productId' = $1
+     )
+     ORDER BY q.updated_at DESC
+     LIMIT 1`,
+    [id],
+  );
+  assert(
+    !quoteUse,
+    409,
+    `Cannot delete ${before.partNumber}: it is used in quotation ${quoteUse?.number ?? ""}`.trim(),
+  );
+  const importUse = await one(
+    db,
+    `SELECT j.filename
+     FROM import_rows r
+     JOIN import_jobs j ON j.id=r.job_id
+     WHERE r.duplicate_id=$1
+       AND j.status IN ('UPLOADED','PROCESSING','AWAITING_REVIEW','CONFIRMED')
+     LIMIT 1`,
+    [id],
+  );
+  assert(
+    !importUse,
+    409,
+    `Cannot delete ${before.partNumber}: it is referenced by import ${importUse?.filename ?? ""}`.trim(),
+  );
+  await db.query("DELETE FROM price_history WHERE product_id=$1", [id]);
+  await db.query("DELETE FROM product_aliases WHERE product_id=$1", [id]);
+  await db.query("DELETE FROM product_selling_levels WHERE product_id=$1", [id]);
+  await db.query("DELETE FROM product_pricing WHERE product_id=$1", [id]);
+  await db.query("DELETE FROM products WHERE id=$1", [id]);
+  await audit(
+    db,
+    actor.id,
+    "PRODUCT_DELETE",
+    "products",
+    id,
+    before,
+    null,
+    source,
+  );
+  return { id, partNumber: before.partNumber };
+}
 export async function search(
   db: DB,
   actor: Actor,

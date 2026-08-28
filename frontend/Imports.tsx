@@ -966,6 +966,12 @@ export default function Imports({
                           {r.proposed?.partNumber ||
                             t("Not mapped", "غير مربوط")}
                         </strong>
+                        {mapping.partNumber && (
+                          <small>
+                            {t("Source part", "رقم الصنف من الملف")}:{" "}
+                            {String(r.raw?.[mapping.partNumber] ?? "—")}
+                          </small>
+                        )}
                         <small>{r.proposed?.description}</small>
                         {guidedMode && mapping.listPrice && (
                           <small>

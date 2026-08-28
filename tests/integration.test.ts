@@ -572,6 +572,61 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       );
     },
   );
+  await t.test("Bulk archive and reactivate update product status", async () => {
+    const before = (await request("products?q=LC1D")).data[0];
+    await request("products/bulk", "POST", {
+      items: [{ id: before.id, version: before.version }],
+      operation: "ARCHIVE",
+      confirm: true,
+    });
+    const archived = (await request("products?q=LC1D")).data[0];
+    assert.equal(archived.active, false);
+    await request("products/bulk", "POST", {
+      items: [{ id: archived.id, version: archived.version }],
+      operation: "REACTIVATE",
+      confirm: true,
+    });
+    const restored = (await request("products?q=LC1D")).data[0];
+    assert.equal(restored.active, true);
+  });
+  await t.test("Bulk delete removes unused products", async () => {
+    const created = (
+      await request("products", "POST", {
+        ...base,
+        partNumber: "DELETE-ME",
+        aliases: [],
+      })
+    ).data;
+    await request("products/bulk", "POST", {
+      items: [{ id: created.id, version: created.version }],
+      operation: "DELETE",
+      confirm: true,
+    });
+    assert.equal((await request("products?q=DELETE-ME")).data.length, 0);
+  });
+  await t.test("Bulk delete blocks products used in quotations", async () => {
+    const p = (
+      await request("products", "POST", {
+        ...base,
+        partNumber: "DELETE-BLOCKED",
+        aliases: [],
+      })
+    ).data;
+    await request("quotations", "POST", {
+      customer: {},
+      lines: [{ ...line, productId: p.id }],
+    });
+    await request(
+      "products/bulk",
+      "POST",
+      {
+        items: [{ id: p.id, version: p.version }],
+        operation: "DELETE",
+        confirm: true,
+      },
+      409,
+    );
+  });
   await t.test(
     "Import detects duplicates within the file atomically",
     async () => {

@@ -16,6 +16,7 @@ import QuotationSettings from "./QuotationSettings";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
+import { showConfirm } from "./confirm";
 const sections = [
   ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
   [
@@ -122,6 +123,29 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     successTimer.current = null;
     setActionState({ phase: "idle" });
   };
+  const bulkOptions = [
+    ["ARCHIVE", t("Archive selected", "أرشفة المحدد")],
+    ["REACTIVATE", t("Reactivate selected", "إعادة تفعيل المحدد")],
+    ["DELETE", t("Delete selected permanently", "حذف المحدد نهائياً")],
+    ["COST_INCREASE", "COST_INCREASE"],
+    ["COST_DECREASE", "COST_DECREASE"],
+    ["MARKUP", "MARKUP"],
+    ["BASE_DISCOUNT", "BASE_DISCOUNT"],
+    ["MINIMUM", "MINIMUM"],
+    ["REMOVE_MINIMUM", "REMOVE_MINIMUM"],
+    ["VAT", "VAT"],
+    ["FIXED_PRICE", "FIXED_PRICE"],
+  ] as const;
+  const priceBulkOperations = new Set([
+    "COST_INCREASE",
+    "COST_DECREASE",
+    "MARKUP",
+    "BASE_DISCOUNT",
+    "MINIMUM",
+    "REMOVE_MINIMUM",
+    "VAT",
+    "FIXED_PRICE",
+  ]);
   const runAction: AdminActionRunner = async (messages, action) => {
     if (busy) return undefined;
     if (successTimer.current) clearTimeout(successTimer.current);
@@ -166,6 +190,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     });
   }
   const heading = sections.find((s) => s[0] === section)!;
+  const visibleProductIds =
+    section === "products" && Array.isArray(data)
+      ? data.map((p: any) => p.id)
+      : [];
+  const allVisibleSelected =
+    !!visibleProductIds.length &&
+    visibleProductIds.every((id) => selected.includes(id));
+  const someVisibleSelected =
+    visibleProductIds.some((id) => selected.includes(id)) && !allVisibleSelected;
   const editField = (key: string, label: string, type = "text") => (
     <label key={key}>
       {label}
@@ -339,7 +372,29 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   <table>
                     <thead>
                       <tr>
-                        <th></th>
+                        <th>
+                          <input
+                            type="checkbox"
+                            aria-label={t(
+                              "Select all visible products",
+                              "تحديد كل الأصناف الظاهرة",
+                            )}
+                            checked={allVisibleSelected}
+                            ref={(node) => {
+                              if (node) node.indeterminate = someVisibleSelected;
+                            }}
+                            onChange={(e) => {
+                              setSelected(
+                                e.target.checked
+                                  ? [...new Set([...selected, ...visibleProductIds])]
+                                  : selected.filter(
+                                      (id) => !visibleProductIds.includes(id),
+                                    ),
+                              );
+                              setPreview(null);
+                            }}
+                          />
+                        </th>
                         <th>{t("Part / description", "الصنف / الوصف")}</th>
                         <th>{t("Method", "الطريقة")}</th>
                         <th>{t("Brand", "العلامة")}</th>
@@ -397,10 +452,30 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 {!!selected.length && (
                   <div className="review-panel">
                     <h3>
-                      {t("Bulk pricing update", "تحديث أسعار جماعي")} (
-                      {selected.length})
+                      {t("Bulk actions", "إجراءات جماعية")} ({selected.length})
                     </h3>
                     <div className="actions wrap">
+                      <button
+                        disabled={busy || !visibleProductIds.length}
+                        onClick={() => {
+                          setSelected([...new Set([...selected, ...visibleProductIds])]);
+                          setPreview(null);
+                        }}
+                      >
+                        {t("Select visible", "تحديد الظاهر")}
+                      </button>
+                      <button
+                        disabled={busy || !selected.length}
+                        onClick={() => {
+                          setSelected([]);
+                          setPreview(null);
+                        }}
+                      >
+                        {t("Clear selection", "مسح التحديد")}
+                      </button>
+                      <span className="muted">
+                        {t("Selected", "المحدد")}: {selected.length}
+                      </span>
                       <select
                         value={bulk.operation}
                         onChange={(e) => {
@@ -408,17 +483,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           setPreview(null);
                         }}
                       >
-                        {[
-                          "COST_INCREASE",
-                          "COST_DECREASE",
-                          "MARKUP",
-                          "BASE_DISCOUNT",
-                          "MINIMUM",
-                          "REMOVE_MINIMUM",
-                          "VAT",
-                          "FIXED_PRICE",
-                        ].map((o) => (
-                          <option key={o}>{o}</option>
+                        {bulkOptions.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
                         ))}
                       </select>
                       {["MARKUP", "BASE_DISCOUNT", "FIXED_PRICE"].includes(
@@ -445,35 +513,161 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           ))}
                         </select>
                       )}
-                      <input
-                        className="compact"
-                        value={bulk.value}
-                        onChange={(e) => {
-                          setBulk({ ...bulk, value: e.target.value });
-                          setPreview(null);
-                        }}
-                      />
-                      <button
-                        onClick={() =>
-                          (async () => {
-                            if (busy) return;
-                            setPreview(
-                              await api("products/bulk", "POST", {
-                                ...bulk,
-                                items: data
-                                  .filter((p: any) => selected.includes(p.id))
-                                  .map((p: any) => ({
-                                    id: p.id,
-                                    version: p.version,
-                                  })),
-                                confirm: false,
-                              }),
+                      {bulk.operation !== "REMOVE_MINIMUM" &&
+                        priceBulkOperations.has(bulk.operation) && (
+                          <input
+                            className="compact"
+                            value={bulk.value}
+                            onChange={(e) => {
+                              setBulk({ ...bulk, value: e.target.value });
+                              setPreview(null);
+                            }}
+                          />
+                        )}
+                      {priceBulkOperations.has(bulk.operation) ? (
+                        <button
+                          disabled={busy || !selected.length}
+                          onClick={() =>
+                            (async () => {
+                              if (busy) return;
+                              setPreview(
+                                await api("products/bulk", "POST", {
+                                  ...bulk,
+                                  items: data
+                                    .filter((p: any) => selected.includes(p.id))
+                                    .map((p: any) => ({
+                                      id: p.id,
+                                      version: p.version,
+                                    })),
+                                  confirm: false,
+                                }),
+                              );
+                            })()
+                          }
+                        >
+                          {t("Preview", "معاينة")}
+                        </button>
+                      ) : (
+                        <button
+                          className={bulk.operation === "DELETE" ? "primary" : ""}
+                          disabled={busy || !selected.length}
+                          onClick={async () => {
+                            if (
+                              !(await showConfirm(
+                                bulk.operation === "DELETE"
+                                  ? t(
+                                      `Permanently delete ${selected.length} selected products?`,
+                                      `حذف ${selected.length} من الأصناف المحددة نهائياً؟`,
+                                    )
+                                  : bulk.operation === "ARCHIVE"
+                                    ? t(
+                                        `Archive ${selected.length} selected products?`,
+                                        `أرشفة ${selected.length} من الأصناف المحددة؟`,
+                                      )
+                                    : t(
+                                        `Reactivate ${selected.length} selected products?`,
+                                        `إعادة تفعيل ${selected.length} من الأصناف المحددة؟`,
+                                      ),
+                              ))
+                            )
+                              return;
+                            if (
+                              bulk.operation === "DELETE" &&
+                              !(await showConfirm(
+                                t(
+                                  "This permanently deletes the selected products and cannot be undone.",
+                                  "هذا يحذف الأصناف المحددة نهائياً ولا يمكن التراجع عنه.",
+                                ),
+                              ))
+                            )
+                              return;
+                            await mutate(
+                              {
+                                saving:
+                                  bulk.operation === "DELETE"
+                                    ? t(
+                                        "Deleting products…",
+                                        "جارٍ حذف الأصناف…",
+                                      )
+                                    : bulk.operation === "ARCHIVE"
+                                      ? t(
+                                          "Archiving products…",
+                                          "جارٍ أرشفة الأصناف…",
+                                        )
+                                      : t(
+                                          "Reactivating products…",
+                                          "جارٍ إعادة تفعيل الأصناف…",
+                                        ),
+                                success:
+                                  bulk.operation === "DELETE"
+                                    ? t("Products deleted", "تم حذف الأصناف")
+                                    : bulk.operation === "ARCHIVE"
+                                      ? t(
+                                          "Products archived",
+                                          "تمت أرشفة الأصناف",
+                                        )
+                                      : t(
+                                          "Products reactivated",
+                                          "تمت إعادة تفعيل الأصناف",
+                                        ),
+                                successDetail:
+                                  bulk.operation === "DELETE"
+                                    ? t(
+                                        "The selected products were permanently removed.",
+                                        "تمت إزالة الأصناف المحددة نهائياً.",
+                                      )
+                                    : bulk.operation === "ARCHIVE"
+                                      ? t(
+                                          "The selected products were archived.",
+                                          "تمت أرشفة الأصناف المحددة.",
+                                        )
+                                      : t(
+                                          "The selected products are active again.",
+                                          "أصبحت الأصناف المحددة نشطة مرة أخرى.",
+                                        ),
+                                error:
+                                  bulk.operation === "DELETE"
+                                    ? t(
+                                        "Products could not be deleted",
+                                        "تعذر حذف الأصناف",
+                                      )
+                                    : bulk.operation === "ARCHIVE"
+                                      ? t(
+                                          "Products could not be archived",
+                                          "تعذر أرشفة الأصناف",
+                                        )
+                                      : t(
+                                          "Products could not be reactivated",
+                                          "تعذر إعادة تفعيل الأصناف",
+                                        ),
+                              },
+                              async () => {
+                                await api("products/bulk", "POST", {
+                                  operation: bulk.operation,
+                                  items: data
+                                    .filter((p: any) => selected.includes(p.id))
+                                    .map((p: any) => ({
+                                      id: p.id,
+                                      version: p.version,
+                                    })),
+                                  confirm: true,
+                                });
+                                setSelected([]);
+                                setPreview(null);
+                              },
                             );
-                          })()
-                        }
-                      >
-                        {t("Preview", "معاينة")}
-                      </button>
+                          }}
+                        >
+                          {bulk.operation === "DELETE"
+                            ? t("Delete selected", "حذف المحدد")
+                            : bulk.operation === "ARCHIVE"
+                              ? t("Archive selected", "أرشفة المحدد")
+                              : t(
+                                  "Reactivate selected",
+                                  "إعادة تفعيل المحدد",
+                                )}
+                        </button>
+                      )}
                     </div>
                     {preview && (
                       <>

@@ -114,6 +114,29 @@ test(
       assert.equal(staged!.status, "AWAITING_REVIEW");
       assert.equal(staged!.summary.rows, 10001);
     });
+    await t.test(
+      "Identifier-like XLSX columns preserve displayed leading zeros",
+      async () => {
+        const book = new ExcelJS.Workbook();
+        const sheet = book.addWorksheet("PriceUpdate");
+        sheet.addRow(["Part Reference", "Local Description", "Public Pricelist"]);
+        const row = sheet.addRow([28900, "Zero-padded part", "100"]);
+        row.getCell(1).numFmt = "000000000";
+        const buffer = Buffer.from(await book.xlsx.writeBuffer());
+        const job = await upload(
+          db,
+          actor,
+          new File([buffer], "leading-zero.xlsx"),
+        );
+        await runJob(db);
+        const staged = await one(
+          db,
+          "SELECT raw FROM import_rows WHERE job_id=$1 AND row_number=1",
+          [job.id],
+        );
+        assert.equal(staged!.raw["Part Reference"], "000028900");
+      },
+    );
     await t.test("Oversized row-count XLSX reports a clear safe error", async () => {
       const book = new ExcelJS.Workbook();
       const sheet = book.addWorksheet("PriceUpdate");
