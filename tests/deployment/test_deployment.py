@@ -855,6 +855,61 @@ www.softwaresolver.online {
             d.compose = Mock(side_effect=[result(), m.DeployError('migration failed')])
             with self.assertRaises(m.DeployError):
                 d.deploy(True)
+
+    def test_upgrade_runtime_switch_stops_previous_compose_services_before_pm2(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.args = m.arguments(['upgrade', '--runtime', 'pm2', '--yes', '--access-verified'])
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180, runtime='compose')
+            d.envfile.write_text(m.env_text(d.env))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            current_release = root / 'releases' / 'aaaaaaaaaaaa-11111111'
+            next_release = root / 'releases' / 'bbbbbbbbbbbb-22222222'
+            current_release.mkdir(parents=True)
+            next_release.mkdir(parents=True)
+            (current_release / 'release.json').write_text(json.dumps({'commit': 'a' * 40}))
+            (next_release / 'release.json').write_text(json.dumps({'commit': 'b' * 40}))
+            for release in (current_release, next_release):
+                (release / 'database').mkdir()
+                (release / 'database' / '001_initial.sql').write_text('-- migration')
+            d.load_environment = Mock()
+            d.source = Mock(return_value=(ROOT, 'b' * 40))
+            d.prepare_release = Mock(return_value=next_release)
+            d.stop_runtime = Mock()
+            d.snapshot = Mock()
+            d.initialize_volumes = Mock()
+            d.compose = Mock(return_value=result())
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
+            d.verify_database_runtime = Mock()
+            d.run_native_migrate = Mock()
+            d.start = Mock()
+            d.activate = Mock(side_effect=lambda release: setattr(d, 'release', release))
+            d._sync_startup_units = Mock()
+            d.refresh_proxy = Mock()
+            d.auto_cleanup_after_upgrade = Mock()
+            d.event = Mock()
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == root / 'current':
+                    return current_release
+                return original_resolve(path_obj, strict=strict)
+
+            (root / 'current').mkdir()
+            with patch.object(Path, 'resolve', resolve_override), patch.object(m, 'run', return_value=result()):
+                d.deploy(False)
+            d.stop_runtime.assert_called_once_with('compose')
+            d.snapshot.assert_called_once()
+            self.assertEqual(d.env['APP_RUNTIME'], 'pm2')
+
     def test_status_healthy_installation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -914,6 +969,52 @@ www.softwaresolver.online {
             self.assertIn('phase: MIGRATING', text)
             self.assertIn('commit: ' + 'a' * 40, text)
             self.assertIn('candidate: aaaaaaaaaaaa-11111111', text)
+
+    def test_execute_start_loads_current_release_before_boot_actions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = m.arguments(['start', '--yes'])
+            d = m.Deployment(args)
+            d.preflight = Mock()
+            d.current = Mock()
+            d.port = Mock()
+            d.root = Path(temp)
+            d.state = d.root / 'state'
+            d.state.mkdir(exist_ok=True)
+            (d.state / 'deployment.json').write_text(json.dumps({'phase': 'HEALTHY'}))
+            d.compose = Mock(return_value=result())
+            d.wait_db = Mock()
+            d.start = Mock()
+            d.refresh_proxy = Mock()
+            d.inventory = Mock(return_value=[])
+            lock = contextlib.nullcontext()
+            d.locked = Mock(return_value=lock)
+            d.log_ready = Mock()
+            d.owned = Mock(return_value=False)
+            d.execute()
+            d.current.assert_called_once()
+            d.compose.assert_called_once_with('up', '-d', '--no-deps', '--no-build', 'db')
+            d.wait_db.assert_called_once()
+            d.start.assert_called_once()
+            d.refresh_proxy.assert_called_once()
+
+    def test_execute_backup_job_loads_current_release_before_running(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = m.arguments(['backup-job', '--yes'])
+            d = m.Deployment(args)
+            d.preflight = Mock()
+            d.current = Mock()
+            d.root = Path(temp)
+            d.state = d.root / 'state'
+            d.state.mkdir(exist_ok=True)
+            d.run_backup_job = Mock()
+            d.inventory = Mock(return_value=[])
+            lock = contextlib.nullcontext()
+            d.locked = Mock(return_value=lock)
+            d.log_ready = Mock()
+            d.owned = Mock(return_value=False)
+            d.execute()
+            d.current.assert_called_once()
+            d.run_backup_job.assert_called_once()
 
     def test_refresh_proxy_updates_upstream_and_reloads_caddy(self):
         with tempfile.TemporaryDirectory() as temp:

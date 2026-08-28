@@ -208,6 +208,10 @@ def decoded(result):
 def app_runtime(values):
     return values.get('APP_RUNTIME') or 'compose'
 
+
+def runtime_for_env(values, override=None):
+    return override or app_runtime(values)
+
 def database_url(values):
     if app_runtime(values) == 'pm2':
         host = values.get('DB_HOST', '127.0.0.1')
@@ -453,6 +457,10 @@ class Deployment:
 
     def native_runtime(self):
         return self.runtime() == 'pm2'
+
+    @staticmethod
+    def is_native_runtime(runtime):
+        return runtime == 'pm2'
 
     def native_paths(self, release=None):
         release = release or self.release
@@ -750,11 +758,51 @@ class Deployment:
                     f'Runtime did not enforce the {service} memory cap; stopping AMT startup')
 
     def stop(self):
-        if self.native_runtime():
+        self.stop_runtime(self.runtime())
+
+    def stop_runtime(self, runtime):
+        if self.is_native_runtime(runtime):
             run(['systemctl', 'stop', self.backup_timer_name(), self.backup_service_name()], check=False)
             run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_env())
         else:
             self.compose('stop', '-t', '60', *SERVICES)
+
+    @staticmethod
+    def _managed_unit_text(path):
+        if not path.exists():
+            return None
+        require(path.is_file() and not path.is_symlink(), f'Unsafe systemd unit path: {path.name}')
+        return path.read_text()
+
+    def _sync_startup_units(self, release):
+        target = Path('/etc/systemd/system/amt-pricelist.service')
+        service_text = self._managed_unit_text(target)
+        if service_text is not None:
+            require('AMT Price List isolated application' in service_text, 'Existing systemd unit is not recognized; refusing overwrite')
+        atomic(target, (release / 'docker' / 'amt-pricelist.service').read_bytes())
+        target.chmod(0o644)
+
+        backup_units = {
+            'amt-pricelist-backup.service': 'AMT Price List scheduled backup job',
+            'amt-pricelist-backup.timer': 'AMT Price List backup timer',
+        }
+        if self.native_runtime():
+            for name, marker in backup_units.items():
+                backup_target = Path('/etc/systemd/system') / name
+                backup_text = self._managed_unit_text(backup_target)
+                if backup_text is not None:
+                    require(marker in backup_text, f'Existing systemd unit is not recognized: {name}')
+                atomic(backup_target, (release / 'docker' / name).read_bytes())
+                backup_target.chmod(0o644)
+        else:
+            run(['systemctl', 'disable', '--now', self.backup_timer_name(), self.backup_service_name()], check=False)
+            for name, marker in backup_units.items():
+                backup_target = Path('/etc/systemd/system') / name
+                backup_text = self._managed_unit_text(backup_target)
+                if backup_text is None:
+                    continue
+                require(marker in backup_text, f'Existing systemd unit is not recognized: {name}')
+                backup_target.unlink()
 
     def snapshot(self):
         self.stage('Create private recovery backup')
@@ -1020,6 +1068,7 @@ class Deployment:
             self.log_ready()
         else:
             self.current()
+        previous_runtime = runtime_for_env(self.env) if self.env else None
         self.env['APP_RUNTIME'] = self.runtime()
         self.env.setdefault('DB_HOST', '127.0.0.1')
         self.env.setdefault('DB_PORT', DEFAULT_DB_PORT)
@@ -1037,7 +1086,7 @@ class Deployment:
         self.checkpoint('BUILT', previous=previous.name if previous else None, candidate=release.name)
         if previous:
             require(self.migration_files(previous).items() <= self.migration_files(release).items(), 'Migration removal/change is not an additive upgrade')
-            self.stop()
+            self.stop_runtime(previous_runtime)
             self.snapshot()
         self.release = release
         self.stage('Initialize dedicated storage and database')
@@ -1058,17 +1107,7 @@ class Deployment:
         self.start()
         self.activate(release)
         self.stage('Activate release and configure AMT startup')
-        unit = release / 'docker/amt-pricelist.service'
-        target = Path('/etc/systemd/system/amt-pricelist.service')
-        if target.exists():
-            require('AMT Price List isolated application' in target.read_text(), 'Existing systemd unit is not recognized; refusing overwrite')
-        atomic(target, unit.read_bytes())
-        target.chmod(0o644)
-        if self.native_runtime():
-            for name in ('amt-pricelist-backup.service', 'amt-pricelist-backup.timer'):
-                backup_target = Path('/etc/systemd/system') / name
-                atomic(backup_target, (release / 'docker' / name).read_bytes())
-                backup_target.chmod(0o644)
+        self._sync_startup_units(release)
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'enable', 'amt-pricelist.service'])
         if self.native_runtime():
@@ -1428,6 +1467,8 @@ class Deployment:
         if self.args.command not in ['install', 'status', 'start', 'stop', 'setup-token', 'cleanup', 'backup-job']:
             self.current()
             self.port(int(self.env['APP_PORT']))
+        elif self.args.command in ['start', 'stop', 'backup-job']:
+            self.current()
         if self.args.dry_run:
             if self.args.command == 'set-public-url':
                 self.public_url(dry_run=True)

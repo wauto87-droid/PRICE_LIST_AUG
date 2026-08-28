@@ -55,6 +55,33 @@ bash deploy.sh upgrade --yes --access-verified --verbose
 Use `recover-install` only when the first install was interrupted or deployment
 state is incomplete. Do not use it as the routine update path.
 
+## Switch an existing deployment to PM2
+
+To move only the AMT app and worker from Compose-managed runtime to PM2 while
+keeping PostgreSQL isolated and boot-managed by the existing `systemd` unit:
+
+```sh
+cd /opt/amt-pricelist-source
+git status --short
+# Continue only when status output is empty:
+git pull --ff-only origin master
+bash deploy.sh status
+bash deploy.sh upgrade --runtime pm2 --yes --access-verified --verbose
+```
+
+After the upgrade, verify the runtime and reboot startup path:
+
+```sh
+bash deploy.sh status
+systemctl is-enabled amt-pricelist.service
+systemctl is-enabled amt-pricelist-backup.timer
+pm2 status
+```
+
+`amt-pricelist.service` remains the authoritative auto-start mechanism after a
+VPS reboot. Do not replace it with ad hoc `@reboot`, `nohup`, or standalone
+`pm2 startup` workarounds.
+
 ## Clean old builds safely
 
 After a successful healthy deployment, the guided cleanup command keeps the
