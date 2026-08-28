@@ -22,6 +22,12 @@ export function suggestionOptionId(baseId: string, index: number) {
   return `${baseId}-option-${index}`;
 }
 
+export function activeSuggestionIndex(index: number, length: number) {
+  if (!length) return -1;
+  if (index >= 0 && index < length) return index;
+  return 0;
+}
+
 export function topSuggestions<T>(items: T[], limit = 8) {
   return items.slice(0, limit);
 }

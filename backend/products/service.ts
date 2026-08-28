@@ -385,6 +385,186 @@ export async function deleteProduct(
   );
   return { id, partNumber: before.partNumber };
 }
+
+const SEARCH_RESULT_LIMIT = 50;
+
+function partRankedCte(activeClause: string) {
+  return `WITH part_ranked AS (
+    SELECT match.id, min(match.rank)::int AS rank
+    FROM (
+      SELECT p.id, 0 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part=$1
+      UNION ALL
+      SELECT p.id, 0 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized=$1
+      UNION ALL
+      SELECT p.id, 1 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part LIKE $2 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 1 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized LIKE $2 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 2 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part LIKE $3 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 2 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized LIKE $3 ESCAPE '\\'
+    ) AS match
+    GROUP BY match.id
+  )`;
+}
+
+function textRankedCte(activeClause: string) {
+  return `WITH text_ranked AS (
+    SELECT
+      p.id,
+      CASE
+        WHEN p.description ILIKE $1 ESCAPE '\\' THEN 3
+        WHEN p.keywords ILIKE $1 ESCAPE '\\' THEN 4
+        WHEN b.name ILIKE $1 ESCAPE '\\' THEN 5
+        ELSE 6
+      END AS rank
+    FROM products p
+    LEFT JOIN brands b ON b.id=p.brand_id
+    LEFT JOIN categories c ON c.id=p.category_id
+    WHERE ${activeClause}
+      AND (
+        p.description ILIKE $1 ESCAPE '\\'
+        OR p.keywords ILIKE $1 ESCAPE '\\'
+        OR b.name ILIKE $1 ESCAPE '\\'
+        OR c.name ILIKE $1 ESCAPE '\\'
+      )
+      AND NOT (p.id = ANY($2::uuid[]))
+  )`;
+}
+
+async function getRankedPartMatches(
+  db: DB,
+  activeClause: string,
+  q: string,
+  escaped: string,
+  limit: number,
+  offset = 0,
+) {
+  return (
+    await db.query(
+      partRankedCte(activeClause) +
+        ` SELECT p.id,p.version,part_ranked.rank
+          FROM part_ranked
+          JOIN products p ON p.id=part_ranked.id
+          ORDER BY part_ranked.rank,p.normalized_part
+          LIMIT $4 OFFSET $5`,
+      [q, escaped + "%", "%" + escaped + "%", limit, offset],
+    )
+  ).rows;
+}
+
+async function countRankedPartMatches(
+  db: DB,
+  activeClause: string,
+  q: string,
+  escaped: string,
+) {
+  return Number(
+    (
+      await one(
+        db,
+        partRankedCte(activeClause) +
+          " SELECT count(*)::int AS n FROM part_ranked",
+        [q, escaped + "%", "%" + escaped + "%"],
+      )
+    )!.n,
+  );
+}
+
+async function getRankedTextMatches(
+  db: DB,
+  activeClause: string,
+  wildcard: string,
+  excludedIds: string[],
+  limit: number,
+  offset = 0,
+) {
+  return (
+    await db.query(
+      textRankedCte(activeClause) +
+        ` SELECT p.id,p.version,text_ranked.rank
+          FROM text_ranked
+          JOIN products p ON p.id=text_ranked.id
+          ORDER BY text_ranked.rank,p.normalized_part
+          LIMIT $3 OFFSET $4`,
+      [wildcard, excludedIds, limit, offset],
+    )
+  ).rows;
+}
+
+async function countRankedTextMatches(
+  db: DB,
+  activeClause: string,
+  wildcard: string,
+  excludedIds: string[],
+) {
+  return Number(
+    (
+      await one(
+        db,
+        textRankedCte(activeClause) +
+          " SELECT count(*)::int AS n FROM text_ranked",
+        [wildcard, excludedIds],
+      )
+    )!.n,
+  );
+}
+
+async function hydrateProductsByIds(db: DB, ids: string[]) {
+  if (!ids.length) return [];
+  return (
+    await db.query(
+      `WITH ordered AS (
+        SELECT id, ord
+        FROM unnest($1::uuid[]) WITH ORDINALITY AS input(id, ord)
+      )
+      SELECT p.*,pp.*,b.name AS brand,c.name AS category,
+        COALESCE(
+          (SELECT json_agg(a.label) FROM product_aliases a WHERE a.product_id=p.id),
+          '[]'
+        ) AS aliases,
+        (
+          SELECT json_agg(
+            json_build_object(
+              'code',l.code,
+              'active',l.active,
+              'method',l.method,
+              'fixedPrice',l.fixed_price::text,
+              'markup',l.markup::text,
+              'listPrice',l.list_price::text,
+              'baseDiscount',l.base_discount::text
+            )
+            ORDER BY CASE l.code WHEN 'WHOLESALE' THEN 0 WHEN 'RETAIL' THEN 1 ELSE 2 END
+          )
+          FROM product_selling_levels l
+          WHERE l.product_id=p.id
+        ) AS levels
+      FROM ordered
+      JOIN products p ON p.id=ordered.id
+      JOIN product_pricing pp ON pp.product_id=p.id
+      LEFT JOIN brands b ON b.id=p.brand_id
+      LEFT JOIN categories c ON c.id=p.category_id
+      ORDER BY ordered.ord`,
+      [ids],
+    )
+  ).rows;
+}
+
 export async function search(
   db: DB,
   actor: Actor,
@@ -414,48 +594,18 @@ export async function search(
     Math.max(options.selectionLimit ?? 5000, 1),
     5000,
   );
+  const activeClause = admin ? "true" : "p.active";
   const mapRows = (rows: Record<string, any>[]) =>
     rows.map((r) =>
       admin && has(actor, "COST_VIEW")
         ? { id: r.id, version: r.version, ...toInput(r) }
         : staffProduct(r, actor, settings),
     );
-  const productPredicate = `(
-    p.normalized_part=$1
-    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized=$1)
-    OR p.normalized_part LIKE $2 ESCAPE '\\'
-    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $2 ESCAPE '\\')
-    OR p.normalized_part LIKE $3 ESCAPE '\\'
-    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $3 ESCAPE '\\')
-    OR p.description ILIKE $3 ESCAPE '\\'
-    OR p.keywords ILIKE $3 ESCAPE '\\'
-    OR EXISTS(SELECT 1 FROM brands b WHERE b.id=p.brand_id AND b.name ILIKE $3 ESCAPE '\\')
-    OR EXISTS(SELECT 1 FROM categories c WHERE c.id=p.category_id AND c.name ILIKE $3 ESCAPE '\\')
-  )`;
-  const ranked = `WITH ranked AS (
-    SELECT
-      p.id,
-      CASE
-        WHEN p.normalized_part=$1
-          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized=$1)
-          THEN 0
-        WHEN p.normalized_part LIKE $2 ESCAPE '\\'
-          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $2 ESCAPE '\\')
-          THEN 1
-        WHEN p.normalized_part LIKE $3 ESCAPE '\\'
-          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $3 ESCAPE '\\')
-          THEN 2
-        WHEN p.description ILIKE $3 ESCAPE '\\' THEN 3
-        ELSE 4
-      END AS rank
-    FROM products p
-    WHERE ${active} AND ${productPredicate}
-  )`;
   if (!q) {
     if (!admin) {
       const rows = await db.query(
         productSelect +
-          ` WHERE ${admin ? "true" : "p.active"} ORDER BY p.normalized_part LIMIT 50`,
+          ` WHERE ${activeClause} ORDER BY p.normalized_part LIMIT ${SEARCH_RESULT_LIMIT}`,
       );
       return mapRows(rows.rows);
     }
@@ -463,9 +613,7 @@ export async function search(
       (
         await one(
           db,
-          `SELECT count(*)::int AS n FROM products p WHERE ${
-            admin ? "true" : "p.active"
-          }`,
+          `SELECT count(*)::int AS n FROM products p WHERE ${activeClause}`,
         )
       )!.n,
     );
@@ -495,46 +643,101 @@ export async function search(
     };
   }
   if (!admin) {
-    const rows = await db.query(
-      ranked +
-        productSelect +
-        ` JOIN ranked r ON r.id=p.id ORDER BY r.rank,p.normalized_part LIMIT 50`,
-      [q, escaped + "%", "%" + escaped + "%"],
+    const partMatches = await getRankedPartMatches(
+      db,
+      activeClause,
+      q,
+      escaped,
+      SEARCH_RESULT_LIMIT,
     );
-    return mapRows(rows.rows);
-  }
-  const totalRows = Number(
-    (
-      await one(
+    const rankedIds = partMatches.map((row) => row.id);
+    if (rankedIds.length < SEARCH_RESULT_LIMIT) {
+      const textMatches = await getRankedTextMatches(
         db,
-        ranked + " SELECT count(*)::int AS n FROM ranked",
-        [q, escaped + "%", "%" + escaped + "%"],
+        activeClause,
+        "%" + escaped + "%",
+        rankedIds,
+        SEARCH_RESULT_LIMIT - rankedIds.length,
+      );
+      rankedIds.push(...textMatches.map((row) => row.id));
+    }
+    const rows = await hydrateProductsByIds(db, rankedIds);
+    return mapRows(rows);
+  }
+  const partTotal = await countRankedPartMatches(db, activeClause, q, escaped);
+  const needsFallback =
+    partTotal < offset + pageSize || partTotal < selectionLimit;
+  const partIdsForFallback = needsFallback
+    ? (await getRankedPartMatches(db, activeClause, q, escaped, partTotal)).map(
+        (row) => row.id,
       )
-    )!.n,
-  );
+    : [];
+  const textTotal = needsFallback
+    ? await countRankedTextMatches(
+        db,
+        activeClause,
+        "%" + escaped + "%",
+        partIdsForFallback,
+      )
+    : 0;
+  const totalRows = partTotal + textTotal;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const safePage = Math.min(page, totalPages - 1);
   const safeOffset = safePage * pageSize;
-  const args = [q, escaped + "%", "%" + escaped + "%"];
-  const rows = await db.query(
-    ranked +
-      productSelect +
-      ` JOIN ranked r ON r.id=p.id ORDER BY r.rank,p.normalized_part LIMIT $4 OFFSET $5`,
-    [...args, pageSize, safeOffset],
+  const pagePartMatches =
+    safeOffset < partTotal
+      ? await getRankedPartMatches(
+          db,
+          activeClause,
+          q,
+          escaped,
+          pageSize,
+          safeOffset,
+        )
+      : [];
+  const remainingPageSlots = pageSize - pagePartMatches.length;
+  const textOffset = Math.max(safeOffset - partTotal, 0);
+  const pageTextMatches =
+    remainingPageSlots > 0 && needsFallback
+      ? await getRankedTextMatches(
+          db,
+          activeClause,
+          "%" + escaped + "%",
+          partIdsForFallback,
+          remainingPageSlots,
+          textOffset,
+        )
+      : [];
+  const rows = await hydrateProductsByIds(
+    db,
+    [...pagePartMatches, ...pageTextMatches].map((row) => row.id),
   );
-  const selectableItems = (
-    await db.query(
-      ranked +
-        ` SELECT p.id,p.version
-          FROM products p
-          JOIN ranked r ON r.id=p.id
-          ORDER BY r.rank,p.normalized_part
-          LIMIT $4`,
-      [...args, selectionLimit],
-    )
-  ).rows;
+  const selectableItems = [
+    ...(
+      await getRankedPartMatches(
+        db,
+        activeClause,
+        q,
+        escaped,
+        Math.min(selectionLimit, partTotal),
+      )
+    ).map(({ id, version }) => ({ id, version })),
+  ];
+  if (selectableItems.length < selectionLimit && needsFallback) {
+    selectableItems.push(
+      ...(
+        await getRankedTextMatches(
+          db,
+          activeClause,
+          "%" + escaped + "%",
+          partIdsForFallback,
+          selectionLimit - selectableItems.length,
+        )
+      ).map(({ id, version }) => ({ id, version })),
+    );
+  }
   return {
-    items: mapRows(rows.rows),
+    items: mapRows(rows),
     page: safePage,
     pageSize,
     totalRows,

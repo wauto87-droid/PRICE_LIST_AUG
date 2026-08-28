@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  activeSuggestionIndex,
   clampHighlightedIndex,
   moveHighlightedIndex,
   suggestionOptionId,
@@ -15,6 +16,10 @@ test("Suggestion helpers clamp and move the highlighted item correctly", () => {
   assert.equal(moveHighlightedIndex(-1, "previous", 3), 2);
   assert.equal(moveHighlightedIndex(1, "next", 3), 2);
   assert.equal(moveHighlightedIndex(1, "previous", 3), 0);
+  assert.equal(activeSuggestionIndex(-1, 3), 0);
+  assert.equal(activeSuggestionIndex(2, 3), 2);
+  assert.equal(activeSuggestionIndex(7, 3), 0);
+  assert.equal(activeSuggestionIndex(0, 0), -1);
   assert.equal(suggestionOptionId("lookup", 2), "lookup-option-2");
 });
 

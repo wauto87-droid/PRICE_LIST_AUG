@@ -440,6 +440,50 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.equal(results[0].partNumber, "LC1D09M7");
   });
   await t.test(
+    "Product search prioritizes exact and prefix part matches while supporting contains fallback",
+    async () => {
+      for (const product of [
+        {
+          ...base,
+          partNumber: "56116",
+          description: "Exact match test part",
+          aliases: [],
+        },
+        {
+          ...base,
+          partNumber: "56116X",
+          description: "Prefix match test part",
+          aliases: [],
+        },
+        {
+          ...base,
+          partNumber: "EZ6F56116",
+          description: "Contains match test part",
+          aliases: ["OLD-56116"],
+        },
+        {
+          ...base,
+          partNumber: "DESC-ONLY-PANEL",
+          description: "Panel part 56116 from description only",
+          aliases: [],
+        },
+      ])
+        await request("products", "POST", product);
+      const ranked = (await request("search?q=56116")).data;
+      assert.equal(ranked[0].partNumber, "56116");
+      assert.equal(ranked[1].partNumber, "56116X");
+      assert.equal(ranked[2].partNumber, "EZ6F56116");
+      const adminRanked = (await request("products?q=56116")).data.items;
+      assert.equal(adminRanked[0].partNumber, "56116");
+      assert.equal(adminRanked[1].partNumber, "56116X");
+      assert.equal(adminRanked[2].partNumber, "EZ6F56116");
+      const aliasRanked = (await request("search?q=OLD-56116")).data;
+      assert.equal(aliasRanked[0].partNumber, "EZ6F56116");
+      const fallback = (await request("search?q=Panel part 56116")).data;
+      assert.equal(fallback[0].partNumber, "DESC-ONLY-PANEL");
+    },
+  );
+  await t.test(
     "Import cannot publish until mapped, reviewed, and verified",
     async () => {
       await request(

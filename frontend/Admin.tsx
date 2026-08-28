@@ -14,6 +14,7 @@ import {
   formatBulkDeleteError,
   getProductSuggestions,
 } from "./admin-products";
+import { activeSuggestionIndex } from "./lookup-suggestions";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
@@ -177,7 +178,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setProductQuery(query);
       setProductPage(0);
       void load({ query, page: 0 });
-    }, 180);
+    }, 220);
     return () => clearTimeout(timer);
   }, [section, query, productQuery]);
   useEffect(() => {
@@ -306,6 +307,16 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     !!query.trim() &&
     suggestions.length > 0 &&
     loadedProductQuery.trim() === query.trim();
+  useEffect(() => {
+    if (section !== "products") return;
+    if (!showSuggestions) {
+      setActiveSuggestion(-1);
+      return;
+    }
+    setActiveSuggestion((current) =>
+      activeSuggestionIndex(current, suggestions.length),
+    );
+  }, [section, showSuggestions, suggestions.length]);
   const matchedProductItems = productData?.selectableItems ?? [];
   const allVisibleSelected =
     !!visibleProductIds.length &&
@@ -447,21 +458,27 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         setQuery(e.target.value);
                         setSelected({});
                         setPreview(null);
-                        setActiveSuggestion(-1);
+                        setActiveSuggestion(0);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "ArrowDown" && suggestions.length) {
                           e.preventDefault();
                           setSearchFocused(true);
                           setActiveSuggestion((current) =>
-                            Math.min(current + 1, suggestions.length - 1),
+                            Math.min(
+                              activeSuggestionIndex(current, suggestions.length) + 1,
+                              suggestions.length - 1,
+                            ),
                           );
                           return;
                         }
                         if (e.key === "ArrowUp" && suggestions.length) {
                           e.preventDefault();
                           setActiveSuggestion((current) =>
-                            Math.max(current - 1, 0),
+                            Math.max(
+                              activeSuggestionIndex(current, suggestions.length) - 1,
+                              0,
+                            ),
                           );
                           return;
                         }
@@ -474,10 +491,21 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           e.preventDefault();
                           if (
                             showSuggestions &&
-                            activeSuggestion >= 0 &&
-                            suggestions[activeSuggestion]
+                            suggestions[
+                              activeSuggestionIndex(
+                                activeSuggestion,
+                                suggestions.length,
+                              )
+                            ]
                           ) {
-                            chooseSuggestion(suggestions[activeSuggestion]);
+                            chooseSuggestion(
+                              suggestions[
+                                activeSuggestionIndex(
+                                  activeSuggestion,
+                                  suggestions.length,
+                                )
+                              ],
+                            );
                             return;
                           }
                           triggerProductSearch(query);

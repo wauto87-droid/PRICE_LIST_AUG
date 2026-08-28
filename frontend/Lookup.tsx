@@ -5,6 +5,7 @@ import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { levelLabel, visibleLevels } from "./levels";
 import {
+  activeSuggestionIndex,
   clampHighlightedIndex,
   moveHighlightedIndex,
   suggestionOptionId,
@@ -54,8 +55,15 @@ export default function Lookup({
   useEffect(() => {
     const current = ++searchGeneration.current;
     const timer = setTimeout(async () => {
-      if (!query.trim()) {
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) {
         setResults([]);
+        setSuggestionsOpen(false);
+        setHighlightedIndex(-1);
+        return;
+      }
+      if (trimmedQuery === selected?.partNumber) {
+        setSearching(false);
         setSuggestionsOpen(false);
         setHighlightedIndex(-1);
         return;
@@ -65,7 +73,7 @@ export default function Lookup({
       try {
         let rows: any[] = [];
         if (online) {
-          rows = await api("search?q=" + encodeURIComponent(query));
+          rows = await api("search?q=" + encodeURIComponent(trimmedQuery));
           setStamp(new Date().toISOString());
           if (settings.allowOfflineCache) {
             const safe = rows.map(
@@ -115,13 +123,13 @@ export default function Lookup({
           rows = (cache.rows || []).filter((p: any) =>
             (p.partNumber + " " + p.description)
               .toLowerCase()
-              .includes(query.toLowerCase()),
+              .includes(trimmedQuery.toLowerCase()),
           );
           setStamp(cache.at || "");
         }
         if (current === searchGeneration.current) {
           setResults(rows);
-          setSuggestionsOpen(rows.length > 0);
+          setSuggestionsOpen(rows.length > 0 && trimmedQuery !== selected?.partNumber);
         }
       } catch (e) {
         if (current === searchGeneration.current)
@@ -131,7 +139,7 @@ export default function Lookup({
       }
     }, 180);
     return () => clearTimeout(timer);
-  }, [query, online, settings.allowOfflineCache, user.id]);
+  }, [query, online, selected?.partNumber, settings.allowOfflineCache, user.id]);
   useEffect(() => {
     const current = ++generation.current;
     setPrice(null);
@@ -181,6 +189,7 @@ export default function Lookup({
   }, [highlightedIndex, suggestionsOpen]);
   function choose(p: any) {
     setSelected(p);
+    setQuery(p.partNumber);
     setSellingLevel(p.defaultLevel ?? "END_CUSTOMER");
     setQuantity("1");
     setDiscount("0");
@@ -267,12 +276,21 @@ export default function Lookup({
         (product) => (product.category || "UNCATEGORIZED") === categoryFilter,
       )
     : results;
+  const visibleResults = selected
+    ? filteredResults.filter((product) => product.id !== selected.id)
+    : filteredResults;
   const filteredSuggestions = topSuggestions(filteredResults, 8);
+  const resolvedHighlightedIndex = activeSuggestionIndex(
+    highlightedIndex,
+    filteredSuggestions.length,
+  );
   const resultCategories = [...new Set(results.map((p) => p.category || ""))]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const activeSuggestion =
-    highlightedIndex >= 0 ? filteredSuggestions[highlightedIndex] : null;
+    resolvedHighlightedIndex >= 0
+      ? filteredSuggestions[resolvedHighlightedIndex]
+      : null;
   const estimate = selectedPrice
     ? new Decimal(selectedPrice.masterExcl)
         .mul(
@@ -321,8 +339,8 @@ export default function Lookup({
                 aria-expanded={suggestionsOpen && filteredSuggestions.length > 0}
                 aria-controls={comboboxId.current}
                 aria-activedescendant={
-                  suggestionsOpen && highlightedIndex >= 0
-                    ? suggestionOptionId(comboboxId.current, highlightedIndex)
+                  suggestionsOpen && resolvedHighlightedIndex >= 0
+                    ? suggestionOptionId(comboboxId.current, resolvedHighlightedIndex)
                     : undefined
                 }
                 aria-label={t(
@@ -335,7 +353,12 @@ export default function Lookup({
                 )}
                 value={query}
                 onFocus={() => {
-                  if (filteredSuggestions.length) setSuggestionsOpen(true);
+                  if (filteredSuggestions.length) {
+                    setSuggestionsOpen(true);
+                    setHighlightedIndex((current) =>
+                      activeSuggestionIndex(current, filteredSuggestions.length),
+                    );
+                  }
                 }}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -348,7 +371,11 @@ export default function Lookup({
                     e.preventDefault();
                     setSuggestionsOpen(filteredSuggestions.length > 0);
                     setHighlightedIndex((current) =>
-                      moveHighlightedIndex(current, "next", filteredSuggestions.length),
+                      moveHighlightedIndex(
+                        activeSuggestionIndex(current, filteredSuggestions.length),
+                        "next",
+                        filteredSuggestions.length,
+                      ),
                     );
                     return;
                   }
@@ -357,7 +384,7 @@ export default function Lookup({
                     setSuggestionsOpen(filteredSuggestions.length > 0);
                     setHighlightedIndex((current) =>
                       moveHighlightedIndex(
-                        current,
+                        activeSuggestionIndex(current, filteredSuggestions.length),
                         "previous",
                         filteredSuggestions.length,
                       ),
@@ -365,9 +392,16 @@ export default function Lookup({
                     return;
                   }
                   if (e.key === "Enter") {
-                    if (suggestionsOpen && activeSuggestion) {
+                    if (suggestionsOpen && filteredSuggestions.length) {
                       e.preventDefault();
-                      choose(activeSuggestion);
+                      choose(
+                        filteredSuggestions[
+                          activeSuggestionIndex(
+                            highlightedIndex,
+                            filteredSuggestions.length,
+                          )
+                        ],
+                      );
                     }
                     return;
                   }
@@ -394,9 +428,9 @@ export default function Lookup({
                         "ابدأ الكتابة لرؤية الأصناف المطابقة فوراً.",
                       )}
               </span>
-              {!!filteredResults.length && (
+              {!!visibleResults.length && (
                 <span className="lookup-result-count">
-                  {filteredResults.length} {t("shown", "معروض")}
+                  {visibleResults.length} {t("shown", "معروض")}
                 </span>
               )}
             </div>
@@ -413,12 +447,12 @@ export default function Lookup({
                     type="button"
                     className={
                       "lookup-suggestion" +
-                      (highlightedIndex === index ? " active" : "") +
+                      (resolvedHighlightedIndex === index ? " active" : "") +
                       (selected?.id === p.id ? " chosen" : "")
                     }
                     key={p.id}
                     role="option"
-                    aria-selected={highlightedIndex === index}
+                    aria-selected={resolvedHighlightedIndex === index}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       choose(p);
@@ -488,12 +522,16 @@ export default function Lookup({
             </div>
           </div>
         )}
-        {!!results.length && (
+        {!!visibleResults.length && (
           <div className="search-results lookup-results-panel">
             <div className="lookup-results-header">
               <div>
                 <div className="eyebrow">{t("MATCHING PARTS", "الأصناف المطابقة")}</div>
-                <h3>{t("Choose a product to price", "اختر صنفاً للتسعير")}</h3>
+                <h3>
+                  {selected
+                    ? t("Related matches", "نتائج ذات صلة")
+                    : t("Choose a product to price", "اختر صنفاً للتسعير")}
+                </h3>
               </div>
             </div>
             <div className="result-head tier-result-head">
@@ -502,7 +540,7 @@ export default function Lookup({
                 {t("Main selling price", "سعر البيع الرئيسي")}
               </span>
             </div>
-            {filteredResults.map((p) => (
+            {visibleResults.map((p) => (
               <button
                 className={
                   "result tier-result" + (selected?.id === p.id ? " selected-result" : "")
