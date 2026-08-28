@@ -259,13 +259,35 @@ class SafetyTests(unittest.TestCase):
              patch.object(m.os, 'geteuid', return_value=0, create=True), patch.object(m.shutil, 'which', return_value='/bin/tool'), \
              patch.object(m.shutil, 'disk_usage', return_value=Mock(free=13 * 1024**3)), \
              patch.object(m.Path, 'read_text', return_value='MemAvailable: 4194304 kB\n'), \
-             patch.object(m, 'run', return_value=result('{"host":{"cgroupVersion":"v2","security":{"rootless":false}}}')):
+             patch.object(m, 'run', side_effect=lambda args, **kwargs: result('v24.0.0') if args == ['node', '--version'] else result('{"host":{"cgroupVersion":"v2","security":{"rootless":false}}}')):
             d.preflight()
             self.assertFalse(d.ownership.call_args.kwargs['allow_legacy_db'])
             d.args.resume = True
             d.args.replace_failed_release = True
             d.preflight()
         self.assertTrue(d.ownership.call_args.kwargs['allow_legacy_db'])
+
+    def test_pm2_preflight_requires_node_24_or_newer(self):
+        d = self.deployment()
+        d.args.command = 'upgrade'
+        d.args.runtime = 'pm2'
+        d.engine = Mock(return_value=result('podman'))
+        d.ownership = Mock()
+
+        def fake_run(args, **kwargs):
+            if args == ['podman', 'info', '--format', 'json']:
+                return result('{"host":{"cgroupVersion":"v2","security":{"rootless":false}}}')
+            if args == ['node', '--version']:
+                return result('v20.20.2')
+            return result('podman')
+
+        with patch.object(m.sys, 'platform', 'linux'), patch.object(m.sys, 'version_info', (3, 12)), \
+             patch.object(m.os, 'geteuid', return_value=0, create=True), patch.object(m.shutil, 'which', return_value='/bin/tool'), \
+             patch.object(m.shutil, 'disk_usage', return_value=Mock(free=13 * 1024**3)), \
+             patch.object(m.Path, 'read_text', return_value='MemAvailable: 4194304 kB\n'), \
+             patch.object(m, 'run', side_effect=fake_run):
+            with self.assertRaisesRegex(m.DeployError, r'PM2 runtime requires Node\.js 24\+; found v20\.20\.2'):
+                d.preflight()
 
     def test_port_recheck_prevents_start(self):
         d = self.deployment()

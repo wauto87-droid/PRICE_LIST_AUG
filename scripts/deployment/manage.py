@@ -179,6 +179,7 @@ SERVICES = ('app', 'worker', 'backup')
 PM2_PROCESSES = ('amt-pricelist-app', 'amt-pricelist-worker')
 MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
 DEFAULT_DB_PORT = '15432'
+MIN_PM2_NODE = (24, 0, 0)
 ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
 
 class DeployError(Exception):
@@ -187,6 +188,12 @@ class DeployError(Exception):
 def require(condition, message):
     if not condition:
         raise DeployError(message)
+
+
+def parse_semver(text):
+    match = re.search(r'v?(\d+)\.(\d+)\.(\d+)', text.strip())
+    require(match is not None, f'Unrecognized version output: {text!r}')
+    return tuple(int(part) for part in match.groups())
 
 def run(args, *, data=None, output=None, timeout=300, check=True, live=False, env=None, cwd=None):
     # No command includes credentials. Do not echo raw stderr: engines can render env values.
@@ -576,6 +583,9 @@ class Deployment:
         if self.args.command in ('install', 'upgrade', 'start', 'backup-job') and runtime_hint == 'pm2':
             for tool in ['node', 'python3', 'pm2', 'corepack', 'pg_dump', 'pg_restore', 'tesseract', 'pdftotext']:
                 require(shutil.which(tool), f'Missing prerequisite for PM2 runtime: {tool}. No packages were installed')
+            node_version = parse_semver(decoded(run(['node', '--version'])))
+            require(node_version >= MIN_PM2_NODE,
+                    f'PM2 runtime requires Node.js {MIN_PM2_NODE[0]}+; found v{".".join(str(part) for part in node_version)}')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
         check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
         legacy_recovery = (self.args.command == 'install' and self.args.resume and
