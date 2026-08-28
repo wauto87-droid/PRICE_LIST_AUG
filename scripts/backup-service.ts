@@ -10,10 +10,15 @@ const exec = promisify(execFile),
   db = await getDB();
 const dir = path.resolve(process.env.BACKUP_DIR || "/data/backups");
 await fs.mkdir(dir, { recursive: true });
-const url = new URL(process.env.DATABASE_URL!);
+let dbUrl = process.env.DATABASE_URL!;
+if (dbUrl.includes("@/")) {
+  dbUrl = dbUrl.replace("@/", "@localhost/");
+}
+const url = new URL(dbUrl);
+const queryHost = url.searchParams.get("host");
 const env = {
   ...process.env,
-  PGHOST: url.hostname,
+  PGHOST: (queryHost && queryHost.startsWith("/")) ? queryHost : url.hostname,
   PGPORT: url.port || "5432",
   PGUSER: decodeURIComponent(url.username),
   PGPASSWORD: decodeURIComponent(url.password),
