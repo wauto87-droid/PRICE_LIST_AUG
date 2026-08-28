@@ -86,10 +86,17 @@ function applyGuidedDiscountDefaults(
   const preset =
     (groupValue && guidedImport.groupPresets[groupValue]) ||
     guidedImport.defaultPreset;
-  const minimum = listPrice
-    .mul(new Decimal(1).sub(new Decimal(preset.minimumDiscount).div(100)))
-    .toDecimalPlaces(2)
-    .toFixed(2);
+
+  const finalPrice = listPrice.mul(new Decimal(1).sub(new Decimal(preset.finalDiscount).div(100)));
+  const wholesalePrice = listPrice.mul(new Decimal(1).sub(new Decimal(preset.wholesaleDiscount).div(100)));
+  const maxAllowedMinimum = Decimal.min(finalPrice, wholesalePrice);
+
+  let minimumDecimal = listPrice.mul(new Decimal(1).sub(new Decimal(preset.minimumDiscount).div(100)));
+  if (minimumDecimal.gt(maxAllowedMinimum)) {
+    minimumDecimal = maxAllowedMinimum;
+  }
+  const minimum = minimumDecimal.toDecimalPlaces(2).toFixed(2);
+
   const result: Record<string, unknown> = {
     method: "LIST_DISCOUNT",
     listPrice: listPrice.toString(),
