@@ -6,6 +6,8 @@ import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
 import Admin from "@/frontend/Admin";
 import PwaInstaller from "@/frontend/PwaInstaller";
+import ConfirmModal from "@/frontend/ConfirmModal";
+import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "" },
@@ -484,9 +486,9 @@ export default function App() {
                 />
                 <div className="actions footer-actions">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        confirm(
+                        await showConfirm(
                           t(
                             "Start a new cart? Unsaved items will be cleared.",
                             "بدء سلة جديدة؟ ستحذف الأصناف غير المحفوظة.",
@@ -535,6 +537,7 @@ export default function App() {
           ✓ {message}
         </div>
       )}
+      <ConfirmModal t={t} />
       <footer className="app-footer">
         <span>AMT ELECTRIC</span>
         <span>

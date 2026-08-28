@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
@@ -1177,9 +1178,9 @@ export default function Imports({
                   className="primary"
                   style={{ backgroundColor: "#2e7d32", color: "#fff", borderColor: "#2e7d32" }}
                   disabled={busy || actionBusy}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      confirm(
+                      await showConfirm(
                         t(
                           "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
                           "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
@@ -1209,9 +1210,9 @@ export default function Imports({
                 <button
                   className="primary"
                   disabled={busy || actionBusy || !confirmation}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      confirm(
+                      await showConfirm(
                         t(
                           "Publish the saved, verified rows to the live catalog? Unsaved decisions are not applied.",
                           "نشر الصفوف المحفوظة والمتحقق منها؟ القرارات غير المحفوظة لا تطبق.",
@@ -1329,9 +1330,9 @@ export default function Imports({
               <button
                 className="danger"
                 disabled={busy || actionBusy}
-                onClick={() => {
+                onClick={async () => {
                   if (
-                    confirm(
+                    await showConfirm(
                       t(
                         "Roll back this import? Later product edits will block rollback.",
                         "التراجع عن الاستيراد؟ التعديلات اللاحقة ستمنع التراجع.",

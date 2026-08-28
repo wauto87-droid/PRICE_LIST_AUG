@@ -2,6 +2,7 @@
 import { levelLabel } from "./levels";
 import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
+import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
 export default function Quotations({
   t,
@@ -356,8 +357,8 @@ export default function Quotations({
                 user.permissions.includes("QUOTE_DELETE") && (
                   <button
                     className="danger"
-                    onClick={() => {
-                      if (confirm(t("Delete this draft?", "حذف هذه المسودة؟")))
+                    onClick={async () => {
+                      if (await showConfirm(t("Delete this draft?", "حذف هذه المسودة؟")))
                         action(async () => {
                           await api("quotations/" + selected.id, "DELETE");
                           setSelected(null);

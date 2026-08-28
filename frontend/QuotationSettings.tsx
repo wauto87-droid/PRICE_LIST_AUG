@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
 export default function QuotationSettings({
   t,
@@ -305,9 +306,9 @@ export default function QuotationSettings({
               async () => {
               if (
                 next &&
-                !confirm(
+                !(await showConfirm(
                   `Permanently raise the next quotation serial to ${next}? It cannot be reduced.`,
-                )
+                ))
               )
                 return;
                 const saved = await api(

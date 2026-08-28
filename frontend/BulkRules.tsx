@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
 const levels = ["DEFAULT", "ALL", "WHOLESALE", "RETAIL", "END_CUSTOMER"];
 const conditionFields = [
@@ -423,9 +424,9 @@ export default function BulkRules({
               onClick={() =>
                 (async () => {
                   if (
-                    !confirm(
+                    !(await showConfirm(
                       "Delete this saved rule? Execution history will be retained.",
-                    )
+                    ))
                   )
                     return;
                   await (onAction ?? (async (_messages, action) => action()))(
@@ -589,9 +590,9 @@ export default function BulkRules({
               onClick={() =>
                 (async () => {
                   if (
-                    !confirm(
+                    !(await showConfirm(
                       `Apply the reviewed rule to ${preview.matched} records?`,
-                    )
+                    ))
                   )
                     return;
                   await (onAction ?? (async (_messages, action) => action()))(

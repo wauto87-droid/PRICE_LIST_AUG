@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
+import { showConfirm } from "./confirm";
 import { levelLabel, visibleLevels } from "./levels";
 export default function Lookup({
   t,
@@ -214,12 +215,12 @@ export default function Lookup({
       });
       if (current !== generation.current) return;
       if (
-        !confirm(
+        !(await showConfirm(
           t(
             `Minimum-protected price: SAR ${price.finalExcl}. Requested final price: SAR ${p.finalExcl}. Confirm override?`,
             `السعر المحمي: ${price.finalExcl} ر.س. السعر المطلوب: ${p.finalExcl} ر.س. تأكيد التجاوز؟`,
           ),
-        )
+        ))
       )
         return;
       setPrice({ ...p, overrideReason: reason });
