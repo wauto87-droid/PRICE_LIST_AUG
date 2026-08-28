@@ -297,7 +297,7 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
         deleted.push(
           await deleteProduct(tx, actor, item.id, item.version, "BULK"),
         );
-      return { applied: true, deleted };
+      return { preview: [], applied: true, deleted };
     }
     const preview = [];
     for (const item of [...data.items].sort((a, b) =>
@@ -394,6 +394,6 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
       if (data.confirm)
         await saveProduct(tx, actor, after, item.id, item.version, "BULK");
     }
-    return { preview, applied: data.confirm };
+    return { preview, applied: data.confirm, deleted: [] };
   });
 }
