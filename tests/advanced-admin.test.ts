@@ -194,6 +194,38 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
         assert.equal(partial.defaultLevel, "RETAIL");
       },
     );
+    await t.test(
+      "Supplier-simple template ships the expected supplier-facing columns",
+      async () => {
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(
+          (await fs.readFile("assets/templates/supplier-simple.xlsx")) as any,
+        );
+        assert.equal(wb.worksheets[0].name, "PriceUpdate");
+        assert(wb.getWorksheet("Instructions"));
+        const sheet = wb.getWorksheet("Examples")!;
+        const headers = Array.from(
+          sheet.getRow(1).values as ExcelJS.CellValue[],
+        )
+          .slice(1)
+          .map((value: ExcelJS.CellValue) => String(value ?? ""));
+        assert.deepEqual(headers, [
+          "Part Reference",
+          "Local Description",
+          "Activity",
+          "Public Pricelist",
+          "Currency",
+        ]);
+        const values = Array.from(
+          sheet.getRow(2).values as ExcelJS.CellValue[],
+        )
+          .slice(1)
+          .map((value: ExcelJS.CellValue) => String(value ?? ""));
+        assert.equal(values[0], "28900");
+        assert.equal(values[2], "PPCCB");
+        assert.equal(values[3], "492");
+      },
+    );
     const stage = async (raw: any[], mode = "UPDATE_ONLY") => {
       const id = randomUUID();
       await db.query(
@@ -374,6 +406,52 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
             .baseDiscount,
           "45",
         );
+      },
+    );
+    await t.test(
+      "Supplier-style headers auto-map through guided create-and-update staging",
+      async () => {
+        const id = await stage([
+          {
+            "Part Reference": "AUTO-28900",
+            "Local Description": "Auto mapped breaker",
+            Activity: "PPCCB",
+            "Public Pricelist": "100",
+          },
+        ]);
+        await mapRows(db, actor, id, {
+          mapping: {
+            partNumber: "Part Reference",
+            description: "Local Description",
+            listPrice: "Public Pricelist",
+          },
+          defaults: {
+            vat: "15",
+            guidedImport: {
+              mode: "PUBLIC_PRICE_DISCOUNT",
+              groupColumn: "Activity",
+              defaultPreset: {
+                finalDiscount: "60",
+                wholesaleDiscount: "55",
+                minimumDiscount: "70",
+              },
+              groupPresets: {},
+            },
+          },
+          version: 1,
+          mode: "CREATE_UPDATE",
+        });
+        const row = await one(
+          db,
+          "SELECT proposed,errors,duplicate_id FROM import_rows WHERE job_id=$1",
+          [id],
+        );
+        assert.deepEqual(row!.errors, []);
+        assert.equal(row!.duplicate_id, null);
+        assert.equal(row!.proposed.partNumber, "AUTO-28900");
+        assert.equal(row!.proposed.description, "Auto mapped breaker");
+        assert.equal(row!.proposed.baseDiscount, "60");
+        assert.equal(row!.proposed.minimum, "30.00");
       },
     );
     await t.test(

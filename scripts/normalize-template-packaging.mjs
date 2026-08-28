@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const JSZip = createRequire(require.resolve("exceljs/package.json"))("jszip");
-for (const kind of ["simple", "advanced"]) {
+for (const kind of ["simple", "supplier-simple", "advanced"]) {
   const file = new URL(`../assets/templates/${kind}.xlsx`, import.meta.url);
   const zip = await JSZip.loadAsync(await fs.readFile(file));
   for (const name of Object.keys(zip.files).filter((n) => n.endsWith(".xml"))) {

@@ -31,14 +31,31 @@ const mappingFields = [
   ),
 ];
 const synonyms: Record<string, string[]> = {
-  partNumber: ["partnumber", "partno", "itemcode", "code", "item"],
-  description: ["description", "desc", "itemdescription"],
+  partNumber: [
+    "partnumber",
+    "partno",
+    "itemcode",
+    "code",
+    "item",
+    "partreference",
+    "partref",
+  ],
+  description: [
+    "description",
+    "desc",
+    "itemdescription",
+    "localdescription",
+  ],
   cost: ["cost", "purchasecost"],
-  listPrice: ["price", "listprice", "publicpricelist"],
+  listPrice: ["price", "listprice", "publicpricelist", "publicprice"],
   baseDiscount: ["discount", "disc"],
   minimum: ["minprice", "minimumprice"],
   markup: ["markup"],
 };
+type ImportProfile =
+  | "STANDARD"
+  | "PUBLIC_PRICE_DISCOUNT"
+  | "SUPPLIER_SIMPLE";
 type DiscountPreset = {
   finalDiscount: string;
   wholesaleDiscount: string;
@@ -66,6 +83,57 @@ const cleanPreset = (preset: DiscountPreset): DiscountPreset => ({
   wholesaleDiscount: String(preset.wholesaleDiscount ?? "0"),
   minimumDiscount: String(preset.minimumDiscount ?? "0"),
 });
+const normalizeHeader = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]/g, "");
+const supplierSimpleFields = [
+  "partNumber",
+  "description",
+  "listPrice",
+] as const;
+const supplierSimpleColumns = {
+  partNumber: "Part Reference",
+  description: "Local Description",
+  listPrice: "Public Pricelist",
+  groupColumn: "Activity",
+} as const;
+const findMappedColumn = (columns: string[], field: string) =>
+  columns.find((column) =>
+    [
+      normalizeHeader(field),
+      ...(synonyms[field] || []),
+    ].includes(normalizeHeader(column)),
+  );
+const hasSupplierSimpleColumns = (columns: string[]) =>
+  supplierSimpleFields.every((field) => !!findMappedColumn(columns, field));
+const isSupplierSimpleMapping = (
+  mapping: Record<string, string>,
+  columns: string[],
+) =>
+  supplierSimpleFields.every(
+    (field) =>
+      mapping[field] &&
+      normalizeHeader(mapping[field]) ===
+        normalizeHeader(
+          supplierSimpleColumns[field as keyof typeof supplierSimpleColumns],
+        ),
+  ) &&
+  columns.some(
+    (column) =>
+      normalizeHeader(column) === normalizeHeader(supplierSimpleColumns.groupColumn),
+  );
+const mappingLabel = (field: string, profile: ImportProfile) => {
+  if (profile !== "SUPPLIER_SIMPLE") return field;
+  switch (field) {
+    case "partNumber":
+      return "Part reference column";
+    case "description":
+      return "Description column";
+    case "listPrice":
+      return "Public price column";
+    default:
+      return field;
+  }
+};
 export default function Imports({
   t,
   actionBusy,
@@ -82,7 +150,7 @@ export default function Imports({
     [job, setJob] = useState<any>(null),
     [mapping, setMapping] = useState<Record<string, string>>({}),
     [defaults, setDefaults] = useState<any>(defaultImportDefaults()),
-    [guidedMode, setGuidedMode] = useState(false),
+    [importProfile, setImportProfile] = useState<ImportProfile>("STANDARD"),
     [guidedGroupColumn, setGuidedGroupColumn] = useState("Activity"),
     [guidedDefaultPreset, setGuidedDefaultPreset] = useState<DiscountPreset>(
       defaultDiscountPreset(),
@@ -93,6 +161,8 @@ export default function Imports({
     [editing, setEditing] = useState<any>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const guidedMode = importProfile !== "STANDARD";
+  const supplierSimpleMode = importProfile === "SUPPLIER_SIMPLE";
   const load = () => api("imports").then(setJobs);
   useEffect(() => {
     load().catch((e) => setError(e.message));
@@ -112,6 +182,10 @@ export default function Imports({
       minimumEnabled: true,
     }));
   }, [guidedMode]);
+  useEffect(() => {
+    if (!supplierSimpleMode) return;
+    setMode("CREATE_UPDATE");
+  }, [supplierSimpleMode]);
   useEffect(() => {
     if (!jobs.some((j) => ["UPLOADED", "PROCESSING"].includes(j.status)))
       return;
@@ -136,6 +210,7 @@ export default function Imports({
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
     const { guidedImport, ...productDefaults } = savedDefaults;
+    const columns = j.summary.columns || [];
     setJob(j);
     setConfirmation(null);
     setPage(0);
@@ -145,8 +220,14 @@ export default function Imports({
         ? { ...defaultImportDefaults(productDefaults.vat || defaults.vat), ...productDefaults }
         : defaultImportDefaults(defaults.vat),
     );
-    setGuidedMode(guided?.mode === "PUBLIC_PRICE_DISCOUNT");
-    setGuidedGroupColumn(guided?.groupColumn || (j.summary.columns || []).find((c: string) => c === "Activity") || "Activity");
+    setGuidedGroupColumn(
+      guided?.groupColumn ||
+        columns.find(
+          (c: string) =>
+            normalizeHeader(c) === normalizeHeader(supplierSimpleColumns.groupColumn),
+        ) ||
+        "Activity",
+    );
     setGuidedDefaultPreset(
       guided?.defaultPreset ? cleanPreset(guided.defaultPreset) : defaultDiscountPreset(),
     );
@@ -158,20 +239,23 @@ export default function Imports({
         ]),
       ),
     );
-    if (Object.keys(j.mapping).length) setMapping(j.mapping);
-    else {
+    let nextMapping = j.mapping;
+    if (!Object.keys(j.mapping).length) {
       const auto: Record<string, string> = {};
       for (const field of mappingFields) {
-        const found = (j.summary.columns || []).find((c: string) =>
-          [
-            field.toLowerCase().replace(/[^a-z0-9]/g, ""),
-            ...(synonyms[field] || []),
-          ].includes(c.toLowerCase().replace(/[^a-z0-9]/g, "")),
-        );
+        const found = findMappedColumn(columns, field);
         if (found) auto[field] = found;
       }
-      setMapping(auto);
+      nextMapping = auto;
     }
+    setMapping(nextMapping);
+    setImportProfile(
+      isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns)
+        ? "SUPPLIER_SIMPLE"
+        : guided?.mode === "PUBLIC_PRICE_DISCOUNT"
+          ? "PUBLIC_PRICE_DISCOUNT"
+          : "STANDARD",
+    );
   }
   const rawGroupValues = ((job?.rows || []) as any[])
     .map((row) => String(row.raw?.[guidedGroupColumn] ?? "").trim())
@@ -204,6 +288,12 @@ export default function Imports({
           {t(
             "Download Simple Price Update (Excel)",
             "تنزيل نموذج تحديث الأسعار",
+          )}
+        </a>
+        <a href={appPath("/api/v1/templates/supplier-simple")}>
+          {t(
+            "Download Simple Supplier Pricelist (Excel)",
+            "تنزيل نموذج قائمة المورد البسيطة",
           )}
         </a>
         <a href={appPath("/api/v1/templates/advanced")}>
@@ -340,6 +430,7 @@ export default function Imports({
                     {t("Import mode", "وضع الاستيراد")}
                     <select
                       value={mode}
+                      disabled={supplierSimpleMode}
                       onChange={(e) => setMode(e.target.value)}
                     >
                       <option value="UPDATE_ONLY">
@@ -353,8 +444,10 @@ export default function Imports({
                   <label>
                     {t("Import pricing flow", "مسار تسعير الاستيراد")}
                     <select
-                      value={guidedMode ? "PUBLIC_PRICE_DISCOUNT" : "STANDARD"}
-                      onChange={(e) => setGuidedMode(e.target.value === "PUBLIC_PRICE_DISCOUNT")}
+                      value={importProfile}
+                      onChange={(e) =>
+                        setImportProfile(e.target.value as ImportProfile)
+                      }
                     >
                       <option value="STANDARD">
                         {t(
@@ -368,11 +461,21 @@ export default function Imports({
                           "قائمة سعر عام مع خصومات",
                         )}
                       </option>
+                      <option value="SUPPLIER_SIMPLE">
+                        {t(
+                          "Simple supplier pricelist",
+                          "قائمة مورد بسيطة",
+                        )}
+                      </option>
                     </select>
                   </label>
-                  {mappingFields.map((field) => (
+                  {(supplierSimpleMode ? supplierSimpleFields : mappingFields).map(
+                    (field) => (
                     <label key={field}>
-                      {field}
+                      {t(
+                        mappingLabel(field, importProfile),
+                        mappingLabel(field, importProfile),
+                      )}
                       <select
                         value={mapping[field] || ""}
                         onChange={(e) =>
@@ -387,11 +490,15 @@ export default function Imports({
                         ))}
                       </select>
                     </label>
-                  ))}
+                    ),
+                  )}
                   {guidedMode ? (
                     <>
                       <label>
-                        {t("Activity grouping column", "عمود تجميع النشاط")}
+                        {t(
+                          "Activity grouping column",
+                          "عمود تجميع النشاط",
+                        )}
                         <select
                           value={guidedGroupColumn}
                           onChange={(e) => setGuidedGroupColumn(e.target.value)}
@@ -495,10 +602,22 @@ export default function Imports({
                   <>
                     <div className="notice">
                       {t(
-                        "Guided mode treats the mapped public price column as listPrice, applies LIST_DISCOUNT pricing, creates a WHOLESALE level from the wholesale discount, and converts minimum discount % into the saved minimum final price.",
-                        "الوضع الموجه يعتبر عمود السعر العام المرتبط كسعر قائمة، ويطبق تسعير الخصم من القائمة، وينشئ مستوى جملة من خصم الجملة، ويحوّل نسبة الحد الأدنى للخصم إلى أقل سعر نهائي محفوظ.",
+                        supplierSimpleMode
+                          ? "Simple supplier mode is pre-tuned for sheets with Part Reference, Local Description, Activity, and Public Pricelist. It creates or updates products, applies LIST_DISCOUNT pricing, builds a WHOLESALE level from the wholesale discount, and converts minimum discount % into the saved minimum final price."
+                          : "Guided mode treats the mapped public price column as listPrice, applies LIST_DISCOUNT pricing, creates a WHOLESALE level from the wholesale discount, and converts minimum discount % into the saved minimum final price.",
+                        supplierSimpleMode
+                          ? "وضع المورد البسيط مهيأ لملفات Part Reference وLocal Description وActivity وPublic Pricelist. ينشئ أو يحدّث الأصناف، ويطبق تسعير الخصم من القائمة، وينشئ مستوى جملة من خصم الجملة، ويحوّل نسبة الحد الأدنى للخصم إلى أقل سعر نهائي محفوظ."
+                          : "الوضع الموجه يعتبر عمود السعر العام المرتبط كسعر قائمة، ويطبق تسعير الخصم من القائمة، وينشئ مستوى جملة من خصم الجملة، ويحوّل نسبة الحد الأدنى للخصم إلى أقل سعر نهائي محفوظ.",
                       )}
                     </div>
+                    {supplierSimpleMode && (
+                      <div className="notice">
+                        {t(
+                          "Recommended for your common supplier sheet: Part Reference -> part number, Local Description -> description, Public Pricelist -> public price, Activity -> grouped discount presets.",
+                          "مناسب لملف المورد المعتاد لديك: Part Reference لرقم الصنف، وLocal Description للوصف، وPublic Pricelist للسعر العام، وActivity لتجميع الخصومات.",
+                        )}
+                      </div>
+                    )}
                     <div className="notice">
                       {t(
                         `Preview on public price 100: final ${previewPrice(guidedDefaultPreset.finalDiscount)}, wholesale ${previewPrice(guidedDefaultPreset.wholesaleDiscount)}, minimum floor ${previewPrice(guidedDefaultPreset.minimumDiscount)}.`,
@@ -611,8 +730,12 @@ export default function Imports({
                 <h3>{t("2. Review every row", "٢. مراجعة كل صف")}</h3>
                 <p className="muted">
                   {t(
-                    "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
-                    "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
+                    supplierSimpleMode
+                      ? "Simple supplier imports are set to Create & Update so missing part numbers can be created. Every row still requires review and verification before anything goes live."
+                      : "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
+                    supplierSimpleMode
+                      ? "استيراد المورد البسيط مضبوط على إنشاء وتحديث حتى يمكن إنشاء الأصناف غير الموجودة. ومع ذلك كل صف يحتاج مراجعة وتحقق قبل النشر."
+                      : "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
                   )}
                 </p>
                 <div className="actions wrap">

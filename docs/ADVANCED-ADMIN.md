@@ -2,7 +2,7 @@
 
 ## Excel workflow
 
-Download Simple Price Update or Advanced Catalog from **Admin → Imports / PDF**. Importable data goes in the first worksheet; Instructions and Examples are reference sheets. Keep part numbers as text and paste values, not spreadsheet formulas.
+Download Simple Price Update, Simple Supplier Pricelist, or Advanced Catalog from **Admin → Imports / PDF**. Importable data goes in the first worksheet; Instructions and Examples are reference sheets. Keep part numbers as text and paste values, not spreadsheet formulas.
 
 Simple `WHOLESALE.sellingPrice`, `RETAIL.sellingPrice`, `END_CUSTOMER.sellingPrice` explicitly set fixed before-VAT prices for populated cells. Advanced level fields retain FIXED / COST_MARKUP / LIST_DISCOUNT formulas. Blank/unmapped cells preserve current values and other levels. Supplier list prices belong in `listPrice`, not confidential purchase `cost`.
 
@@ -34,7 +34,7 @@ Configure company/legal names, registrations, address/contact, banking, validity
 
 All paths below are under `/api/v1` and require the existing authenticated session and mutation CSRF protection.
 
-- `GET /templates/simple|advanced`: IMPORT_CONFIRM; advanced additionally COST_VIEW.
+- `GET /templates/simple|supplier-simple|advanced`: IMPORT_CONFIRM; advanced additionally COST_VIEW.
 - `GET/POST /bulk-rules`, `PUT/DELETE /bulk-rules/:id`, `GET /bulk-rules/history`: PRODUCT_EDIT + COST_VIEW. Updates include rule version; delete is soft.
 - `POST /bulk-preview`: `{scope, importId?, ruleId?, definition, selectedIds?, acknowledgeVerification?}`. Requires COST_VIEW plus IMPORT_CONFIRM or PRODUCT_EDIT. Returns a preview ID, match/error count and first 50 items.
 - `GET /bulk-preview/:id?page=0`, `POST /bulk-preview/:id`: actor-owned preview paging/application. Import application stages changes only.

@@ -96,7 +96,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     const settings = await admin.settings(db);
     if (root === "templates" && method === "GET") {
       auth.requirePermission(actor, "IMPORT_CONFIRM");
-      const kind = z.enum(["simple", "advanced"]).parse(id);
+      const kind = z.enum(["simple", "supplier-simple", "advanced"]).parse(id);
       if (kind === "advanced") auth.requirePermission(actor, "COST_VIEW");
       return new Response(
         await fs.readFile(
