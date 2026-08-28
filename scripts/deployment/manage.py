@@ -1304,7 +1304,7 @@ def arguments(argv=None):
     parser.add_argument('--release', help='Exact retained release directory for rollback')
     parser.add_argument('--backup', help='Exact completed recovery backup directory for restore verification')
     parser.add_argument('--dry-run', action='store_true')
-    parser.add_argument('--build-network', choices=['default', 'host'], default='default',
+    parser.add_argument('--build-network', choices=['default', 'host'],
                         help='Image builds only: host grants build processes access to host-network services; runtime isolation is unchanged')
     parser.add_argument('-v', '--verbose', '--v', action='store_true', help='Extra timings and safe diagnostics; build output is always visible')
     parser.add_argument('--yes', action='store_true', help='Explicit non-interactive approval; never implies secret rotation')
@@ -1327,6 +1327,10 @@ def arguments(argv=None):
         args.command = 'install'
         args.resume = True
         args.build_network = 'host'
+    elif args.command == 'upgrade' and args.build_network is None:
+        args.build_network = 'host'
+    elif args.build_network is None:
+        args.build_network = 'default'
     require(not args.replace_failed_release or (args.command == 'install' and args.resume), '--replace-failed-release requires install --resume')
     require(not args.url or args.command == 'set-public-url', '--url is valid only with set-public-url')
     if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():

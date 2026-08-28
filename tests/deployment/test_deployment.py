@@ -123,7 +123,9 @@ class SafetyTests(unittest.TestCase):
 
     def test_build_network_cli_validation(self):
         self.assertEqual(m.arguments(['install', '--dry-run']).build_network, 'default')
+        self.assertEqual(m.arguments(['upgrade', '--dry-run']).build_network, 'host')
         self.assertEqual(m.arguments(['install', '--resume', '--dry-run', '--build-network=host']).build_network, 'host')
+        self.assertEqual(m.arguments(['upgrade', '--dry-run', '--build-network=default']).build_network, 'default')
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
             m.arguments(['install', '--dry-run', '--build-network=untrusted'])
         self.assertEqual(error.exception.code, 2)

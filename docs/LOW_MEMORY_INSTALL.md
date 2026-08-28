@@ -40,7 +40,9 @@ networking.
 
 ## Normal code updates
 
-For a healthy existing deployment, pull the latest code and use `upgrade`:
+For a healthy existing deployment, pull the latest code and use `upgrade`.
+Upgrades now default to host build networking so transient Podman build DNS
+issues are less likely to block npm/bootstrap steps:
 
 ```sh
 cd /opt/amt-pricelist-source
@@ -245,5 +247,7 @@ that local port. Read the setup token privately from the shared environment file
 never paste it into logs/chat. No public access is enabled without reviewed HTTPS.
 
 For upgrades, update the clean source checkout as above, then run
-`bash deploy.sh upgrade --dry-run` and `bash deploy.sh upgrade`. Secret rotation
-remains optional, default No. Keep all recovery backups and previous releases.
+`bash deploy.sh upgrade --dry-run` and `bash deploy.sh upgrade`. These now use
+host build networking by default; pass `--build-network=default` only if you
+deliberately want Podman's default build network. Secret rotation remains
+optional, default No. Keep all recovery backups and previous releases.
