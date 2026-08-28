@@ -28,19 +28,35 @@ test("Admin never renders dashboard or stale responses as a brands array", () =>
   );
 });
 test("Admin validates each endpoint shape before map or nested property access", () => {
-  for (const section of [
-    "brands",
-    "categories",
-    "products",
-    "users",
-    "history",
-    "audit",
-    "backups",
-  ]) {
+  for (const section of ["brands", "categories", "users", "history", "audit", "backups"]) {
     assert.deepEqual(validateAdminData(section, []), []);
     for (const wrong of [null, {}, { roles: [] }, "error"])
       assert.throws(() => validateAdminData(section, wrong), /Unexpected/);
   }
+  assert.deepEqual(
+    validateAdminData("products", {
+      items: [],
+      selectableItems: [],
+      page: 0,
+      pageSize: 50,
+      totalRows: 0,
+      totalPages: 1,
+      hasMore: false,
+      selectionLimitReached: false,
+    }),
+    {
+      items: [],
+      selectableItems: [],
+      page: 0,
+      pageSize: 50,
+      totalRows: 0,
+      totalPages: 1,
+      hasMore: false,
+      selectionLimitReached: false,
+    },
+  );
+  for (const wrong of [[], null, {}, { items: [] }, "error"])
+    assert.throws(() => validateAdminData("products", wrong), /Unexpected/);
   assert.throws(() => validateAdminData("dashboard", []));
   assert.throws(() => validateAdminData("dashboard", {}));
   assert.throws(() => validateAdminData("roles", { roles: [] }));

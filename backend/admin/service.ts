@@ -29,6 +29,22 @@ import {
   toInput,
   saveProduct,
 } from "../products/service";
+
+const bulkItemSchema = z
+  .object({
+    id: z.string().uuid("Select a valid product"),
+    version: z.transform((value, ctx) => {
+      if (typeof value === "number" && Number.isInteger(value)) return value;
+      if (typeof value === "string" && /^-?\d+$/.test(value.trim()))
+        return Number(value.trim());
+      ctx.addIssue({
+        code: "custom",
+        message: "Version must be a whole number",
+      });
+      return z.NEVER;
+    }),
+  })
+  .strict();
 export async function settings(db: DB) {
   return (await one(db, "SELECT data FROM settings WHERE id=1"))!.data;
 }
@@ -241,10 +257,7 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
   requirePermission(actor, "PRODUCT_EDIT");
   const data = z
     .object({
-      items: z
-        .array(z.object({ id: z.string().uuid(), version: z.number().int() }))
-        .min(1)
-        .max(1000),
+      items: z.array(bulkItemSchema).min(1).max(1000),
       operation: z.enum([
         "ARCHIVE",
         "REACTIVATE",

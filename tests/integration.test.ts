@@ -625,6 +625,43 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     });
     assert.equal((await request("products?q=DELETE-ME")).data.items.length, 0);
   });
+  await t.test("Bulk delete accepts integer-like versions and reports item validation errors", async () => {
+    const created = (
+      await request("products", "POST", {
+        ...base,
+        partNumber: "DELETE-STRING-VERSION",
+        aliases: [],
+      })
+    ).data;
+    await request("products/bulk", "POST", {
+      items: [{ id: created.id, version: String(created.version) }],
+      operation: "DELETE",
+      confirm: true,
+    });
+    assert.equal(
+      (await request("products?q=DELETE-STRING-VERSION")).data.items.length,
+      0,
+    );
+    const invalid = await request(
+      "products/bulk",
+      "POST",
+      {
+        items: [{ id: created.id, version: "abc" }],
+        operation: "DELETE",
+        confirm: true,
+      },
+      400,
+    );
+    assert.equal(invalid.data.error, "Please correct the highlighted values");
+    assert(
+      invalid.data.details.some(
+        (detail: any) =>
+          detail.path?.join(".") === "items.0.version" &&
+          /whole number/i.test(detail.message),
+      ),
+      JSON.stringify(invalid.data.details),
+    );
+  });
   await t.test("Bulk delete blocks products used in quotations", async () => {
     const p = (
       await request("products", "POST", {

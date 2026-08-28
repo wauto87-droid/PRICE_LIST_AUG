@@ -376,6 +376,51 @@ h3 {
   border-color: var(--red);
   box-shadow: 0 0 0 3px #cc00000a;
 }
+.admin-product-search {
+  position: relative;
+  min-width: min(420px, 100%);
+}
+.admin-product-search input {
+  padding-inline-end: 42px;
+}
+.admin-product-suggestions {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline: 0;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #ecd9dc;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 16px 40px #00000014;
+  z-index: 20;
+}
+.admin-product-suggestion {
+  width: 100%;
+  justify-content: flex-start;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  text-align: start;
+  border-radius: 11px;
+  padding: 11px 12px;
+}
+.admin-product-suggestion strong {
+  color: var(--ink);
+}
+.admin-product-suggestion small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.admin-product-suggestion.active,
+.admin-product-suggestion:hover {
+  background: #fff1f3;
+  border-color: #f0ccd4;
+}
+.danger-action {
+  box-shadow: 0 0 0 1px #ffffff30 inset;
+}
 kbd {
   padding: 0 7px;
   background: #f6f6f8;

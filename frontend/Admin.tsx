@@ -8,6 +8,11 @@ import {
   type AdminActionRunner,
   type AdminActionState,
 } from "./admin-actions";
+import {
+  buildBulkItems,
+  formatBulkDeleteError,
+  getProductSuggestions,
+} from "./admin-products";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
@@ -51,6 +56,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     }),
     [selected, setSelected] = useState<Record<string, number>>({}),
     [bulk, setBulk] = useState<any>({ operation: "MARKUP", value: "25" }),
+    [searchFocused, setSearchFocused] = useState(false),
+    [activeSuggestion, setActiveSuggestion] = useState(-1),
+    [loadedProductQuery, setLoadedProductQuery] = useState(""),
     [preview, setPreview] = useState<any>(null),
     [roles, setRoles] = useState<any>(null),
     [exportJob, setExportJob] = useState<any>(null);
@@ -60,6 +68,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   const productItems = productData?.items ?? [];
   const requestGeneration = useRef(0),
     currentSection = useRef(section),
+    productSearchInput = useRef<HTMLInputElement | null>(null),
     successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   currentSection.current = section;
   useEffect(
@@ -101,6 +110,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         return;
       if (section === "products" && payload && !Array.isArray(payload)) {
         setProductPage(payload.page ?? 0);
+        setLoadedProductQuery(overrides?.query ?? productQuery);
       }
       setResult({ section, payload: validateAdminData(section, payload) });
     } catch (e) {
@@ -119,11 +129,23 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setSelected({});
     setPreview(null);
     setProductPage(0);
+    setLoadedProductQuery("");
+    setSearchFocused(false);
+    setActiveSuggestion(-1);
     load();
     return () => {
       requestGeneration.current++;
     };
   }, [section]);
+  useEffect(() => {
+    if (section !== "products" || query === productQuery) return;
+    const timer = setTimeout(() => {
+      setProductQuery(query);
+      setProductPage(0);
+      void load({ query, page: 0 });
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [section, query, productQuery]);
   useEffect(() => {
     if (user.permissions.includes("USER_MANAGE"))
       api("admin/roles")
@@ -181,10 +203,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       );
       return value;
     } catch (e) {
+      const rawMessage = (e as Error).message;
       setActionState({
         phase: "error",
         title: messages.error,
-        message: (e as Error).message,
+        message:
+          messages.error === t("Products could not be deleted", "تعذر حذف الأصناف")
+            ? formatBulkDeleteError(rawMessage, t)
+            : rawMessage,
       });
       return undefined;
     } finally {
@@ -207,6 +233,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     section === "products"
       ? productItems.map((p: any) => p.id)
       : [];
+  const suggestions =
+    section === "products" && loadedProductQuery.trim() === query.trim()
+      ? getProductSuggestions(productItems, query)
+      : [];
+  const showSuggestions =
+    searchFocused &&
+    !!query.trim() &&
+    suggestions.length > 0 &&
+    loadedProductQuery.trim() === query.trim();
   const matchedProductItems = productData?.selectableItems ?? [];
   const allVisibleSelected =
     !!visibleProductIds.length &&
@@ -218,6 +253,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     !!matchedProductItems.length &&
     matchedProductItems.every((item: any) => item.id in selected);
   const selectedCount = Object.keys(selected).length;
+  const bulkItems = buildBulkItems(selected);
   const editField = (key: string, label: string, type = "text") => (
     <label key={key}>
       {label}
@@ -229,6 +265,20 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       />
     </label>
   );
+  const triggerProductSearch = (nextQuery: string) => {
+    setSelected({});
+    setPreview(null);
+    setProductQuery(nextQuery);
+    setProductPage(0);
+    setActiveSuggestion(-1);
+    void load({ query: nextQuery, page: 0 });
+  };
+  const chooseSuggestion = (item: any) => {
+    setQuery(item.partNumber);
+    setSearchFocused(false);
+    triggerProductSearch(item.partNumber);
+    productSearchInput.current?.focus();
+  };
   return (
     <div className="admin-layout">
       <aside className="admin-menu">
@@ -316,29 +366,90 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             {section === "products" && (
               <>
                 <div className="actions wrap">
-                  <input
-                    className="grow"
-                    placeholder={t("Find a product…", "ابحث عن صنف…")}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                  <div className="admin-product-search grow">
+                    <input
+                      ref={productSearchInput}
+                      className="grow"
+                      placeholder={t(
+                        "Find a product or part number…",
+                        "ابحث عن صنف أو رقم جزء…",
+                      )}
+                      value={query}
+                      onFocus={() => setSearchFocused(true)}
+                      onBlur={() => {
+                        setTimeout(() => setSearchFocused(false), 120);
+                      }}
+                      onChange={(e) => {
+                        setQuery(e.target.value);
                         setSelected({});
                         setPreview(null);
-                        setProductQuery(query);
-                        setProductPage(0);
-                        load({ query, page: 0 });
-                      }
-                    }}
-                  />
+                        setActiveSuggestion(-1);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowDown" && suggestions.length) {
+                          e.preventDefault();
+                          setSearchFocused(true);
+                          setActiveSuggestion((current) =>
+                            Math.min(current + 1, suggestions.length - 1),
+                          );
+                          return;
+                        }
+                        if (e.key === "ArrowUp" && suggestions.length) {
+                          e.preventDefault();
+                          setActiveSuggestion((current) =>
+                            Math.max(current - 1, 0),
+                          );
+                          return;
+                        }
+                        if (e.key === "Escape") {
+                          setSearchFocused(false);
+                          setActiveSuggestion(-1);
+                          return;
+                        }
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (
+                            showSuggestions &&
+                            activeSuggestion >= 0 &&
+                            suggestions[activeSuggestion]
+                          ) {
+                            chooseSuggestion(suggestions[activeSuggestion]);
+                            return;
+                          }
+                          triggerProductSearch(query);
+                        }
+                      }}
+                    />
+                    {showSuggestions && (
+                      <div className="admin-product-suggestions" role="listbox">
+                        {suggestions.map((item: any, index: number) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={
+                              "admin-product-suggestion" +
+                              (index === activeSuggestion ? " active" : "")
+                            }
+                            role="option"
+                            aria-selected={index === activeSuggestion}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              chooseSuggestion(item);
+                            }}
+                          >
+                            <strong>{item.partNumber}</strong>
+                            <small>
+                              {[item.description, item.brand]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </small>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button
-                    onClick={() => {
-                      setSelected({});
-                      setPreview(null);
-                      setProductQuery(query);
-                      setProductPage(0);
-                      load({ query, page: 0 });
-                    }}
+                    onClick={() => triggerProductSearch(query)}
                   >
                     {t("Search", "بحث")}
                   </button>
@@ -625,16 +736,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         )}
                       {priceBulkOperations.has(bulk.operation) ? (
                         <button
-                          disabled={busy || !selected.length}
+                          disabled={busy || !selectedCount}
                           onClick={() =>
                             (async () => {
                               if (busy) return;
                               setPreview(
                                 await api("products/bulk", "POST", {
                                   ...bulk,
-                                  items: Object.entries(selected).map(
-                                    ([id, version]) => ({ id, version }),
-                                  ),
+                                  items: bulkItems,
                                   confirm: false,
                                 }),
                               );
@@ -645,7 +754,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         </button>
                       ) : (
                         <button
-                          className={bulk.operation === "DELETE" ? "primary" : ""}
+                          className={
+                            bulk.operation === "DELETE" ? "primary danger-action" : ""
+                          }
                           disabled={busy || !selectedCount}
                           onClick={async () => {
                             if (
@@ -740,9 +851,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               async () => {
                                 await api("products/bulk", "POST", {
                                   operation: bulk.operation,
-                                  items: Object.entries(selected).map(
-                                    ([id, version]) => ({ id, version }),
-                                  ),
+                                  items: bulkItems,
                                   confirm: true,
                                 });
                                 setSelected({});
@@ -809,9 +918,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               async () => {
                                 await api("products/bulk", "POST", {
                                   ...bulk,
-                                  items: Object.entries(selected).map(
-                                    ([id, version]) => ({ id, version }),
-                                  ),
+                                  items: bulkItems,
                                   confirm: true,
                                 });
                                 setSelected({});

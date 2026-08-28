@@ -18,10 +18,13 @@ export function validateAdminData(section: string, value: any) {
         : section === "products"
           ? object &&
             Array.isArray(value.items) &&
+            Array.isArray(value.selectableItems) &&
             Number.isInteger(value.page) &&
             Number.isInteger(value.pageSize) &&
             Number.isInteger(value.totalRows) &&
-            Number.isInteger(value.totalPages)
+            Number.isInteger(value.totalPages) &&
+            typeof value.hasMore === "boolean" &&
+            typeof value.selectionLimitReached === "boolean"
         : section === "settings"
           ? object
           : Array.isArray(value);
