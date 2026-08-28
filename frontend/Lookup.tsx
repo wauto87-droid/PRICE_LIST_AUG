@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
+import {
+  buildLookupLineRequest,
+  previewLookupPrice,
+} from "./lookup-pricing";
 import { levelLabel, visibleLevels } from "./levels";
 import {
   activeSuggestionIndex,
@@ -31,18 +35,23 @@ export default function Lookup({
     [selected, setSelected] = useState<any>(null),
     [sellingLevel, setSellingLevel] = useState("END_CUSTOMER"),
     [categoryFilter, setCategoryFilter] = useState(""),
-    [discount, setDiscount] = useState("0"),
+    [discount, setDiscount] = useState(""),
     [quantity, setQuantity] = useState("1"),
-    [price, setPrice] = useState<any>(null),
+    [price, setPrice] = useState<{
+      input: { sellingLevel: string; quantity: string; discount: string };
+      value: any;
+    } | null>(null),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
+    [pricingBusy, setPricingBusy] = useState(false),
+    [adding, setAdding] = useState(false),
     [searching, setSearching] = useState(false),
     [suggestionsOpen, setSuggestionsOpen] = useState(false),
     [highlightedIndex, setHighlightedIndex] = useState(-1),
     [stamp, setStamp] = useState("");
   const searchRef = useRef<HTMLInputElement>(null),
+    discountRef = useRef<HTMLInputElement>(null),
     comboboxId = useRef(`lookup-combobox-${Math.random().toString(36).slice(2)}`),
-    generation = useRef(0),
+    pricingGeneration = useRef(0),
     searchGeneration = useRef(0);
   useEffect(() => {
     if (!online && !settings.allowOfflineCache) {
@@ -141,40 +150,47 @@ export default function Lookup({
     return () => clearTimeout(timer);
   }, [query, online, selected?.partNumber, settings.allowOfflineCache, user.id]);
   useEffect(() => {
-    const current = ++generation.current;
-    setPrice(null);
     if (!selected) return;
-    if (!online) {
-      setBusy(false);
+    setError("");
+  }, [selected?.id, sellingLevel, quantity, discount]);
+  useEffect(() => {
+    if (!selected || !online) {
+      setPricingBusy(false);
       return;
     }
-    setBusy(true);
-    const timer = setTimeout(
-      () =>
-        api("pricing", "POST", {
-          productId: selected.id,
-          sellingLevel,
-          quantity,
-          discount,
-          override: false,
-          reason: "",
-        })
-          .then((p) => {
-            if (current === generation.current) {
-              setPrice(p);
-              setError("");
-            }
-          })
-          .catch((e) => {
-            if (current === generation.current) setError(e.message);
-          })
-          .finally(() => {
-            if (current === generation.current) setBusy(false);
-          }),
-      120,
-    );
-    return () => clearTimeout(timer);
-  }, [selected, sellingLevel, quantity, discount, online]);
+    const current = ++pricingGeneration.current;
+    setPricingBusy(true);
+    setPrice(null);
+    api("pricing", "POST", {
+      productId: selected.id,
+      sellingLevel: selected.defaultLevel ?? "END_CUSTOMER",
+      quantity: "1",
+      discount: "0",
+      override: false,
+      reason: "",
+    })
+      .then((p) => {
+        if (current !== pricingGeneration.current) return;
+        setPrice({
+          input: {
+            sellingLevel: selected.defaultLevel ?? "END_CUSTOMER",
+            quantity: "1",
+            discount: "0",
+          },
+          value: p,
+        });
+        setError("");
+      })
+      .catch((e) => {
+        if (current === pricingGeneration.current) setError(e.message);
+      })
+      .finally(() => {
+        if (current === pricingGeneration.current) setPricingBusy(false);
+      });
+  }, [selected?.id, online]);
+  useEffect(() => {
+    if (selected) discountRef.current?.focus();
+  }, [selected?.id]);
   useEffect(() => {
     setHighlightedIndex((current) =>
       clampHighlightedIndex(current, filteredSuggestions.length),
@@ -192,7 +208,7 @@ export default function Lookup({
     setQuery(p.partNumber);
     setSellingLevel(p.defaultLevel ?? "END_CUSTOMER");
     setQuantity("1");
-    setDiscount("0");
+    setDiscount("");
     setPrice(null);
     setError("");
     setSuggestionsOpen(false);
@@ -200,33 +216,76 @@ export default function Lookup({
   }
   function chooseLevel(code: string) {
     if (sellingLevel === code) return;
-    generation.current++;
-    setPrice(null);
-    setBusy(online);
     setSellingLevel(code);
   }
-  function add() {
-    if (!selected || busy || (!price && online)) return;
+  async function add() {
+    if (!selected || adding) return;
     if (!online && !settings.allowOfflineCache) return;
-    onAdd({
-      productId: selected.id,
-      sellingLevel,
-      partNumber: selected.partNumber,
-      sellingLevels: visibleLevels(selected),
-      description: selected.description,
-      unit: selected.unit,
-      quantityPrecision: selected.quantityPrecision,
-      input: {
+    let input;
+    try {
+      input = buildLookupLineRequest(selected.id, sellingLevel as any, quantity, discount);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
+    if (!online) {
+      onAdd({
         productId: selected.id,
         sellingLevel,
-        quantity,
-        discount,
-        override: price?.overridden ?? false,
-        reason: price?.overrideReason ?? "",
-      },
-      price,
-      offline: !online,
-    });
+        partNumber: selected.partNumber,
+        sellingLevels: visibleLevels(selected),
+        description: selected.description,
+        unit: selected.unit,
+        quantityPrecision: selected.quantityPrecision,
+        input,
+        price: previewLookupPrice(selected, user, {
+          sellingLevel: input.sellingLevel,
+          quantity: input.quantity,
+          discount: input.discount,
+          override: false,
+          reason: "",
+        }),
+        offline: true,
+      });
+      setSelected(null);
+      setQuery("");
+      setResults([]);
+      setSuggestionsOpen(false);
+      setHighlightedIndex(-1);
+      setPrice(null);
+      searchRef.current?.focus();
+      return;
+    }
+    setAdding(true);
+    setError("");
+    try {
+      const validated = await api("pricing", "POST", input);
+      setPrice({
+        input: {
+          sellingLevel: input.sellingLevel,
+          quantity: input.quantity,
+          discount: input.discount,
+        },
+        value: validated,
+      });
+      onAdd({
+        productId: selected.id,
+        sellingLevel,
+        partNumber: selected.partNumber,
+        sellingLevels: visibleLevels(selected),
+        description: selected.description,
+        unit: selected.unit,
+        quantityPrecision: selected.quantityPrecision,
+        input,
+        price: validated,
+        offline: false,
+      });
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    } finally {
+      setAdding(false);
+    }
     setSelected(null);
     setQuery("");
     setResults([]);
@@ -236,8 +295,14 @@ export default function Lookup({
     searchRef.current?.focus();
   }
   async function override() {
-    if (!price || !selected) return;
-    const current = generation.current;
+    if (!selected) return;
+    let input;
+    try {
+      input = buildLookupLineRequest(selected.id, sellingLevel as any, quantity, discount);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
     const reason = prompt(
       t(
         "WARNING: Below-minimum pricing requires explicit approval. Enter the reason for this override.",
@@ -245,28 +310,34 @@ export default function Lookup({
       ),
     );
     if (!reason?.trim()) return;
+    setPricingBusy(true);
     try {
       const p = await api("pricing", "POST", {
-        productId: selected.id,
-        sellingLevel,
-        quantity,
-        discount,
+        ...input,
         override: true,
         reason,
       });
-      if (current !== generation.current) return;
       if (
         !(await showConfirm(
           t(
-            `Minimum-protected price: SAR ${price.finalExcl}. Requested final price: SAR ${p.finalExcl}. Confirm override?`,
-            `السعر المحمي: ${price.finalExcl} ر.س. السعر المطلوب: ${p.finalExcl} ر.س. تأكيد التجاوز؟`,
+            `Minimum-protected price: SAR ${displayPrice?.finalExcl ?? p.finalExcl}. Requested final price: SAR ${p.finalExcl}. Confirm override?`,
+            `السعر المحمي: ${displayPrice?.finalExcl ?? p.finalExcl} ر.س. السعر المطلوب: ${p.finalExcl} ر.س. تأكيد التجاوز؟`,
           ),
         ))
       )
         return;
-      setPrice({ ...p, overrideReason: reason });
+      setPrice({
+        input: {
+          sellingLevel: input.sellingLevel,
+          quantity: input.quantity,
+          discount: input.discount,
+        },
+        value: { ...p, overrideReason: reason },
+      });
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setPricingBusy(false);
     }
   }
   const selectedPrice =
@@ -291,11 +362,43 @@ export default function Lookup({
     resolvedHighlightedIndex >= 0
       ? filteredSuggestions[resolvedHighlightedIndex]
       : null;
+  let displayPrice = price?.value ?? null;
+  let previewOnly = false;
+  let previewError = "";
+  try {
+    if (selected) {
+      const input = buildLookupLineRequest(
+        selected.id,
+        sellingLevel as any,
+        quantity,
+        discount,
+      );
+      const matchesValidated =
+        price?.input &&
+        price.input.sellingLevel === input.sellingLevel &&
+        price.input.quantity === input.quantity &&
+        price.input.discount === input.discount;
+      if (!matchesValidated) {
+        displayPrice = previewLookupPrice(selected, user, {
+          sellingLevel: input.sellingLevel,
+          quantity: input.quantity,
+          discount: input.discount,
+          override: false,
+          reason: "",
+        });
+        previewOnly = true;
+      }
+    }
+  } catch (e) {
+    previewError = (e as Error).message;
+    displayPrice = null;
+  }
+  const activeError = previewError || error;
   const estimate = selectedPrice
     ? new Decimal(selectedPrice.masterExcl)
         .mul(
           new Decimal(1).sub(
-            new Decimal(/^\d+(\.\d*)?$/.test(discount) ? discount : "0").div(
+            new Decimal(/^\d+(\.\d*)?$/.test(discount) ? discount || "0" : "0").div(
               100,
             ),
           ),
@@ -486,9 +589,9 @@ export default function Lookup({
             )}
           </div>
         </div>
-        {error && (
+        {activeError && (
           <div role="alert" className="notice error">
-            {error}
+            {activeError}
           </div>
         )}
         {stamp && !online && (
@@ -648,12 +751,14 @@ export default function Lookup({
               <label>
                 {t("DISCOUNT %", "الخصم %")}
                 <input
+                  ref={discountRef}
                   inputMode="decimal"
                   type="number"
                   min="0"
                   max="100"
                   step="0.01"
                   value={discount}
+                  placeholder="0"
                   onChange={(e) => setDiscount(e.target.value)}
                 />
               </label>
@@ -679,7 +784,14 @@ export default function Lookup({
             <div className="final-price">
               <div className="eyebrow">
                 {online
-                  ? t("FINAL PRICE", "السعر النهائي") +
+                  ? t(
+                      previewOnly
+                        ? "PREVIEW PRICE — VALIDATED ON ADD"
+                        : "FINAL PRICE",
+                      previewOnly
+                        ? "سعر معاينة — يتم التحقق عند الإضافة"
+                        : "السعر النهائي",
+                    ) +
                     " · " +
                     levelLabel(sellingLevel, t)
                   : t(
@@ -687,25 +799,33 @@ export default function Lookup({
                       "تقدير دون اتصال — غير معتمد",
                     )}
               </div>
-              {price?.maxDiscount !== undefined && (
+              {displayPrice?.maxDiscount !== undefined && (
                 <p className="muted">
                   {t("Salesman limit", "حد المندوب")}:{" "}
-                  {price.maxDiscount}%
+                  {displayPrice.maxDiscount}%
                 </p>
               )}
-              {price ? (
+              {displayPrice ? (
                 <>
                   <div className="price-pair counter-prices">
                     <div>
                       <label>{t("Excl. VAT", "قبل الضريبة")}</label>
-                      <strong>{price.finalExcl}</strong>
+                      <strong>{displayPrice.finalExcl}</strong>
                     </div>
                     <div>
                       <label>{t("Incl. VAT", "شامل الضريبة")}</label>
-                      <strong>{price.finalIncl}</strong>
+                      <strong>{displayPrice.finalIncl}</strong>
                     </div>
                   </div>
-                  {price.minimumReached && (
+                  {previewOnly && (
+                    <p className="muted">
+                      {t(
+                        "Instant browser preview. The server confirms the protected final price when you add this line.",
+                        "معاينة فورية داخل المتصفح. يؤكد الخادم السعر النهائي المحمي عند إضافة هذا البند.",
+                      )}
+                    </p>
+                  )}
+                  {displayPrice.minimumReached && (
                     <p className="notice">
                       {t(
                         "Minimum selling price reached",
@@ -713,15 +833,15 @@ export default function Lookup({
                       )}
                     </p>
                   )}
-                  {price.discountLimited && (
+                  {displayPrice.discountLimited && (
                     <p className="notice">
                       {t(
-                        `Your discount limit is ${user.maxDiscount}%. Price adjusted.`,
-                        `حد الخصم المسموح ${user.maxDiscount}%. تم تعديل السعر.`,
+                        `Discount adjusted to the current allowed limit of ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
+                        `تم تعديل الخصم إلى الحد المسموح الحالي ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
                       )}
                     </p>
                   )}
-                  {price.overridden && (
+                  {displayPrice.overridden && (
                     <p className="notice error">
                       {t(
                         "Authorized minimum-price override",
@@ -732,21 +852,28 @@ export default function Lookup({
                   <div className="line-summary">
                     <span>
                       {t("TOTAL EXCL. VAT", "الإجمالي قبل الضريبة")}{" "}
-                      <b>SAR {price.subtotal}</b>
+                      <b>SAR {displayPrice.subtotal}</b>
                     </span>
                     <span>
-                      VAT {price.vatRate}% <b>{price.vatAmount}</b>
+                      VAT {displayPrice.vatRate}% <b>{displayPrice.vatAmount}</b>
                     </span>
                     <span>
                       {t("TOTAL INCL. VAT", "الإجمالي شامل الضريبة")}{" "}
-                      <b>SAR {price.total}</b>
+                      <b>SAR {displayPrice.total}</b>
                     </span>
                   </div>
                 </>
               ) : (
                 <p>
                   {online
-                    ? t("Calculating…", "جارٍ الحساب…")
+                    ? t(
+                        pricingBusy
+                          ? "Loading base validation…"
+                          : "Enter a valid quantity and discount to preview the price.",
+                        pricingBusy
+                          ? "جارٍ تحميل التحقق الأساسي…"
+                          : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
+                      )
                     : t(
                         `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
                         `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
@@ -755,7 +882,7 @@ export default function Lookup({
               )}
             </div>
             {user.permissions.includes("OVERRIDE_MINIMUM_PRICE") &&
-              price?.minimumReached && (
+              displayPrice?.minimumReached && (
                 <button className="link-button" onClick={override}>
                   {t("Request below-minimum override", "طلب تجاوز الحد الأدنى")}
                 </button>
@@ -764,8 +891,8 @@ export default function Lookup({
               className="primary add-button"
               onClick={add}
               disabled={
-                busy ||
-                (online && !price) ||
+                adding ||
+                !!previewError ||
                 (!online && !settings.allowOfflineCache)
               }
             >
