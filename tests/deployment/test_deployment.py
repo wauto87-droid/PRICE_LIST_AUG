@@ -780,6 +780,15 @@ www.softwaresolver.online {
         with self.assertRaisesRegex(m.DeployError, 'invalid password'):
             d.verify_database_runtime()
 
+    def test_pm2_socket_precheck_runs_from_release_directory(self):
+        d = self.deployment()
+        d.env = m.new_env(18180, runtime='pm2')
+        d.release = ROOT
+        with patch.object(m, 'run', return_value=result()) as run:
+            d.verify_database_runtime()
+        self.assertEqual(run.call_args.kwargs['cwd'], ROOT)
+        self.assertEqual(run.call_args.args[0][:2], ['node', '-e'])
+
     def replacement_guard_fixture(self, temp):
         d = self.deployment()
         d.root = Path(temp)

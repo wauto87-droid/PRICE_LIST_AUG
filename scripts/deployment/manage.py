@@ -1179,7 +1179,7 @@ class Deployment:
                   "const p=good.connectionParameters; const bad=new Client({host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); "
                   "try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))")
         if self.native_runtime():
-            result = run(['node', '-e', script], check=False, timeout=60, env=self.native_env())
+            result = run(['node', '-e', script], check=False, timeout=60, env=self.native_env(), cwd=self.release)
             if result.returncode == 20:
                 raise DeployError('Local PM2 database connection failed before migrations')
         else:
