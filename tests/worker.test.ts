@@ -97,11 +97,28 @@ test(
         "FAILED",
       );
     });
-    await t.test("Oversized row-count XLSX reports a clear safe error", async () => {
+    await t.test("Large XLSX above 10,000 rows stages successfully", async () => {
       const book = new ExcelJS.Workbook();
       const sheet = book.addWorksheet("PriceUpdate");
       sheet.addRow(["Part Reference", "Local Description", "Public Pricelist"]);
       for (let i = 0; i < 10001; i++)
+        sheet.addRow([`ROW-${i}`, `Description ${i}`, "100"]);
+      const buffer = Buffer.from(await book.xlsx.writeBuffer());
+      const job = await upload(db, actor, new File([buffer], "large.xlsx"));
+      await runJob(db);
+      const staged = await one(
+        db,
+        "SELECT status,summary FROM import_jobs WHERE id=$1",
+        [job.id],
+      );
+      assert.equal(staged!.status, "AWAITING_REVIEW");
+      assert.equal(staged!.summary.rows, 10001);
+    });
+    await t.test("Oversized row-count XLSX reports a clear safe error", async () => {
+      const book = new ExcelJS.Workbook();
+      const sheet = book.addWorksheet("PriceUpdate");
+      sheet.addRow(["Part Reference", "Local Description", "Public Pricelist"]);
+      for (let i = 0; i < 50001; i++)
         sheet.addRow([`ROW-${i}`, `Description ${i}`, "100"]);
       const buffer = Buffer.from(await book.xlsx.writeBuffer());
       const job = await upload(db, actor, new File([buffer], "too-many.xlsx"));
@@ -112,7 +129,7 @@ test(
         [job.id],
       );
       assert.equal(failed!.status, "FAILED");
-      assert.match(failed!.error, /more than 10,000 rows/i);
+      assert.match(failed!.error, /more than 50,000 rows/i);
     });
     await t.test("Oversized upload rejected before persistence", async () => {
       process.env.UPLOAD_MAX_MB = "1";

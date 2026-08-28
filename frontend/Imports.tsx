@@ -6,6 +6,7 @@ import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
 import { tierColumns } from "@/backend/pricing/transfer";
 import BulkRules from "./BulkRules";
+const IMPORT_PAGE_SIZE = 50;
 const mappingFields = [
   "partNumber",
   "description",
@@ -148,6 +149,7 @@ export default function Imports({
     [page, setPage] = useState(0),
     [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
+    [groupValues, setGroupValues] = useState<string[]>([]),
     [mapping, setMapping] = useState<Record<string, string>>({}),
     [defaults, setDefaults] = useState<any>(defaultImportDefaults()),
     [importProfile, setImportProfile] = useState<ImportProfile>("STANDARD"),
@@ -157,6 +159,9 @@ export default function Imports({
     ),
     [guidedGroupPresets, setGuidedGroupPresets] = useState<
       Record<string, DiscountPreset>
+    >({}),
+    [reviewDrafts, setReviewDrafts] = useState<
+      Record<string, { decision?: string; verified?: boolean }>
     >({}),
     [editing, setEditing] = useState<any>(null),
     [error, setError] = useState(""),
@@ -205,15 +210,57 @@ export default function Imports({
       setBusy(false);
     }
   }
+  const applyReviewDrafts = (
+    rows: any[],
+    drafts: Record<string, { decision?: string; verified?: boolean }>,
+  ) => rows.map((row) => (drafts[row.id] ? { ...row, ...drafts[row.id] } : row));
+  async function fetchJobPage(
+    id: string,
+    nextPage = 0,
+    nextGroupColumn?: string,
+    drafts = reviewDrafts,
+  ) {
+    const query = new URLSearchParams({
+      page: String(nextPage),
+      pageSize: String(IMPORT_PAGE_SIZE),
+    });
+    if (nextGroupColumn?.trim()) query.set("groupColumn", nextGroupColumn.trim());
+    const j = await api("imports/" + id + "?" + query.toString());
+    return { ...j, rows: applyReviewDrafts(j.rows || [], drafts) };
+  }
+  async function loadJobPage(id: string, nextPage = 0, nextGroupColumn?: string) {
+    const j = await fetchJobPage(id, nextPage, nextGroupColumn);
+    setJob(j);
+    setPage(j.page || 0);
+    setGroupValues(j.groupValues || []);
+    return j;
+  }
+  async function loadConfirmation(id: string, nextPage = page) {
+    const query = new URLSearchParams({
+      page: String(nextPage),
+      pageSize: String(IMPORT_PAGE_SIZE),
+    });
+    setConfirmation(
+      await api(
+        "imports/" + id + "/preview-confirmation?" + query.toString(),
+        "POST",
+        {},
+      ),
+    );
+  }
   async function open(id: string) {
-    const j = await api("imports/" + id);
+    const emptyDrafts: Record<string, { decision?: string; verified?: boolean }> =
+      {};
+    const j = await fetchJobPage(id, 0, undefined, emptyDrafts);
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
     const { guidedImport, ...productDefaults } = savedDefaults;
     const columns = j.summary.columns || [];
+    setReviewDrafts(emptyDrafts);
     setJob(j);
     setConfirmation(null);
-    setPage(0);
+    setPage(j.page || 0);
+    setGroupValues(j.groupValues || []);
     setMode(j.mode || "UPDATE_ONLY");
     setDefaults(
       Object.keys(productDefaults).length
@@ -221,7 +268,8 @@ export default function Imports({
         : defaultImportDefaults(defaults.vat),
     );
     setGuidedGroupColumn(
-      guided?.groupColumn ||
+      j.groupColumn ||
+        guided?.groupColumn ||
         columns.find(
           (c: string) =>
             normalizeHeader(c) === normalizeHeader(supplierSimpleColumns.groupColumn),
@@ -257,12 +305,6 @@ export default function Imports({
           : "STANDARD",
     );
   }
-  const rawGroupValues = ((job?.rows || []) as any[])
-    .map((row) => String(row.raw?.[guidedGroupColumn] ?? "").trim())
-    .filter(Boolean);
-  const groupValues = [...new Set(rawGroupValues)].sort((a, b) =>
-    a.localeCompare(b),
-  );
   const presetForGroup = (groupValue: string) =>
     guidedGroupPresets[groupValue] || guidedDefaultPreset;
   const saveDefaults = guidedMode
@@ -399,8 +441,15 @@ export default function Imports({
               <button onClick={() => setJob(null)}>×</button>
             </div>
             <p>
-              {job.status} · {job.rows.length} {t("rows", "صفوف")}
+              {job.status} · {job.totalRows ?? job.rows.length} {t("rows", "صفوف")}
             </p>
+            {job.reviewStats && (
+              <p className="muted">
+                {t("Ready", "جاهز")}: {job.reviewStats.readyRows} ·{" "}
+                {t("Unverified", "غير متحقق")}: {job.reviewStats.unverifiedRows} ·{" "}
+                {t("Problem rows", "صفوف بها مشاكل")}: {job.reviewStats.problemRows}
+              </p>
+            )}
             {job.summary.warnings?.map((w: string) => (
               <div className="notice" key={w}>
                 {w}
@@ -501,7 +550,14 @@ export default function Imports({
                         )}
                         <select
                           value={guidedGroupColumn}
-                          onChange={(e) => setGuidedGroupColumn(e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setGuidedGroupColumn(value);
+                            run(async () => {
+                              await loadJobPage(job.id, 0, value);
+                              setConfirmation(null);
+                            });
+                          }}
                         >
                           <option value="">
                             {t("No grouping", "بدون تجميع")}
@@ -740,32 +796,53 @@ export default function Imports({
                 </p>
                 <div className="actions wrap">
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setReviewDrafts((current) => ({
+                        ...current,
+                        ...Object.fromEntries(
+                          job.rows.map((r: any) => [
+                            r.id,
+                            { ...current[r.id], decision: "SKIP" },
+                          ]),
+                        ),
+                      }));
                       setJob({
                         ...job,
                         rows: job.rows.map((r: any) => ({
                           ...r,
                           decision: "SKIP",
                         })),
-                      })
-                    }
+                      });
+                    }}
                   >
-                    {t("Skip all", "تخطي الكل")}
+                    {t("Skip visible rows", "تخطي الصفوف الظاهرة")}
                   </button>
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setReviewDrafts((current) => ({
+                        ...current,
+                        ...Object.fromEntries(
+                          job.rows.map((r: any) => [
+                            r.id,
+                            {
+                              ...current[r.id],
+                              decision: r.errors.length ? "SKIP" : "UPDATE",
+                            },
+                          ]),
+                        ),
+                      }));
                       setJob({
                         ...job,
                         rows: job.rows.map((r: any) => ({
                           ...r,
                           decision: r.errors.length ? "SKIP" : "UPDATE",
                         })),
-                      })
-                    }
+                      });
+                    }}
                   >
                     {t(
-                      "Select valid rows for update",
-                      "تحديد الصفوف الصالحة للتحديث",
+                      "Select valid visible rows",
+                      "تحديد الصفوف الصالحة الظاهرة",
                     )}
                   </button>
                 </div>
@@ -774,7 +851,7 @@ export default function Imports({
                   importId={job.id}
                   actionBusy={actionBusy}
                   onAction={onAction}
-                  onApplied={() => open(job.id)}
+                  onApplied={() => loadJobPage(job.id, page, guidedGroupColumn)}
                 />
               </>
             )}
@@ -790,7 +867,7 @@ export default function Imports({
                   </tr>
                 </thead>
                 <tbody>
-                  {job.rows.slice(page * 50, page * 50 + 50).map((r: any) => (
+                  {job.rows.map((r: any) => (
                     <tr key={r.id}>
                       <td>{r.row_number}</td>
                       <td>
@@ -881,16 +958,19 @@ export default function Imports({
                         <select
                           disabled={job.status !== "AWAITING_REVIEW"}
                           value={r.decision}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const decision = e.target.value;
+                            setReviewDrafts((current) => ({
+                              ...current,
+                              [r.id]: { ...current[r.id], decision },
+                            }));
                             setJob({
                               ...job,
-                              rows: job.rows.map((x: any, n: number) =>
-                                x.id === r.id
-                                  ? { ...x, decision: e.target.value }
-                                  : x,
+                              rows: job.rows.map((x: any) =>
+                                x.id === r.id ? { ...x, decision } : x,
                               ),
-                            })
-                          }
+                            });
+                          }}
                         >
                           {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => (
                             <option key={d}>{d}</option>
@@ -903,16 +983,19 @@ export default function Imports({
                           disabled={job.status !== "AWAITING_REVIEW"}
                           checked={r.verified}
                           aria-label={"Verify row " + r.row_number}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const verified = e.target.checked;
+                            setReviewDrafts((current) => ({
+                              ...current,
+                              [r.id]: { ...current[r.id], verified },
+                            }));
                             setJob({
                               ...job,
-                              rows: job.rows.map((x: any, n: number) =>
-                                x.id === r.id
-                                  ? { ...x, verified: e.target.checked }
-                                  : x,
+                              rows: job.rows.map((x: any) =>
+                                x.id === r.id ? { ...x, verified } : x,
                               ),
-                            })
-                          }
+                            });
+                          }}
                         />
                       </td>
                     </tr>
@@ -924,17 +1007,26 @@ export default function Imports({
               <div className="actions footer-actions">
                 <button
                   disabled={page === 0 || busy || actionBusy}
-                  onClick={() => setPage(page - 1)}
+                  onClick={() =>
+                    run(async () => {
+                      await loadJobPage(job.id, page - 1, guidedGroupColumn);
+                      if (confirmation) await loadConfirmation(job.id, page - 1);
+                    })
+                  }
                 >
                   Previous
                 </button>
                 <span>
-                  Page {page + 1} /{" "}
-                  {Math.max(1, Math.ceil(job.rows.length / 50))}
+                  Page {(job.page ?? page) + 1} / {job.totalPages ?? 1}
                 </span>
                 <button
-                  disabled={(page + 1) * 50 >= job.rows.length || busy || actionBusy}
-                  onClick={() => setPage(page + 1)}
+                  disabled={!job.hasMore || busy || actionBusy}
+                  onClick={() =>
+                    run(async () => {
+                      await loadJobPage(job.id, page + 1, guidedGroupColumn);
+                      if (confirmation) await loadConfirmation(job.id, page + 1);
+                    })
+                  }
                 >
                   Next
                 </button>
@@ -961,6 +1053,7 @@ export default function Imports({
                         ),
                       },
                       async () => {
+                        const currentRowIds = new Set(job.rows.map((r: any) => r.id));
                         await api("imports/" + job.id + "/review", "POST", {
                           rows: job.rows.map((r: any) => ({
                             id: r.id,
@@ -968,7 +1061,14 @@ export default function Imports({
                             verified: r.verified,
                           })),
                         });
-                        await open(job.id);
+                        setReviewDrafts((current) =>
+                          Object.fromEntries(
+                            Object.entries(current).filter(
+                              ([id]) => !currentRowIds.has(id),
+                            ),
+                          ),
+                        );
+                        await loadJobPage(job.id, page, guidedGroupColumn);
                         await load();
                       },
                     )
@@ -1022,17 +1122,7 @@ export default function Imports({
                 </button>
                 <button
                   disabled={busy || actionBusy}
-                  onClick={() =>
-                    run(async () =>
-                      setConfirmation(
-                        await api(
-                          "imports/" + job.id + "/preview-confirmation",
-                          "POST",
-                          {},
-                        ),
-                      ),
-                    )
-                  }
+                  onClick={() => run(async () => await loadConfirmation(job.id, page))}
                 >
                   Preview saved prices / معاينة الأسعار المحفوظة
                 </button>
@@ -1051,9 +1141,7 @@ export default function Imports({
                     </tr>
                   </thead>
                   <tbody>
-                    {confirmation.items
-                      .slice(page * 50, page * 50 + 50)
-                      .map((r: any) => (
+                    {confirmation.items.map((r: any) => (
                         <tr key={r.id}>
                           <td>{r.proposed?.partNumber}</td>
                           <td>
@@ -1186,7 +1274,12 @@ export default function Imports({
                   ],
                 });
                 setEditing(null);
-                await open(job.id);
+                setReviewDrafts((current) => {
+                  const next = { ...current };
+                  delete next[editing.id];
+                  return next;
+                });
+                await loadJobPage(job.id, page, guidedGroupColumn);
                 await load();
               },
             );

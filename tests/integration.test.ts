@@ -378,6 +378,41 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       }),
     ],
   );
+  await t.test("Import detail API pages rows and reports totals", async () => {
+    const pagedImportId = randomUUID();
+    await db.query(
+      "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id,summary) VALUES($1,'paged.csv','/nonexistent','EXCEL','AWAITING_REVIEW',$2,$3)",
+      [
+        pagedImportId,
+        adminId,
+        json({ rows: 120, columns: ["CODE", "DESC", "Activity"] }),
+      ],
+    );
+    for (let i = 0; i < 120; i++)
+      await db.query(
+        "INSERT INTO import_rows(id,job_id,row_number,raw,decision,verified,errors) VALUES($1,$2,$3,$4,'REVIEW',false,'[]'::jsonb)",
+        [
+          randomUUID(),
+          pagedImportId,
+          i + 1,
+          json({
+            CODE: `ROW-${i + 1}`,
+            DESC: `Description ${i + 1}`,
+            Activity: i % 2 === 0 ? "PPCCB" : "LIGHTING",
+          }),
+        ],
+      );
+    const pageTwo = (
+      await request("imports/" + pagedImportId + "?page=1&pageSize=50")
+    ).data;
+    assert.equal(pageTwo.totalRows, 120);
+    assert.equal(pageTwo.totalPages, 3);
+    assert.equal(pageTwo.page, 1);
+    assert.equal(pageTwo.rows.length, 50);
+    assert.equal(pageTwo.rows[0].row_number, 51);
+    assert.deepEqual(pageTwo.groupValues, ["LIGHTING", "PPCCB"]);
+    assert.equal(pageTwo.reviewStats.unverifiedRows, 120);
+  });
   await t.test(
     "Import cannot publish until mapped, reviewed, and verified",
     async () => {

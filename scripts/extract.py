@@ -4,11 +4,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 source = pathlib.Path(sys.argv[1])
 max_pages = int(sys.argv[2])
+max_rows = int(sys.argv[3]) if len(sys.argv) > 3 else 50000
 rows, warnings = [], []
 
 def append(values):
-    if len(rows) >= 10000:
-        raise ValueError('Maximum 10,000 rows')
+    if len(rows) >= max_rows:
+        raise ValueError(f'Maximum {max_rows:,} rows')
     rows.append(values)
 
 if source.suffix.lower() == '.csv':
@@ -37,7 +38,7 @@ elif source.suffix.lower() == '.xls':
     import xlrd
     book = xlrd.open_workbook(str(source), on_demand=True)
     sheet = book.sheet_by_index(0)
-    if sheet.ncols>100 or sheet.nrows>10001: raise ValueError('Workbook exceeds limits')
+    if sheet.ncols>100 or sheet.nrows>(max_rows + 1): raise ValueError(f'Maximum {max_rows:,} rows')
     headers = [str(v or f'Column {i+1}') for i,v in enumerate(sheet.row_values(0))]
     for i in range(1,sheet.nrows): append(dict(zip(headers,map(str,sheet.row_values(i)))))
     warnings.append('Legacy XLS values may be cached formula results. Verify all prices.')

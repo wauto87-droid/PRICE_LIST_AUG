@@ -9,11 +9,12 @@ import { quotationHtml, escapeHtml } from "../pdf/template";
 import { settings } from "../admin/service";
 import { exportCatalog } from "./export";
 const exec = promisify(execFile);
+const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
 function importFailureMessage(error: Error) {
   const message = error.message || "Extraction failed";
-  if (message.includes("Maximum 10,000 rows"))
-    return "Import failed: the file has more than 10,000 rows. Split it into smaller files and upload again.";
+  if (message.includes(`Maximum ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows`))
+    return `Import failed: the file has more than ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows. Split it into smaller files and upload again.`;
   if (message.includes("Expanded workbook exceeds 100 MB"))
     return "Import failed: the Excel workbook expands beyond the 100 MB safety limit.";
   if (message.includes("Too many or duplicate column headings"))
@@ -62,12 +63,13 @@ export async function runJob(db: DB) {
           path.join(process.cwd(), "scripts", "extract.py"),
           imp.file_path,
           String(process.env.PDF_MAX_PAGES || 100),
+          String(IMPORT_MAX_ROWS),
         ],
-        { timeout: 300000, maxBuffer: 32 * 1024 * 1024, windowsHide: true },
+        { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
       );
       const extracted = JSON.parse(stdout);
-      if (!Array.isArray(extracted.rows) || extracted.rows.length > 10000)
-        throw new Error("Maximum 10,000 rows per import");
+      if (!Array.isArray(extracted.rows) || extracted.rows.length > IMPORT_MAX_ROWS)
+        throw new Error(`Maximum ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows per import`);
       await db.transaction(async (tx) => {
         await tx.query("DELETE FROM import_rows WHERE job_id=$1", [imp.id]);
         for (let i = 0; i < extracted.rows.length; i++)

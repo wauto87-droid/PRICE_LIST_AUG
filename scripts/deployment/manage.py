@@ -661,12 +661,15 @@ class Deployment:
                 pass
         return urls
 
+    def stable_upstream(self):
+        return f"127.0.0.1:{self.env['APP_PORT']}"
+
     def healthy_upstream(self):
         for url in self.app_health_urls():
             result = run(['curl', '--silent', '--fail', '--max-time', '5', url], check=False, timeout=10)
             if result.returncode == 0:
                 if f'127.0.0.1:{self.env["APP_PORT"]}' in url:
-                    return f"127.0.0.1:{self.env['APP_PORT']}"
+                    return self.stable_upstream()
                 return f'{urlsplit(url).hostname}:3000'
         raise DeployError('AMT app health endpoint did not respond on the published port or private container IP')
 
@@ -1080,7 +1083,7 @@ class Deployment:
         self.refresh_proxy()
         if not first:
             self.auto_cleanup_after_upgrade()
-        upstream = self.healthy_upstream()
+        upstream = self.stable_upstream()
         action = 'Install' if first else 'Upgrade'
         print(f'{action} complete: release {release.name} ({commit[:12]}).')
         if self.native_runtime():
@@ -1229,7 +1232,7 @@ class Deployment:
         if not target_url:
             return
         target = parse_public_url(target_url)
-        upstream = self.healthy_upstream()
+        upstream = self.stable_upstream()
         self.stage(f'Refresh Caddy proxy upstream to {upstream}')
         created_site = self._apply_caddy(target, upstream)
         atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
@@ -1245,7 +1248,7 @@ class Deployment:
             addresses = {item[4][0] for item in socket.getaddrinfo(target['host'], 443, type=socket.SOCK_STREAM)}
             require('76.13.244.160' in addresses, 'Domain DNS does not point to this VPS IPv4 address')
         path, original, mode = self._caddy_context()
-        upstream = self.healthy_upstream()
+        upstream = self.stable_upstream()
         candidate, created_site = caddy_candidate(original, target, upstream)
         if dry_run:
             with tempfile.NamedTemporaryFile('w', prefix='amt-caddy-', suffix='.tmp', delete=False) as temp:
@@ -1271,7 +1274,7 @@ class Deployment:
             else:
                 self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
             self.healthy()
-            created_site = self._apply_caddy(target, self.healthy_upstream())
+            created_site = self._apply_caddy(target, self.stable_upstream())
             atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
                                                                'updatedAt': dt.datetime.now(dt.timezone.utc).isoformat()}))
             self.event('PUBLIC_URL_CHANGED', url=target['url'])

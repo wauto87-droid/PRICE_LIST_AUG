@@ -928,13 +928,13 @@ www.softwaresolver.online {
             old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
             caddy_file.write_text(old_caddy)
             d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
-            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d.stable_upstream = Mock(return_value='127.0.0.1:18180')
             d._http_status = Mock(return_value=('200', 0))
             d.event = Mock()
             with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run', return_value=result()) as run:
                 d.refresh_proxy()
             updated_caddy = caddy_file.read_text()
-            self.assertIn('reverse_proxy 10.89.4.148:3000', updated_caddy)
+            self.assertIn('reverse_proxy 127.0.0.1:18180', updated_caddy)
             self.assertNotIn('reverse_proxy 10.89.4.147:3000', updated_caddy)
             self.assertIn('reverse_proxy localhost:3000', updated_caddy)
             self.assertIn('reverse_proxy localhost:3007', updated_caddy)
@@ -942,8 +942,8 @@ www.softwaresolver.online {
             self.assertEqual(len(reloads), 1)
             self.assertEqual(reloads[0], ['systemctl', 'reload', 'caddy'])
             saved = json.loads((d.state / 'public-url.json').read_text())
-            self.assertEqual(saved['upstream'], '10.89.4.148:3000')
-            d.event.assert_called_once_with('PROXY_REFRESHED', url='https://softwaresolver.online/amt_price_list', upstream='10.89.4.148:3000')
+            self.assertEqual(saved['upstream'], '127.0.0.1:18180')
+            d.event.assert_called_once_with('PROXY_REFRESHED', url='https://softwaresolver.online/amt_price_list', upstream='127.0.0.1:18180')
 
     def test_refresh_proxy_skips_when_caddy_or_url_absent(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -967,10 +967,10 @@ www.softwaresolver.online {
             (d.state / 'public-url.json').write_text(json.dumps({'url': 'https://softwaresolver.online/amt_price_list'}))
             caddy_file = root / 'Caddyfile'
             target = m.parse_public_url('https://softwaresolver.online/amt_price_list')
-            current_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.148:3000')
+            current_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '127.0.0.1:18180')
             caddy_file.write_text(current_caddy)
             d._caddy_context = Mock(return_value=(caddy_file, current_caddy, 0o644))
-            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d.stable_upstream = Mock(return_value='127.0.0.1:18180')
             with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run') as run:
                 d.refresh_proxy()
             run.assert_not_called()
@@ -988,7 +988,7 @@ www.softwaresolver.online {
             old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
             caddy_file.write_text(old_caddy)
             d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
-            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d.stable_upstream = Mock(return_value='127.0.0.1:18180')
             def mock_status(url):
                 if url.endswith('/'):
                     return ('200', 0)
@@ -1015,14 +1015,14 @@ www.softwaresolver.online {
             old_caddy, _ = m.caddy_candidate(self.caddy_fixture(), target, '10.89.4.147:3000')
             caddy_file.write_text(old_caddy)
             d._caddy_context = Mock(return_value=(caddy_file, old_caddy, 0o644))
-            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d.stable_upstream = Mock(return_value='127.0.0.1:18180')
             d._http_status = Mock(return_value=('200', 0))
             d.compose = Mock()
             with patch.object(m.Path, 'is_file', return_value=True), patch.object(m, 'run', return_value=result()):
                 d.refresh_proxy()
             d.compose.assert_not_called()
 
-    def test_ssh_tunnel_command_prints_healthy_upstream(self):
+    def test_ssh_tunnel_command_prints_stable_upstream(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             d = self.deployment()
@@ -1035,19 +1035,12 @@ www.softwaresolver.online {
             d.env = m.new_env(18180)
             d.envfile.write_text(m.env_text(d.env))
             d.refresh_proxy = Mock()
-            d.healthy_upstream = Mock(return_value='10.89.4.148:3000')
+            d.stable_upstream = Mock(return_value='127.0.0.1:18180')
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                upstream = d.healthy_upstream()
+                upstream = d.stable_upstream()
                 print(f"Ready: ssh -N -L {d.env['APP_PORT']}:{upstream} root@76.13.244.160")
-            self.assertIn('ssh -N -L 18180:10.89.4.148:3000 root@76.13.244.160', output.getvalue())
-
-            d.healthy_upstream.return_value = '127.0.0.1:18180'
-            output_loopback = io.StringIO()
-            with contextlib.redirect_stdout(output_loopback):
-                upstream = d.healthy_upstream()
-                print(f"Ready: ssh -N -L {d.env['APP_PORT']}:{upstream} root@76.13.244.160")
-            self.assertIn('ssh -N -L 18180:127.0.0.1:18180 root@76.13.244.160', output_loopback.getvalue())
+            self.assertIn('ssh -N -L 18180:127.0.0.1:18180 root@76.13.244.160', output.getvalue())
 
 if __name__ == '__main__':
     unittest.main()

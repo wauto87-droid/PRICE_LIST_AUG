@@ -490,26 +490,17 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         );
       if (id) {
         uuid(id);
-        if (!action && method === "GET") {
-          const job = await one(
-            db,
-            "SELECT id,filename,kind,status,mode,mapping,defaults,summary,error,version FROM import_jobs WHERE id=$1",
-            [id],
+        if (!action && method === "GET")
+          return response(
+            await imports.getImportPage(
+              db,
+              actor,
+              id,
+              z.coerce.number().int().min(0).parse(url.searchParams.get("page") ?? 0),
+              z.coerce.number().int().min(1).max(200).parse(url.searchParams.get("pageSize") ?? 50),
+              url.searchParams.get("groupColumn"),
+            ),
           );
-          assert(job, 404, "Import not found");
-          const rows = (
-            await db.query(
-              "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number LIMIT 10000",
-              [id],
-            )
-          ).rows;
-          for (const row of rows)
-            if (row.duplicate_id && auth.has(actor, "COST_VIEW"))
-              row.current = products.toInput(
-                await products.getProduct(db, row.duplicate_id),
-              );
-          return response({ ...job, rows });
-        }
         if (action === "mapping" && method === "POST")
           return response(
             await imports.mapRows(db, actor, id, await body(req)),
@@ -534,7 +525,16 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         }
         if (action === "preview-confirmation" && method === "POST")
-          return response(await imports.previewConfirmation(db, actor, id));
+          return response(
+            await imports.previewConfirmationPage(
+              db,
+              actor,
+              id,
+              String(Date.now()),
+              z.coerce.number().int().min(0).parse(url.searchParams.get("page") ?? 0),
+              z.coerce.number().int().min(1).max(200).parse(url.searchParams.get("pageSize") ?? 50),
+            ),
+          );
         if (action === "rollback" && method === "POST")
           return response(await imports.rollback(db, actor, id));
       }

@@ -35,6 +35,15 @@ const guidedImportSchema = z
     groupPresets: z.record(z.string(), guidedDiscountPresetSchema).default({}),
   })
   .strict();
+const IMPORT_PAGE_SIZE_DEFAULT = 50;
+const IMPORT_PAGE_SIZE_MAX = 200;
+const IMPORT_REVIEW_MAX_CHANGES = 1000;
+
+const normalizeImportColumn = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const inferGroupColumn = (columns: string[]) =>
+  columns.find((column) => normalizeImportColumn(column) === "activity") ?? null;
 
 function splitImportDefaults(defaults: Record<string, unknown>) {
   const { guidedImport, ...productDefaults } = defaults;
@@ -156,7 +165,121 @@ async function confirmationState(
 export async function previewConfirmation(db: DB, actor: Actor, id: string) {
   requirePermission(actor, "IMPORT_CONFIRM");
   requirePermission(actor, "COST_VIEW");
-  return confirmationState(db, actor, id, String(Date.now()));
+  return previewConfirmationPage(
+    db,
+    actor,
+    id,
+    String(Date.now()),
+    0,
+    IMPORT_PAGE_SIZE_DEFAULT,
+  );
+}
+
+export async function getImportPage(
+  db: DB,
+  actor: Actor,
+  id: string,
+  page = 0,
+  pageSize = IMPORT_PAGE_SIZE_DEFAULT,
+  groupColumn?: string | null,
+) {
+  requirePermission(actor, "COST_VIEW");
+  const job = await one(
+    db,
+    "SELECT id,filename,kind,status,mode,mapping,defaults,summary,error,version FROM import_jobs WHERE id=$1",
+    [id],
+  );
+  assert(job, 404, "Import not found");
+  const totals = await one(
+    db,
+    `SELECT
+        count(*)::int AS total_rows,
+        count(*) FILTER (WHERE NOT verified)::int AS unverified_rows,
+        count(*) FILTER (WHERE coalesce(jsonb_array_length(errors), 0) > 0)::int AS problem_rows,
+        count(*) FILTER (
+          WHERE verified AND decision='UPDATE' AND coalesce(jsonb_array_length(errors), 0) = 0
+        )::int AS ready_rows
+      FROM import_rows
+      WHERE job_id=$1`,
+    [id],
+  );
+  const totalRows = totals?.total_rows ?? 0;
+  const safePageSize = Math.min(
+    Math.max(pageSize, 1),
+    IMPORT_PAGE_SIZE_MAX,
+  );
+  const totalPages = Math.max(1, Math.ceil(totalRows / safePageSize));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const offset = safePage * safePageSize;
+  const rows = (
+    await db.query(
+      "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number LIMIT $2 OFFSET $3",
+      [id, safePageSize, offset],
+    )
+  ).rows;
+  for (const row of rows)
+    if (row.duplicate_id)
+      row.current = toInput(await getProduct(db, row.duplicate_id));
+  const columns = Array.isArray(job.summary?.columns) ? job.summary.columns : [];
+  const storedGroupColumn =
+    typeof job.defaults?.guidedImport?.groupColumn === "string"
+      ? job.defaults.guidedImport.groupColumn.trim()
+      : "";
+  const resolvedGroupColumn =
+    (groupColumn ?? "").trim() || storedGroupColumn || inferGroupColumn(columns) || "";
+  let groupValues: string[] = [];
+  if (resolvedGroupColumn) {
+    groupValues = (
+      await db.query(
+        `SELECT DISTINCT nullif(btrim(raw->>$2), '') AS value
+         FROM import_rows
+         WHERE job_id=$1 AND nullif(btrim(raw->>$2), '') IS NOT NULL
+         ORDER BY value`,
+        [id, resolvedGroupColumn],
+      )
+    ).rows.map((row) => row.value);
+  }
+  return {
+    ...job,
+    summary: { ...(job.summary || {}), rows: totalRows },
+    rows,
+    page: safePage,
+    pageSize: safePageSize,
+    totalRows,
+    totalPages,
+    hasMore: safePage + 1 < totalPages,
+    groupColumn: resolvedGroupColumn || null,
+    groupValues,
+    reviewStats: {
+      unverifiedRows: totals?.unverified_rows ?? 0,
+      problemRows: totals?.problem_rows ?? 0,
+      readyRows: totals?.ready_rows ?? 0,
+    },
+  };
+}
+
+export async function previewConfirmationPage(
+  db: DB,
+  actor: Actor,
+  id: string,
+  stamp: string,
+  page = 0,
+  pageSize = IMPORT_PAGE_SIZE_DEFAULT,
+) {
+  const { token, items } = await confirmationState(db, actor, id, stamp);
+  const safePageSize = Math.min(Math.max(pageSize, 1), IMPORT_PAGE_SIZE_MAX);
+  const totalItems = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = safePage * safePageSize;
+  return {
+    token,
+    items: items.slice(start, start + safePageSize),
+    totalItems,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+  };
 }
 export async function upload(db: DB, actor: Actor, file: File) {
   const ext = path.extname(file.name).toLowerCase();
@@ -324,7 +447,7 @@ export async function reviewRows(
             proposed: productInput.optional(),
           }),
         )
-        .max(10000),
+        .max(IMPORT_REVIEW_MAX_CHANGES),
     })
     .strict()
     .parse(input);
