@@ -524,6 +524,20 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             ),
           );
         }
+        if (action === "auto-confirm" && method === "POST") {
+          const input = z
+            .object({ version: z.number().int() })
+            .strict()
+            .parse(await body(req));
+          return response(
+            await imports.autoVerifyAndConfirmImport(
+              db,
+              actor,
+              id,
+              input.version,
+            ),
+          );
+        }
         if (action === "preview-confirmation" && method === "POST")
           return response(
             await imports.previewConfirmationPage(

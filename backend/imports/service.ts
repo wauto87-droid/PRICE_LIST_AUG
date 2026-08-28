@@ -627,6 +627,50 @@ export async function confirmImport(
     return summary;
   });
 }
+export async function autoVerifyAndConfirmImport(
+  db: DB,
+  actor: Actor,
+  id: string,
+  version: number,
+) {
+  requirePermission(actor, "IMPORT_CONFIRM");
+  requirePermission(actor, "PRODUCT_EDIT");
+  return db.transaction(async (tx) => {
+    const job = await one(
+      tx,
+      "SELECT * FROM import_jobs WHERE id=$1 FOR UPDATE",
+      [id],
+    );
+    assert(job, 404, "Import not found");
+    if (job.status === "IMPORTED") return { ok: true, alreadyImported: true };
+    assert(
+      job.status === "AWAITING_REVIEW" && job.version === version,
+      409,
+      "Import changed or is not awaiting review",
+    );
+    if (job.mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
+
+    await tx.query(
+      `UPDATE import_rows 
+       SET decision = 'UPDATE', verified = true 
+       WHERE job_id = $1 AND (errors IS NULL OR coalesce(jsonb_array_length(errors), 0) = 0)`,
+      [id],
+    );
+    await tx.query(
+      `UPDATE import_rows 
+       SET decision = 'SKIP', verified = false 
+       WHERE job_id = $1 AND errors IS NOT NULL AND coalesce(jsonb_array_length(errors), 0) > 0`,
+      [id],
+    );
+
+    await tx.query(
+      "UPDATE import_jobs SET version = version + 1 WHERE id = $1",
+      [id],
+    );
+
+    return confirmImport(tx, actor, id, version + 1);
+  });
+}
 export async function rollback(db: DB, actor: Actor, id: string) {
   requirePermission(actor, "IMPORT_CONFIRM");
   requirePermission(actor, "PRODUCT_EDIT");

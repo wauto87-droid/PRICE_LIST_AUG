@@ -1019,7 +1019,7 @@ export default function Imports({
                       <td>
                         {!r.duplicate_id && r.proposed?.partNumber && (
                           <span className="pill warning">
-                            {t("UNKNOWN ITEM", "صنف غير موجود")}
+                            {t("New Product (Will be created)", "منتج جديد (سيتم إنشاؤه)")}
                             {job.mode === "UPDATE_ONLY"
                               ? " · Update blocked"
                               : ""}
@@ -1032,7 +1032,7 @@ export default function Imports({
                         )}
                         {r.duplicate_id && (
                           <span className="pill">
-                            {t("EXISTING MATCH", "صنف موجود")}
+                            {t("Existing Product (Will be updated)", "منتج موجود (سيتم تحديثه)")}
                           </span>
                         )}
                         <small className="error-text">
@@ -1057,9 +1057,16 @@ export default function Imports({
                             });
                           }}
                         >
-                          {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => (
-                            <option key={d}>{d}</option>
-                          ))}
+                          {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => {
+                            let label = d;
+                            if (d === "REVIEW") label = t("Needs review", "بحاجة لمراجعة");
+                            if (d === "KEEP") label = t("Keep existing", "إبقاء الحالي");
+                            if (d === "UPDATE") label = t("Import changes", "استيراد التغييرات");
+                            if (d === "SKIP") label = t("Ignore / Skip", "تجاهل / تخطي");
+                            return (
+                              <option key={d} value={d}>{label}</option>
+                            );
+                          })}
                         </select>
                       </td>
                       <td>
@@ -1163,6 +1170,39 @@ export default function Imports({
                 </button>
                 <button
                   className="primary"
+                  style={{ backgroundColor: "#2e7d32", color: "#fff", borderColor: "#2e7d32" }}
+                  disabled={busy || actionBusy}
+                  onClick={() => {
+                    if (
+                      confirm(
+                        t(
+                          "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
+                          "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
+                        )
+                      )
+                    ) {
+                      onAction(
+                        {
+                          saving: t("Auto-importing valid rows…", "جارٍ الاستيراد التلقائي للصفوف الصالحة…"),
+                          success: t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
+                          successDetail: t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
+                          error: t("Auto-import failed", "فشل الاستيراد التلقائي"),
+                        },
+                        async () => {
+                          await api("imports/" + job.id + "/auto-confirm", "POST", {
+                            version: job.version,
+                          });
+                          await open(job.id);
+                          await load();
+                        }
+                      );
+                    }
+                  }}
+                >
+                  {t("⚡ Auto-Approve & Import", "⚡ الموافقة التلقائية والاستيراد")}
+                </button>
+                <button
+                  className="primary"
                   disabled={busy || actionBusy || !confirmation}
                   onClick={() => {
                     if (
@@ -1230,8 +1270,14 @@ export default function Imports({
                         <tr key={r.id}>
                           <td>{r.proposed?.partNumber}</td>
                           <td>
-                            {r.decision} ·{" "}
-                            {r.verified ? "Verified" : "Not verified"}
+                            {r.decision === "UPDATE"
+                              ? t("Import changes", "استيراد التغييرات")
+                              : r.decision === "SKIP"
+                              ? t("Ignore / Skip", "تجاهل / تخطي")
+                              : r.decision === "KEEP"
+                              ? t("Keep existing", "إبقاء الحالي")
+                              : r.decision} ·{" "}
+                            {r.verified ? t("Verified", "تم التحقق") : t("Not verified", "لم يتم التحقق")}
                           </td>
                           <td>
                             {r.differences.map((d: any) => (
