@@ -43,6 +43,39 @@ const sections = [
   ["backups", "Backups", "النسخ الاحتياطية", "BACKUP_MANAGE"],
   ["settings", "Settings", "الإعدادات", "SETTINGS_MANAGE"],
 ];
+const importActionErrors = new Set([
+  "Import could not be uploaded",
+  "Import mapping could not be saved",
+  "Review decisions could not be saved",
+  "Auto-import failed",
+  "Import could not be confirmed",
+  "Import rollback failed",
+]);
+function formatImportActionError(rawMessage: string, t: Translate) {
+  if (/Please correct the highlighted values/i.test(rawMessage))
+    return t(
+      "Please correct the highlighted import values. Check the mapped columns, defaults, and selected import before trying again.",
+      "يرجى تصحيح قيم الاستيراد المظللة. تحقق من ربط الأعمدة والقيم الافتراضية والاستيراد المحدد ثم حاول مرة أخرى.",
+    );
+  if (/Map at least one column/i.test(rawMessage) || /Map the part number column/i.test(rawMessage))
+    return rawMessage;
+  if (/Import changed or is not awaiting review/i.test(rawMessage) || /Import changed\. Reload/i.test(rawMessage))
+    return t(
+      "This import changed while you were reviewing it. Refresh the import, review the latest rows, then try again.",
+      "تم تغيير هذا الاستيراد أثناء مراجعته. حدّث الاستيراد وراجع أحدث الصفوف ثم حاول مرة أخرى.",
+    );
+  if (/Row \d+ must be verified/i.test(rawMessage))
+    return t(
+      "Some rows still need verification before they can be imported. Review the highlighted rows and save the decisions first.",
+      "لا تزال بعض الصفوف تحتاج إلى تحقق قبل استيرادها. راجع الصفوف المظللة واحفظ القرارات أولاً.",
+    );
+  if (/Row \d+ contains errors/i.test(rawMessage))
+    return t(
+      "Some rows still contain import errors. Fix or skip those rows, save the review, then try importing again.",
+      "لا تزال بعض الصفوف تحتوي على أخطاء استيراد. صحح هذه الصفوف أو تخطاها ثم احفظ المراجعة وحاول الاستيراد مرة أخرى.",
+    );
+  return rawMessage;
+}
 export default function Admin({ t, user }: { t: Translate; user: any }) {
   const [section, setSection] = useState("dashboard"),
     [result, setResult] = useState<AdminResult>(null),
@@ -211,6 +244,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         message:
           messages.error === t("Products could not be deleted", "تعذر حذف الأصناف")
             ? formatBulkDeleteError(rawMessage, t)
+            : importActionErrors.has(messages.error)
+              ? formatImportActionError(rawMessage, t)
             : rawMessage,
       });
       return undefined;

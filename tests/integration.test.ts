@@ -256,13 +256,18 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     async () => {
       const q = (
         await request("quotations", "POST", {
-          customer: { name: "Customer" },
+          customer: { name: "Customer", notes: "Call before delivery" },
           lines: [line],
         })
       ).data;
       quoteId = q.id;
       assert.equal(q.lines[0].price.finalExcl, "110.00");
       assert.equal(q.lines[0].price.maxDiscount, undefined);
+      assert.equal(q.customer.notes, "Call before delivery");
+      assert.equal(
+        (await request("quotations/" + quoteId)).data.customer.notes,
+        "Call before delivery",
+      );
       await request(
         "quotations/" + quoteId,
         "PUT",
@@ -703,6 +708,105 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     const archived = (await request("products?q=BULK-LARGE")).data;
     assert(archived.items.every((item: any) => item.active === false));
   });
+  await t.test(
+    "Import mapping accepts integer-like versions and reports targeted validation details",
+    async () => {
+      const iid = randomUUID();
+      await db.query(
+        "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id) VALUES($1,'mapping.csv','/none','EXCEL','AWAITING_REVIEW',$2)",
+        [iid, adminId],
+      );
+      await db.query(
+        "INSERT INTO import_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3)",
+        [
+          randomUUID(),
+          iid,
+          json({ CODE: "MAP-STRING-VERSION", DESC: "Mapped row", COST: "50" }),
+        ],
+      );
+      await request("imports/" + iid + "/mapping", "POST", {
+        mapping: { partNumber: "CODE", description: "DESC", cost: "COST" },
+        defaults: { method: "COST_MARKUP", markup: "25" },
+        version: "1",
+      });
+      const mapped = (await request("imports/" + iid)).data;
+      assert.equal(mapped.rows[0].proposed.partNumber, "MAP-STRING-VERSION");
+      const invalid = await request(
+        "imports/" + iid + "/mapping",
+        "POST",
+        {
+          mapping: { description: "DESC" },
+          defaults: { method: "COST_MARKUP", markup: "25" },
+          version: 2,
+        },
+        400,
+      );
+      assert.equal(
+        invalid.data.error,
+        "Map the part number column before validating the import",
+      );
+      const malformed = await request(
+        "imports/" + iid + "/mapping",
+        "POST",
+        {
+          mapping: { partNumber: "CODE" },
+          defaults: { method: "COST_MARKUP", markup: "25" },
+          version: "not-a-number",
+        },
+        400,
+      );
+      assert.equal(malformed.data.error, "Please correct the highlighted values");
+      assert(
+        malformed.data.details.some(
+          (detail: any) =>
+            detail.path?.join(".") === "version" &&
+            /number|nan|whole number/i.test(detail.message),
+        ),
+        JSON.stringify(malformed.data.details),
+      );
+    },
+  );
+  await t.test(
+    "Auto-import accepts integer-like versions and skips invalid rows",
+    async () => {
+      const iid = randomUUID();
+      await db.query(
+        "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id,mode) VALUES($1,'auto.csv','/none','EXCEL','AWAITING_REVIEW',$2,'CREATE_UPDATE')",
+        [iid, adminId],
+      );
+      const validId = randomUUID();
+      const invalidId = randomUUID();
+      await db.query(
+        "INSERT INTO import_rows(id,job_id,row_number,raw,proposed,errors,decision,verified,duplicate_id,expected_version) VALUES($1,$2,1,$3,$4,'[]'::jsonb,'REVIEW',false,null,null)",
+        [
+          validId,
+          iid,
+          json({ CODE: "AUTO-IMPORT-OK" }),
+          json({
+            ...base,
+            partNumber: "AUTO-IMPORT-OK",
+            aliases: [],
+          }),
+        ],
+      );
+      await db.query(
+        "INSERT INTO import_rows(id,job_id,row_number,raw,proposed,errors,decision,verified,duplicate_id,expected_version) VALUES($1,$2,2,$3,$4,$5,'REVIEW',false,null,null)",
+        [
+          invalidId,
+          iid,
+          json({ CODE: "" }),
+          json({ description: "Broken row" }),
+          json(["partNumber: Invalid input"]),
+        ],
+      );
+      await request("imports/" + iid + "/auto-confirm", "POST", {
+        version: "1",
+      });
+      const imported = (await request("imports/" + iid)).data;
+      assert.equal(imported.status, "IMPORTED");
+      assert.equal((await request("products?q=AUTO-IMPORT-OK")).data.items.length, 1);
+    },
+  );
   await t.test(
     "Import detects duplicates within the file atomically",
     async () => {

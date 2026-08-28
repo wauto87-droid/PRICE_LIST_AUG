@@ -10,7 +10,7 @@ import ConfirmModal from "@/frontend/ConfirmModal";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
-  customer: { name: "", number: "", mobile: "", reference: "" },
+  customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
   lines: [] as any[],
 });
 export default function App() {
@@ -203,7 +203,7 @@ export default function App() {
       customer: q.customer,
       lines: q.lines,
     });
-    setTab("workspace");
+    setTab("draft");
   }
   return (
     <>
@@ -406,6 +406,7 @@ export default function App() {
           >
             {[ 
               ["workspace", "Workspace", "مساحة العمل"],
+              ["draft", "Draft", "المسودة"],
               ["quotations", "Quotations", "العروض"],
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [["admin", "Admin", "الإدارة"]]
@@ -417,7 +418,7 @@ export default function App() {
                 onClick={() => setTab(key)}
               >
                 {t(en, ar)}
-                {key === "workspace" && !!cart.lines.length && (
+                {key === "draft" && !!cart.lines.length && (
                   <span className="count">{cart.lines.length}</span>
                 )}
               </button>
@@ -434,7 +435,9 @@ export default function App() {
                 </p>
                 <h1>
                   {tab === "workspace"
-                    ? t("Catalog and quotation workspace", "مساحة الكتالوج وعرض السعر")
+                    ? t("Catalog workspace", "مساحة الكتالوج")
+                    : tab === "draft"
+                      ? t("Draft quotation", "مسودة عرض السعر")
                     : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
@@ -445,31 +448,22 @@ export default function App() {
               </span>
             </div>
             {tab === "workspace" && (
-              <div className="workspace-layout">
+              <div className="workspace-search-only">
                 <Lookup
                   t={t}
                   user={session.user}
                   settings={session.settings}
                   online={online}
-                  showAside={false}
+                  showAside
                   onAdd={(line) => {
                     setCart({ ...cart, lines: [...cart.lines, line] });
                     setMessage(t("Added to quotation", "تمت الإضافة إلى عرض السعر"));
                   }}
                 />
-                <div className="workspace-side">
-                  <div className="card workspace-helper">
-                    <div className="eyebrow">
-                      {t("ONE PLACE", "كل شيء في مكان واحد")}
-                    </div>
-                    <h2>{t("Search, price, and save the draft here.", "ابحث وسعّر واحفظ المسودة هنا.")}</h2>
-                    <p>
-                      {t(
-                        "Use the catalog on the left for all categories. The quotation updates on the right without changing screens.",
-                        "استخدم الكتالوج على اليسار لكل الفئات. ويتم تحديث عرض السعر على اليمين دون تغيير الشاشة.",
-                      )}
-                    </p>
-                  </div>
+              </div>
+            )}
+            {tab === "draft" && (
+              <div className="workspace-side">
                 <Cart
                   t={t}
                   cart={cart}
@@ -503,7 +497,6 @@ export default function App() {
                   <button onClick={() => setTab("quotations")}>
                     {t("Open quotations", "فتح العروض")}
                   </button>
-                </div>
                 </div>
               </div>
             )}

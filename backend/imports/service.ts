@@ -38,6 +38,20 @@ const guidedImportSchema = z
 const IMPORT_PAGE_SIZE_DEFAULT = 50;
 const IMPORT_PAGE_SIZE_MAX = 200;
 const IMPORT_REVIEW_MAX_CHANGES = 1000;
+const importVersionSchema = z.coerce
+  .number()
+  .int("Version must be a whole number");
+const importDefaultsSchema = z
+  .union([z.record(z.string(), z.unknown()), z.null(), z.undefined()])
+  .transform((value) => value ?? {});
+const importMappingRequestSchema = z
+  .object({
+    mapping: z.record(z.string(), z.string()),
+    defaults: importDefaultsSchema,
+    version: importVersionSchema,
+    mode: z.enum(["UPDATE_ONLY", "CREATE_UPDATE"]).optional(),
+  })
+  .strict();
 
 const normalizeImportColumn = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -331,15 +345,22 @@ export async function mapRows(
   input: unknown,
 ) {
   requirePermission(actor, "IMPORT_CONFIRM");
-  const data = z
-    .object({
-      mapping: z.record(z.string(), z.string()),
-      defaults: z.record(z.string(), z.unknown()),
-      version: z.number().int(),
-      mode: z.enum(["UPDATE_ONLY", "CREATE_UPDATE"]).optional(),
-    })
-    .strict()
-    .parse(input);
+  const parsed = importMappingRequestSchema.parse(input);
+  const mapping = Object.fromEntries(
+    Object.entries(parsed.mapping).flatMap(([field, column]) => {
+      const normalizedField = field.trim();
+      const normalizedColumn = column.trim();
+      return normalizedField && normalizedColumn
+        ? [[normalizedField, normalizedColumn]]
+        : [];
+    }),
+  );
+  assert(Object.keys(mapping).length > 0, 400, "Map at least one column before validating");
+  assert(mapping.partNumber, 400, "Map the part number column before validating the import");
+  const data = {
+    ...parsed,
+    mapping,
+  };
   return db.transaction(async (tx) => {
     const job = await one(
       tx,

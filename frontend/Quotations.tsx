@@ -218,6 +218,12 @@ export default function Quotations({
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}
             </p>
+            {selected.customer.notes && (
+              <div className="notice">
+                <strong>{t("Notes", "ملاحظات")}</strong>
+                <div>{selected.customer.notes}</div>
+              </div>
+            )}
             {selected.lines.map((l: any, i: number) => (
               <div className="quote-line" key={i}>
                 <span>

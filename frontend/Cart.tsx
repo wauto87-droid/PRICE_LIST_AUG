@@ -103,6 +103,12 @@ export default function Cart({
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
           <h2>{cart.number || t("New draft", "مسودة جديدة")}</h2>
+          <p className="muted cart-subtitle">
+            {t(
+              "Review customer details, add internal notes, and save the draft when ready.",
+              "راجع بيانات العميل وأضف الملاحظات واحفظ المسودة عندما تصبح جاهزة.",
+            )}
+          </p>
         </div>
         <span className="pill">
           {cart.lines.length} {t("items", "أصناف")}
@@ -133,6 +139,23 @@ export default function Cart({
             />
           </label>
         ))}
+        <label className="cart-notes">
+          {t("Notes", "ملاحظات")}
+          <textarea
+            rows={4}
+            value={cart.customer.notes || ""}
+            onChange={(e) =>
+              setCart({
+                ...cart,
+                customer: { ...cart.customer, notes: e.target.value },
+              })
+            }
+            placeholder={t(
+              "Staff notes, customer requests, delivery details, or any extra quotation context.",
+              "ملاحظات الموظف أو طلبات العميل أو تفاصيل التسليم أو أي تفاصيل إضافية لعرض السعر.",
+            )}
+          />
+        </label>
       </div>
       {!cart.lines.length ? (
         <div className="empty-state">

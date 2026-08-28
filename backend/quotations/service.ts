@@ -23,6 +23,7 @@ export const quoteInput = z
         number: z.string().max(80).default(""),
         mobile: z.string().max(50).default(""),
         reference: z.string().max(200).default(""),
+        notes: z.string().max(1000).default(""),
       })
       .strict(),
     lines: z.array(lineInput).min(1).max(200),

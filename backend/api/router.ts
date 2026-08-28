@@ -524,7 +524,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         if (action === "confirm" && method === "POST") {
           const input = z
-            .object({ version: z.number().int(), token: z.string().min(1) })
+            .object({
+              version: z.coerce.number().int(),
+              token: z.string().min(1),
+            })
             .strict()
             .parse(await body(req));
           return response(
@@ -539,7 +542,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         }
         if (action === "auto-confirm" && method === "POST") {
           const input = z
-            .object({ version: z.number().int() })
+            .object({ version: z.coerce.number().int() })
             .strict()
             .parse(await body(req));
           return response(
