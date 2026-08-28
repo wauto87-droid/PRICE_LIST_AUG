@@ -165,7 +165,68 @@ export default function Imports({
     >({}),
     [editing, setEditing] = useState<any>(null),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [linkDiscounts, setLinkDiscounts] = useState(true),
+    [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false);
+
+  const updateDefaultPreset = (field: keyof DiscountPreset, value: string) => {
+    setGuidedDefaultPreset((prev) => {
+      if (linkDiscounts && field === "finalDiscount") {
+        return {
+          finalDiscount: value,
+          wholesaleDiscount: value,
+          minimumDiscount: value,
+        };
+      }
+      return {
+        ...prev,
+        [field]: value,
+      };
+    });
+  };
+
+  const updateGroupPreset = (groupValue: string, field: keyof DiscountPreset, value: string) => {
+    setGuidedGroupPresets((prev) => {
+      const preset = prev[groupValue] || defaultDiscountPreset();
+      const updated = linkDiscounts && field === "finalDiscount"
+        ? {
+            finalDiscount: value,
+            wholesaleDiscount: value,
+            minimumDiscount: value,
+          }
+        : {
+            ...preset,
+            [field]: value,
+          };
+      return {
+        ...prev,
+        [groupValue]: updated,
+      };
+    });
+  };
+
+  const handleToggleLinkDiscounts = (linked: boolean) => {
+    setLinkDiscounts(linked);
+    if (linked) {
+      setGuidedDefaultPreset((prev) => ({
+        finalDiscount: prev.finalDiscount,
+        wholesaleDiscount: prev.finalDiscount,
+        minimumDiscount: prev.finalDiscount,
+      }));
+      setGuidedGroupPresets((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).map(([key, val]) => [
+            key,
+            {
+              finalDiscount: val.finalDiscount,
+              wholesaleDiscount: val.finalDiscount,
+              minimumDiscount: val.finalDiscount,
+            },
+          ]),
+        ),
+      );
+    }
+  };
   const guidedMode = importProfile !== "STANDARD";
   const supplierSimpleMode = importProfile === "SUPPLIER_SIMPLE";
   const load = () => api("imports").then(setJobs);
@@ -567,42 +628,58 @@ export default function Imports({
                           ))}
                         </select>
                       </label>
-                      <label>
-                        {t("Default final discount %", "الخصم النهائي الافتراضي %")}
-                        <input
-                          value={guidedDefaultPreset.finalDiscount}
-                          onChange={(e) =>
-                            setGuidedDefaultPreset({
-                              ...guidedDefaultPreset,
-                              finalDiscount: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        {t("Default wholesale discount %", "خصم الجملة الافتراضي %")}
-                        <input
-                          value={guidedDefaultPreset.wholesaleDiscount}
-                          onChange={(e) =>
-                            setGuidedDefaultPreset({
-                              ...guidedDefaultPreset,
-                              wholesaleDiscount: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        {t("Default minimum discount %", "الحد الأدنى الافتراضي للخصم %")}
-                        <input
-                          value={guidedDefaultPreset.minimumDiscount}
-                          onChange={(e) =>
-                            setGuidedDefaultPreset({
-                              ...guidedDefaultPreset,
-                              minimumDiscount: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
+                      <div className="field-row" style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "15px", gridColumn: "span 2" }}>
+                        <label className="check" style={{ display: "flex", alignItems: "center", gap: "6px", margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={linkDiscounts}
+                            onChange={(e) => handleToggleLinkDiscounts(e.target.checked)}
+                          />
+                          {t("Link discounts (set same wholesale & minimum floor)", "ربط الخصومات (تطبيق نفس الخصم للجملة والحد الأدنى)")}
+                        </label>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => setShowAdvancedDiscounts(!showAdvancedDiscounts)}
+                        >
+                          {showAdvancedDiscounts 
+                            ? t("Hide advanced discounts", "إخفاء الخصومات المتقدمة")
+                            : t("Show advanced discounts", "عرض الخصومات المتقدمة")}
+                        </button>
+                      </div>
+                      {!showAdvancedDiscounts ? (
+                        <label>
+                          {t("Default discount %", "الخصم الافتراضي %")}
+                          <input
+                            value={guidedDefaultPreset.finalDiscount}
+                            onChange={(e) => updateDefaultPreset("finalDiscount", e.target.value)}
+                          />
+                        </label>
+                      ) : (
+                        <>
+                          <label>
+                            {t("Default final discount %", "الخصم النهائي الافتراضي %")}
+                            <input
+                              value={guidedDefaultPreset.finalDiscount}
+                              onChange={(e) => updateDefaultPreset("finalDiscount", e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            {t("Default wholesale discount %", "خصم الجملة الافتراضي %")}
+                            <input
+                              value={guidedDefaultPreset.wholesaleDiscount}
+                              onChange={(e) => updateDefaultPreset("wholesaleDiscount", e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            {t("Default minimum discount %", "الحد الأدنى الافتراضي للخصم %")}
+                            <input
+                              value={guidedDefaultPreset.minimumDiscount}
+                              onChange={(e) => updateDefaultPreset("minimumDiscount", e.target.value)}
+                            />
+                          </label>
+                        </>
+                      )}
                       <label>
                         {t("VAT %", "نسبة الضريبة %")}
                         <input
@@ -693,9 +770,17 @@ export default function Imports({
                             <thead>
                               <tr>
                                 <th>{t("Activity", "النشاط")}</th>
-                                <th>{t("Final discount %", "الخصم النهائي %")}</th>
-                                <th>{t("Wholesale discount %", "خصم الجملة %")}</th>
-                                <th>{t("Minimum discount %", "الحد الأدنى للخصم %")}</th>
+                                <th>
+                                  {showAdvancedDiscounts 
+                                    ? t("Final discount %", "الخصم النهائي %") 
+                                    : t("Discount %", "الخصم %")}
+                                </th>
+                                {showAdvancedDiscounts && (
+                                  <>
+                                    <th>{t("Wholesale discount %", "خصم الجملة %")}</th>
+                                    <th>{t("Minimum discount %", "الحد الأدنى للخصم %")}</th>
+                                  </>
+                                )}
                                 <th>{t("Preview", "معاينة")}</th>
                               </tr>
                             </thead>
@@ -705,28 +790,28 @@ export default function Imports({
                                 return (
                                   <tr key={groupValue}>
                                     <td>{groupValue}</td>
-                                    {(
-                                      [
-                                        "finalDiscount",
-                                        "wholesaleDiscount",
-                                        "minimumDiscount",
-                                      ] as const
-                                    ).map((field) => (
-                                      <td key={field}>
-                                        <input
-                                          value={preset[field]}
-                                          onChange={(e) =>
-                                            setGuidedGroupPresets({
-                                              ...guidedGroupPresets,
-                                              [groupValue]: {
-                                                ...preset,
-                                                [field]: e.target.value,
-                                              },
-                                            })
-                                          }
-                                        />
-                                      </td>
-                                    ))}
+                                    <td>
+                                      <input
+                                        value={preset.finalDiscount}
+                                        onChange={(e) => updateGroupPreset(groupValue, "finalDiscount", e.target.value)}
+                                      />
+                                    </td>
+                                    {showAdvancedDiscounts && (
+                                      <>
+                                        <td>
+                                          <input
+                                            value={preset.wholesaleDiscount}
+                                            onChange={(e) => updateGroupPreset(groupValue, "wholesaleDiscount", e.target.value)}
+                                          />
+                                        </td>
+                                        <td>
+                                          <input
+                                            value={preset.minimumDiscount}
+                                            onChange={(e) => updateGroupPreset(groupValue, "minimumDiscount", e.target.value)}
+                                          />
+                                        </td>
+                                      </>
+                                    )}
                                     <td>
                                       {t("Final", "النهائي")}: {previewPrice(preset.finalDiscount)}
                                       {" · "}
