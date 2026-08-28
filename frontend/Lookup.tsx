@@ -249,7 +249,7 @@ export default function Lookup({
         .toFixed(2)
     : "0.00";
   return (
-    <div className={"lookup-layout" + (showAside ? "" : " compact")}>
+    <div className={"lookup-layout" + (showAside ? "" : " lookup-compact")}>
       <section className="card lookup-card">
         <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
         <label className="search-box">

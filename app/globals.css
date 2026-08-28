@@ -318,7 +318,7 @@ h3 {
   grid-template-columns: minmax(0, 800px) 1fr;
   gap: 40px;
 }
-.lookup-layout.compact {
+.lookup-layout.lookup-compact {
   grid-template-columns: minmax(0, 1fr);
 }
 .workspace-layout {
