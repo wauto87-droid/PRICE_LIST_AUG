@@ -248,7 +248,7 @@ class SafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(m.DeployError, 'unexpected mounts'):
             d.ownership(allow_legacy_db=True)
         d = self.ownership_fixture(self.legacy_database_container(ports={'5432/tcp': [{'HostPort': '5432'}]}))
-        with self.assertRaisesRegex(m.DeployError, 'must not publish'):
+        with self.assertRaisesRegex(m.DeployError, 'stay unpublished or bind only to loopback'):
             d.ownership(allow_legacy_db=True)
 
     def test_preflight_enables_legacy_allowance_only_for_explicit_replacement(self):
@@ -468,7 +468,7 @@ class SafetyTests(unittest.TestCase):
             d.prepare_release = Mock()
             d.initialize_volumes = Mock()
             d.wait_db = Mock()
-            d.verify_database_socket = Mock()
+            d.verify_database_runtime = Mock()
             d.verify_limits = Mock()
             d.stop = Mock()
             d.start = Mock()
@@ -718,24 +718,27 @@ www.softwaresolver.online {
         for image in ('app', 'worker', 'backup'):
             self.assertIn(f'image: localhost/amt-pricelist-{image}:', compose)
 
-    def test_runtime_database_uses_private_unix_socket(self):
+    def test_runtime_database_supports_compose_socket_and_pm2_loopback(self):
         compose = (ROOT / 'compose.yaml').read_text()
         env = m.new_env(18180)
         rendered = m.env_text(env)
         self.assertIn('?host=%2Fvar%2Frun%2Fpostgresql', rendered)
         self.assertNotIn('@db:', rendered)
+        pm2_rendered = m.env_text(m.new_env(18180, runtime='pm2'))
+        self.assertIn('@127.0.0.1:15432/', pm2_rendered)
         self.assertIn('database_socket:/var/run/postgresql', compose)
         self.assertEqual(compose.count('database_socket:/var/run/postgresql:ro'), 4)
         self.assertIn('unix_socket_permissions=0777', compose)
         self.assertIn('hba_file=/etc/postgresql/amt-pg_hba.conf', compose)
         self.assertIn('local all all scram-sha-256', (ROOT / 'docker/pg_hba.conf').read_text())
         self.assertNotRegex(compose, r'(?m)^\s*network_mode:\s*host')
-        self.assertNotRegex(compose, r'(?m)^\s*ports:.*5432')
+        self.assertIn('127.0.0.1:${DB_PORT:-15432}:5432', compose)
 
     def test_socket_precheck_requires_good_and_rejects_bad_credentials(self):
         d = self.deployment()
+        d.env = m.new_env(18180)
         d.compose = Mock(return_value=result())
-        d.verify_database_socket()
+        d.verify_database_runtime()
         args = d.compose.call_args.args
         self.assertIn('migrate', args)
         script = args[-1]
@@ -747,12 +750,13 @@ www.softwaresolver.online {
 
     def test_socket_precheck_reports_connection_and_policy_failures_separately(self):
         d = self.deployment()
+        d.env = m.new_env(18180)
         d.compose = Mock(return_value=subprocess.CompletedProcess([], 20, b'', b''))
         with self.assertRaisesRegex(m.DeployError, 'socket connection failed'):
-            d.verify_database_socket()
+            d.verify_database_runtime()
         d.compose = Mock(return_value=subprocess.CompletedProcess([], 21, b'', b''))
         with self.assertRaisesRegex(m.DeployError, 'invalid password'):
-            d.verify_database_socket()
+            d.verify_database_runtime()
 
     def replacement_guard_fixture(self, temp):
         d = self.deployment()
@@ -846,7 +850,7 @@ www.softwaresolver.online {
             d.initialize_volumes = Mock()
             d.verify_limits = Mock()
             d.wait_db = Mock()
-            d.verify_database_socket = Mock()
+            d.verify_database_runtime = Mock()
             d.stop = Mock()
             d.compose = Mock(side_effect=[result(), m.DeployError('migration failed')])
             with self.assertRaises(m.DeployError):
@@ -883,7 +887,7 @@ www.softwaresolver.online {
                 d.status()
             self.assertIn('amt-pricelist-app', output.getvalue())
             self.assertIn('Auto-start on VPS reboot: enabled. Systemd state: active.', output.getvalue())
-            d.compose.assert_called_once_with('ps')
+            self.assertEqual(d.compose.call_args_list, [unittest.mock.call('ps', 'db'), unittest.mock.call('ps')])
 
     def test_status_incomplete_installation_reports_recovery_state(self):
         with tempfile.TemporaryDirectory() as temp:

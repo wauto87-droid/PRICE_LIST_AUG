@@ -1,0 +1,11 @@
+[Unit]
+Description=AMT Price List backup timer
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=15m
+AccuracySec=1m
+Unit=amt-pricelist-backup.service
+
+[Install]
+WantedBy=timers.target

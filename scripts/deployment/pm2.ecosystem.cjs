@@ -1,0 +1,31 @@
+module.exports = {
+  apps: [
+    {
+      name: "amt-pricelist-app",
+      cwd: __dirname + "/../..",
+      script: "node_modules/next/dist/bin/next",
+      args: `start --hostname 127.0.0.1 --port ${process.env.APP_PORT || "18180"}`,
+      exec_mode: "cluster",
+      instances: Number(process.env.PM2_APP_INSTANCES || 2),
+      autorestart: true,
+      max_memory_restart: "512M",
+      kill_timeout: 60000,
+      listen_timeout: 60000,
+      time: true,
+      watch: false,
+    },
+    {
+      name: "amt-pricelist-worker",
+      cwd: __dirname + "/../..",
+      script: "node",
+      args: "node_modules/tsx/dist/cli.mjs backend/worker/main.ts",
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      max_memory_restart: "1536M",
+      kill_timeout: 60000,
+      time: true,
+      watch: false,
+    },
+  ],
+};

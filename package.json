@@ -13,6 +13,7 @@
     "migrate": "tsx scripts/migrate.ts",
     "worker": "tsx backend/worker/main.ts",
     "backup-service": "tsx scripts/backup-service.ts",
+    "loadtest": "tsx scripts/loadtest.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "icons": "tsx scripts/icons.ts"
   },

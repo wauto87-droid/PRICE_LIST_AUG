@@ -93,14 +93,14 @@ class Diagnostics:
             self.stream.close()
             self.stream = None
 
-    def command(self, args, *, data, output, timeout, check, live):
+    def command(self, args, *, data, output, timeout, check, live, env, cwd):
         started = time.monotonic()
         events = queue.Queue()
         if self.verbose:
             self.emit(f'    Starting {Path(str(args[0])).name}; timeout {timeout}s (arguments hidden)')
         process = subprocess.Popen([str(a) for a in args], stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
                                    stdout=output or subprocess.PIPE, stderr=subprocess.STDOUT if live else subprocess.PIPE,
-                                   start_new_session=os.name == 'posix')
+                                   start_new_session=os.name == 'posix', env=env, cwd=cwd)
 
         def collect():
             try:
@@ -176,8 +176,10 @@ PROJECT = 'amt-pricelist'
 DB_IMAGE = 'docker.io/library/postgres:17-bookworm'
 BASE_PATH = '/amt_price_list'
 SERVICES = ('app', 'worker', 'backup')
+PM2_PROCESSES = ('amt-pricelist-app', 'amt-pricelist-worker')
 MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
-ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR'}
+DEFAULT_DB_PORT = '15432'
+ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
 
 class DeployError(Exception):
     pass
@@ -186,14 +188,14 @@ def require(condition, message):
     if not condition:
         raise DeployError(message)
 
-def run(args, *, data=None, output=None, timeout=300, check=True, live=False):
+def run(args, *, data=None, output=None, timeout=300, check=True, live=False, env=None, cwd=None):
     # No command includes credentials. Do not echo raw stderr: engines can render env values.
     try:
         if REPORT:
             require(not live or (data is None and output is None), 'Cannot stream secret input or binary output')
-            return REPORT.command(args, data=data, output=output, timeout=timeout, check=check, live=live)
+            return REPORT.command(args, data=data, output=output, timeout=timeout, check=check, live=live, env=env, cwd=cwd)
         result = subprocess.run([str(a) for a in args], input=data, stdout=output or subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=timeout, check=False)
+                                stderr=subprocess.PIPE, timeout=timeout, check=False, env=env, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired):
         raise DeployError(f'{args[0]} failed or timed out; no credentials were logged') from None
     if check and result.returncode:
@@ -202,6 +204,18 @@ def run(args, *, data=None, output=None, timeout=300, check=True, live=False):
 
 def decoded(result):
     return (result.stdout or b'').decode('utf-8').strip()
+
+def app_runtime(values):
+    return values.get('APP_RUNTIME') or 'compose'
+
+def database_url(values):
+    if app_runtime(values) == 'pm2':
+        host = values.get('DB_HOST', '127.0.0.1')
+        port = values.get('DB_PORT', DEFAULT_DB_PORT)
+        return (f"postgresql://{values['POSTGRES_USER']}:{values['POSTGRES_PASSWORD']}@"
+                f"{host}:{port}/{values['POSTGRES_DB']}")
+    return (f"postgresql://{values['POSTGRES_USER']}:{values['POSTGRES_PASSWORD']}@/"
+            f"{values['POSTGRES_DB']}?host=%2Fvar%2Frun%2Fpostgresql")
 
 def atomic(path, data):
     path = Path(path)
@@ -242,6 +256,14 @@ def read_env(path):
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
     values.setdefault('APP_BASE_PATH', BASE_PATH)
     require(values['APP_BASE_PATH'] == BASE_PATH, 'Unexpected application base path')
+    values.setdefault('APP_RUNTIME', 'compose')
+    require(values['APP_RUNTIME'] in ('compose', 'pm2'), 'Unexpected application runtime')
+    values.setdefault('DB_HOST', '127.0.0.1')
+    require(values['DB_HOST'] in ('127.0.0.1', 'localhost'), 'Database host must stay on loopback')
+    values.setdefault('DB_PORT', DEFAULT_DB_PORT)
+    require(values['DB_PORT'].isdigit() and 1024 <= int(values['DB_PORT']) <= 65535, 'Invalid database port')
+    values.setdefault('PM2_APP_INSTANCES', '2')
+    require(values['PM2_APP_INSTANCES'].isdigit() and 1 <= int(values['PM2_APP_INSTANCES']) <= 8, 'Invalid PM2 app instance count')
     origin = values.get('APP_ORIGIN', '')
     if origin != f"http://localhost:{values['APP_PORT']}":
         parse_public_url(origin + BASE_PATH)
@@ -252,15 +274,15 @@ def read_env(path):
 
 def env_text(values):
     result = dict(values)
-    result['DATABASE_URL'] = (f"postgresql://{result['POSTGRES_USER']}:{result['POSTGRES_PASSWORD']}@/"
-                              f"{result['POSTGRES_DB']}?host=%2Fvar%2Frun%2Fpostgresql")
+    result['DATABASE_URL'] = database_url(result)
     return ''.join(f'{k}={v}\n' for k, v in sorted(result.items()))
 
-def new_env(port):
+def new_env(port, runtime='compose'):
     return dict(POSTGRES_USER='amt', POSTGRES_DB='amt_pricelist', POSTGRES_PASSWORD=secrets.token_hex(32),
                 SETUP_TOKEN=secrets.token_hex(32), APP_PORT=str(port), APP_ORIGIN=f'http://localhost:{port}',
                 APP_BASE_PATH=BASE_PATH, COOKIE_SECURE='false', PDF_MAX_PAGES='100', UPLOAD_MAX_MB='20', BACKUP_RETENTION_DAYS='14',
-                UPLOAD_DIR='/data/uploads', BACKUP_DIR='/data/backups')
+                UPLOAD_DIR='/data/uploads', BACKUP_DIR='/data/backups', APP_RUNTIME=runtime,
+                DB_HOST='127.0.0.1', DB_PORT=DEFAULT_DB_PORT, PM2_APP_INSTANCES='2')
 
 def project_label(labels):
     labels = labels or {}
@@ -422,6 +444,43 @@ class Deployment:
     def engine(self, *args, **kwargs):
         return run(['docker', *args], **kwargs)
 
+    def runtime(self):
+        if self.args.runtime:
+            return self.args.runtime
+        if self.env:
+            return app_runtime(self.env)
+        return 'pm2'
+
+    def native_runtime(self):
+        return self.runtime() == 'pm2'
+
+    def native_paths(self, release=None):
+        release = release or self.release
+        require(release is not None, 'No release selected')
+        shared = self.root / 'shared' / 'runtime'
+        return {
+            'release': release,
+            'shared': shared,
+            'python': shared / 'python',
+            'browsers': shared / 'playwright',
+            'logs': shared / 'pm2-logs',
+            'ecosystem': release / 'scripts' / 'deployment' / 'pm2.ecosystem.cjs',
+        }
+
+    def native_env(self, extra=None, release=None):
+        require(self.env is not None, 'Environment not loaded')
+        paths = self.native_paths(release)
+        env = dict(os.environ)
+        values = dict(self.env, APP_RUNTIME='pm2')
+        env.update(values)
+        env['DATABASE_URL'] = database_url(values)
+        env['PLAYWRIGHT_BROWSERS_PATH'] = str(paths['browsers'])
+        env['PYTHON_BIN'] = str(paths['python'] / 'bin' / 'python')
+        env['PM2_LOG_DIR'] = str(paths['logs'])
+        if extra:
+            env.update(extra)
+        return env
+
     def compose(self, *args, release=None, **kwargs):
         release = release or self.release
         require(release is not None, 'No release selected')
@@ -467,7 +526,10 @@ class Deployment:
                     require(len(item.get('Mounts', [])) == 1, 'Legacy database has unexpected mounts')
                 else:
                     require(len(sockets) == 1 and sockets[0].get('Name') == PROJECT + '_database_socket', 'Database socket volume mismatch')
-                require(not any(item.get('HostConfig', {}).get('PortBindings', {}).values()), 'Database must not publish ports')
+                bindings = item.get('HostConfig', {}).get('PortBindings', {}) or {}
+                allowed_port = self.env.get('DB_PORT', DEFAULT_DB_PORT) if self.env else DEFAULT_DB_PORT
+                allowed = {'5432/tcp': [{'HostIp': '127.0.0.1', 'HostPort': allowed_port}]}
+                require(bindings in ({}, allowed), 'Database must stay unpublished or bind only to loopback on the dedicated AMT database port')
 
     def port(self, existing=None):
         tcp = port_rows(decoded(run(['ss', '-H', '-ltn'])))
@@ -498,6 +560,14 @@ class Deployment:
             require('podman' in decoded(self.engine('info')).lower(), 'Docker endpoint is not the local Podman runtime; refuse an unbounded daemon build')
             info = json.loads(decoded(run(['podman', 'info', '--format', 'json'])))
             require(info['host']['cgroupVersion'] == 'v2' and not info['host']['security']['rootless'], 'Bounded builds require rootful Podman with cgroup v2')
+        runtime_hint = self.args.runtime
+        if runtime_hint is None and self.envfile.exists():
+            with contextlib.suppress(Exception):
+                runtime_hint = app_runtime(read_env(self.envfile))
+        runtime_hint = runtime_hint or ('pm2' if self.args.command == 'install' else 'compose')
+        if self.args.command in ('install', 'upgrade', 'start', 'backup-job') and runtime_hint == 'pm2':
+            for tool in ['node', 'python3', 'pm2', 'corepack', 'pg_dump', 'pg_restore', 'tesseract', 'pdftotext']:
+                require(shutil.which(tool), f'Missing prerequisite for PM2 runtime: {tool}. No packages were installed')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
         check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
         legacy_recovery = (self.args.command == 'install' and self.args.resume and
@@ -584,10 +654,11 @@ class Deployment:
     def app_health_urls(self):
         health_path = f'{BASE_PATH}/api/v1/health'
         urls = [f"http://127.0.0.1:{self.env['APP_PORT']}{health_path}"]
-        try:
-            urls.append(f'http://{self.app_private_ipv4()}:3000{health_path}')
-        except DeployError:
-            pass
+        if not self.native_runtime():
+            try:
+                urls.append(f'http://{self.app_private_ipv4()}:3000{health_path}')
+            except DeployError:
+                pass
         return urls
 
     def healthy_upstream(self):
@@ -605,16 +676,39 @@ class Deployment:
         return self.engine('exec', '-i', self.db_id(), 'sh', '-c', script, 'amt', env['POSTGRES_USER'], env['POSTGRES_DB'],
                            data=(env['POSTGRES_PASSWORD'] + '\n' + sql + '\n').encode(), check=check)
 
+    def pm2_running(self):
+        result = run(['pm2', 'jlist'], check=False, env=self.native_env())
+        if result.returncode != 0:
+            return {}
+        items = json.loads(decoded(result) or '[]')
+        return {
+            item.get('name'): item.get('pm2_env', {}).get('status')
+            for item in items
+            if item.get('name') in PM2_PROCESSES
+        }
+
+    def backup_timer_name(self):
+        return 'amt-pricelist-backup.timer'
+
+    def backup_service_name(self):
+        return 'amt-pricelist-backup.service'
+
     def healthy(self):
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             if self.database('SELECT 1;', check=False).returncode == 0:
-                ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
-                if len(ids) == 3:
-                    states = json.loads(decoded(self.engine('inspect', *ids)))
-                    if all(c.get('State', {}).get('Running') for c in states):
+                if self.native_runtime():
+                    states = self.pm2_running()
+                    if all(states.get(name) == 'online' for name in PM2_PROCESSES):
                         self.healthy_upstream()
                         return
+                else:
+                    ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
+                    if len(ids) == 3:
+                        states = json.loads(decoded(self.engine('inspect', *ids)))
+                        if all(c.get('State', {}).get('Running') for c in states):
+                            self.healthy_upstream()
+                            return
             time.sleep(3)
         raise DeployError('Health checks failed; project remains in recovery state')
 
@@ -630,12 +724,17 @@ class Deployment:
         self.stage('Start AMT services and verify health')
         self.ownership()
         self.port(int(self.env['APP_PORT']))  # Immediate fail-closed recheck; never kill a listener.
-        self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
-        try:
-            self.verify_limits(*SERVICES)
-        except DeployError:
-            self.stop()
-            raise
+        if self.native_runtime():
+            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_env())
+            run(['pm2', 'start', self.native_paths()['ecosystem'], '--only', ','.join(PM2_PROCESSES), '--update-env'],
+                timeout=300, live=True, env=self.native_env())
+        else:
+            self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
+            try:
+                self.verify_limits(*SERVICES)
+            except DeployError:
+                self.stop()
+                raise
         self.healthy()
 
     def verify_limits(self, *services):
@@ -648,7 +747,11 @@ class Deployment:
                     f'Runtime did not enforce the {service} memory cap; stopping AMT startup')
 
     def stop(self):
-        self.compose('stop', '-t', '60', *SERVICES)
+        if self.native_runtime():
+            run(['systemctl', 'stop', self.backup_timer_name(), self.backup_service_name()], check=False)
+            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_env())
+        else:
+            self.compose('stop', '-t', '60', *SERVICES)
 
     def snapshot(self):
         self.stage('Create private recovery backup')
@@ -702,7 +805,10 @@ class Deployment:
         self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', 'db')
         self.wait_db()
         self.port(int(self.env['APP_PORT']))
-        self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+        if not self.native_runtime():
+            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+        else:
+            self.start()
         self.healthy()
         self.event('SECRETS_ROTATED')
         # Archive evidence privately rather than deleting recovery credentials automatically.
@@ -747,7 +853,10 @@ class Deployment:
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         atomic(release / 'release.json', json.dumps({'commit': commit, 'migrations': self.migration_files(release)}))
         self.compose('config', '--quiet', release=release)
-        self.build_release(release, commit)
+        if self.runtime() == 'pm2':
+            self.build_native_release(release)
+        else:
+            self.build_release(release, commit)
         return release
 
     def build_release(self, release, commit):
@@ -765,6 +874,34 @@ class Deployment:
             run(['podman', 'build', *network_args, '--jobs=1', '--memory=2g', '--memory-swap=2g',
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
                  '--tag', f'localhost/{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
+
+    def build_native_release(self, release):
+        paths = self.native_paths(release)
+        for directory in (paths['shared'], paths['browsers'], paths['logs']):
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.stage('Install host dependencies for PM2 runtime')
+        run(['corepack', 'enable'], timeout=120, env=self.native_env(release=release), cwd=release)
+        run(['corepack', 'pnpm', 'install', '--frozen-lockfile'], timeout=3600, live=True,
+            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+        self.stage('Build PM2 release assets')
+        run(['corepack', 'pnpm', 'build'], timeout=3600, live=True,
+            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+        self.stage('Prepare PM2 worker runtime')
+        run(['python3', '-m', 'venv', paths['python']], timeout=300, env=self.native_env(release=release))
+        run([paths['python'] / 'bin' / 'pip', 'install', '--no-cache-dir', '-r', release / 'scripts' / 'requirements.txt'],
+            timeout=1800, live=True, env=self.native_env(release=release))
+        run(['corepack', 'pnpm', 'exec', 'playwright', 'install', 'chromium'], timeout=1800, live=True,
+            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+
+    def run_native_migrate(self):
+        self.stage('Run database migrations')
+        run(['node', 'node_modules/tsx/dist/cli.mjs', 'scripts/migrate.ts'], timeout=600, live=True,
+            env=self.native_env(), cwd=self.release)
+
+    def run_backup_job(self):
+        self.stage('Run scheduled backup job')
+        run(['node', 'node_modules/tsx/dist/cli.mjs', 'scripts/backup-service.ts', '--once'], timeout=900, live=True,
+            env=self.native_env(), cwd=self.release)
 
     @staticmethod
     def migration_files(release):
@@ -874,12 +1011,16 @@ class Deployment:
             for directory in ['shared', 'state', 'releases', 'recovery']:
                 (self.root / directory).mkdir(mode=0o700)
             atomic(self.root / '.amt-owner', PROJECT + '\n')
-            self.env = new_env(port)
+            self.env = new_env(port, runtime=self.runtime())
             atomic(self.envfile, env_text(self.env))
             atomic(journal, json.dumps({'commit': commit, 'candidate': None}))
             self.log_ready()
         else:
             self.current()
+        self.env['APP_RUNTIME'] = self.runtime()
+        self.env.setdefault('DB_HOST', '127.0.0.1')
+        self.env.setdefault('DB_PORT', DEFAULT_DB_PORT)
+        self.env.setdefault('PM2_APP_INSTANCES', '2')
         previous = self.release
         if recovery and recovery.get('candidate'):
             require(re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', recovery['candidate']), 'Invalid recovery release')
@@ -903,10 +1044,14 @@ class Deployment:
         self.compose('up', '-d', '--no-deps', '--no-build', 'db')
         self.verify_limits('db')
         self.wait_db()
-        self.verify_database_socket()
+        self.verify_database_runtime()
         self.checkpoint('MIGRATING', previous=previous.name if previous else None, candidate=release.name)
-        self.stage('Run database migrations')
-        self.compose('run', '--rm', '--no-deps', 'migrate', timeout=600)
+        atomic(self.envfile, env_text(self.env))
+        if self.native_runtime():
+            self.run_native_migrate()
+        else:
+            self.stage('Run database migrations')
+            self.compose('run', '--rm', '--no-deps', 'migrate', timeout=600)
         self.start()
         self.activate(release)
         self.stage('Activate release and configure AMT startup')
@@ -916,8 +1061,16 @@ class Deployment:
             require('AMT Price List isolated application' in target.read_text(), 'Existing systemd unit is not recognized; refusing overwrite')
         atomic(target, unit.read_bytes())
         target.chmod(0o644)
+        if self.native_runtime():
+            for name in ('amt-pricelist-backup.service', 'amt-pricelist-backup.timer'):
+                backup_target = Path('/etc/systemd/system') / name
+                atomic(backup_target, (release / 'docker' / name).read_bytes())
+                backup_target.chmod(0o644)
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'enable', 'amt-pricelist.service'])
+        if self.native_runtime():
+            run(['systemctl', 'enable', self.backup_timer_name()])
+            run(['systemctl', 'start', self.backup_timer_name()])
         self.checkpoint('HEALTHY', current=release.name, previous=previous.name if previous else None)
         if first:
             atomic(journal, json.dumps({'commit': commit, 'candidate': release.name, 'completed': True}))
@@ -930,7 +1083,10 @@ class Deployment:
         upstream = self.healthy_upstream()
         action = 'Install' if first else 'Upgrade'
         print(f'{action} complete: release {release.name} ({commit[:12]}).')
-        print('Auto-start on VPS reboot is enabled through systemd and the AMT containers use restart-unless-stopped.')
+        if self.native_runtime():
+            print('Auto-start on VPS reboot is enabled through systemd; PM2 manages the AMT app and worker, while PostgreSQL remains isolated.')
+        else:
+            print('Auto-start on VPS reboot is enabled through systemd and the AMT containers use restart-unless-stopped.')
         if not first:
             print(f'Users on {self.env["APP_ORIGIN"]}{BASE_PATH} should refresh their browser now to load the new release.')
         print(f"Ready: ssh -N -L {self.env['APP_PORT']}:{upstream} root@76.13.244.160")
@@ -965,15 +1121,22 @@ class Deployment:
         require(metadata.get('commit') == recovery.get('commit'), 'Recovery release commit mismatch')
         return release
 
-    def verify_database_socket(self):
-        result = self.compose('run', '--rm', '--no-deps', 'migrate', 'node', '-e',
-                              "const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); try{await good.connect(); await good.query('SELECT 1')}catch{return 20}finally{await good.end().catch(()=>{})} const p=good.connectionParameters; const bad=new Client({host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))",
-                              check=False, timeout=60)
-        if result.returncode == 20:
-            raise DeployError('Private PostgreSQL socket connection failed before migrations')
+    def verify_database_runtime(self):
+        script = ("const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); "
+                  "try{await good.connect(); await good.query('SELECT 1')}catch{return 20}finally{await good.end().catch(()=>{})} "
+                  "const p=good.connectionParameters; const bad=new Client({host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); "
+                  "try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))")
+        if self.native_runtime():
+            result = run(['node', '-e', script], check=False, timeout=60, env=self.native_env())
+            if result.returncode == 20:
+                raise DeployError('Local PM2 database connection failed before migrations')
+        else:
+            result = self.compose('run', '--rm', '--no-deps', 'migrate', 'node', '-e', script, check=False, timeout=60)
+            if result.returncode == 20:
+                raise DeployError('Private PostgreSQL socket connection failed before migrations')
         if result.returncode == 21:
-            raise DeployError('PostgreSQL socket accepted an invalid password; SCRAM policy is not enforced')
-        require(result.returncode == 0, 'PostgreSQL socket authentication self-test failed unexpectedly')
+            raise DeployError('PostgreSQL authentication accepted an invalid password; SCRAM policy is not enforced')
+        require(result.returncode == 0, 'PostgreSQL authentication self-test failed unexpectedly')
 
     def _caddy_context(self):
         result = decoded(run(['systemctl', 'show', 'caddy', '--property=ActiveState', '--property=ExecStart', '--no-pager']))
@@ -1103,7 +1266,10 @@ class Deployment:
             atomic(self.envfile, env_text(replacement))
             self.env = replacement
             wrote_env = True
-            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+            if self.native_runtime():
+                self.start()
+            else:
+                self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
             self.healthy()
             created_site = self._apply_caddy(target, self.healthy_upstream())
             atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
@@ -1114,7 +1280,10 @@ class Deployment:
             if wrote_env:
                 atomic(self.envfile, env_text(old_env))
                 self.env = old_env
-                self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES, check=False)
+                if self.native_runtime():
+                    self.start()
+                else:
+                    self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES, check=False)
             raise
 
     def rollback(self):
@@ -1191,7 +1360,15 @@ class Deployment:
         current_link = self.root / 'current'
         if current_link.exists():
             self.current()
-            print(decoded(self.compose('ps')))
+            print(f'Runtime: {self.runtime()}')
+            print(decoded(self.compose('ps', 'db')))
+            if self.native_runtime():
+                print(decoded(run(['pm2', 'status'], check=False, env=self.native_env())))
+                timer_enabled = decoded(run(['systemctl', 'is-enabled', self.backup_timer_name()], check=False)) or 'unknown'
+                timer_active = decoded(run(['systemctl', 'is-active', self.backup_timer_name()], check=False)) or 'unknown'
+                print(f'Backup timer: {timer_enabled} / {timer_active}.')
+            else:
+                print(decoded(self.compose('ps')))
             enabled = decoded(run(['systemctl', 'is-enabled', 'amt-pricelist.service'], check=False)) or 'unknown'
             active = decoded(run(['systemctl', 'is-active', 'amt-pricelist.service'], check=False)) or 'unknown'
             print(f'Auto-start on VPS reboot: {"enabled" if enabled == "enabled" else enabled}. Systemd state: {active}.')
@@ -1242,7 +1419,7 @@ class Deployment:
             else:
                 require(not self.root.exists(), 'Existing installation directory: use install --resume only for an interrupted first install')
                 self.port()
-        if self.args.command not in ['install', 'status', 'start', 'stop', 'setup-token', 'cleanup']:
+        if self.args.command not in ['install', 'status', 'start', 'stop', 'setup-token', 'cleanup', 'backup-job']:
             self.current()
             self.port(int(self.env['APP_PORT']))
         if self.args.dry_run:
@@ -1257,7 +1434,7 @@ class Deployment:
                     self.check_replace_failed()
             print('Dry run: inspected only. No fetch, files, containers, migrations, secrets or system services changed.')
             return
-        require(self.args.command in ['start', 'stop', 'setup-token'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
+        require(self.args.command in ['start', 'stop', 'setup-token', 'backup-job'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
         with self.locked():
             if self.root.exists():
                 self.log_ready()
@@ -1282,6 +1459,8 @@ class Deployment:
                     self.public_url()
                 elif command == 'cleanup':
                     self.cleanup()
+                elif command == 'backup-job':
+                    self.run_backup_job()
                 elif command == 'start':
                     phase = json.loads((self.state / 'deployment.json').read_text()).get('phase')
                     require(phase == 'HEALTHY', 'Incomplete deployment must be recovered before boot startup')
@@ -1298,12 +1477,14 @@ class Deployment:
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description='AMT-only VPS deployment; no root/user password changes or public proxy configuration')
-    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'cleanup', 'setup-token', 'set-public-url'])
+    parser.add_argument('command', nargs='?', choices=['install', 'recover-install', 'upgrade', 'status', 'backup', 'restore-check', 'rotate-secrets', 'rollback', 'start', 'stop', 'cleanup', 'setup-token', 'set-public-url', 'backup-job'])
     parser.add_argument('--source', default=str(Path(__file__).resolve().parents[2]), help='Clean Git checkout; not a deployed release directory')
     parser.add_argument('--ref', default='origin/master')
     parser.add_argument('--release', help='Exact retained release directory for rollback')
     parser.add_argument('--backup', help='Exact completed recovery backup directory for restore verification')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--runtime', choices=['compose', 'pm2'],
+                        help='Runtime for app and worker processes; database remains dedicated and isolated')
     parser.add_argument('--build-network', choices=['default', 'host'],
                         help='Image builds only: host grants build processes access to host-network services; runtime isolation is unchanged')
     parser.add_argument('-v', '--verbose', '--v', action='store_true', help='Extra timings and safe diagnostics; build output is always visible')

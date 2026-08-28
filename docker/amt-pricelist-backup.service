@@ -1,0 +1,12 @@
+[Unit]
+Description=AMT Price List scheduled backup job
+After=network-online.target docker.service podman.service amt-pricelist.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/shop-pricelist/current/scripts/deployment/manage.py backup-job --yes
+TimeoutStartSec=1800
+

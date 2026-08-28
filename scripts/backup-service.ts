@@ -20,10 +20,8 @@ const env = {
   PGDATABASE: url.pathname.slice(1),
 };
 let running = true;
-process.on("SIGTERM", () => {
-  running = false;
-});
-while (running) {
+const once = process.argv.includes("--once");
+async function cycle() {
   try {
     const recent = await one(
       db,
@@ -93,6 +91,16 @@ while (running) {
   } catch (e) {
     console.error("Backup service error", (e as Error).message);
   }
-  await new Promise((r) => setTimeout(r, 15000));
+}
+process.on("SIGTERM", () => {
+  running = false;
+});
+if (once) {
+  await cycle();
+} else {
+  while (running) {
+    await cycle();
+    await new Promise((r) => setTimeout(r, 15000));
+  }
 }
 process.exit(0);

@@ -9,6 +9,8 @@ x-app-environment: &app-environment
   SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
   UPLOAD_DIR: /data/uploads
   BACKUP_DIR: /data/backups
+  DB_HOST: ${DB_HOST:-127.0.0.1}
+  DB_PORT: ${DB_PORT:-15432}
   PDF_MAX_PAGES: ${PDF_MAX_PAGES:-100}
   UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-20}
 services:
@@ -25,6 +27,7 @@ services:
       - database:/var/lib/postgresql/data
       - database_socket:/var/run/postgresql
       - ./docker/pg_hba.conf:/etc/postgresql/amt-pg_hba.conf:ro
+    ports: ["127.0.0.1:${DB_PORT:-15432}:5432"]
     networks: [private]
     healthcheck:
       test:
