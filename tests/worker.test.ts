@@ -97,6 +97,23 @@ test(
         "FAILED",
       );
     });
+    await t.test("Oversized row-count XLSX reports a clear safe error", async () => {
+      const book = new ExcelJS.Workbook();
+      const sheet = book.addWorksheet("PriceUpdate");
+      sheet.addRow(["Part Reference", "Local Description", "Public Pricelist"]);
+      for (let i = 0; i < 10001; i++)
+        sheet.addRow([`ROW-${i}`, `Description ${i}`, "100"]);
+      const buffer = Buffer.from(await book.xlsx.writeBuffer());
+      const job = await upload(db, actor, new File([buffer], "too-many.xlsx"));
+      await runJob(db);
+      const failed = await one(
+        db,
+        "SELECT status,error FROM import_jobs WHERE id=$1",
+        [job.id],
+      );
+      assert.equal(failed!.status, "FAILED");
+      assert.match(failed!.error, /more than 10,000 rows/i);
+    });
     await t.test("Oversized upload rejected before persistence", async () => {
       process.env.UPLOAD_MAX_MB = "1";
       await assert.rejects(

@@ -9,17 +9,20 @@ export default function Lookup({
   user,
   settings,
   online,
+  showAside = true,
 }: {
   t: Translate;
   onAdd: (line: any) => void;
   user: any;
   settings: any;
   online: boolean;
+  showAside?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [results, setResults] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(null),
     [sellingLevel, setSellingLevel] = useState("END_CUSTOMER"),
+    [categoryFilter, setCategoryFilter] = useState(""),
     [discount, setDiscount] = useState("0"),
     [quantity, setQuantity] = useState("1"),
     [price, setPrice] = useState<any>(null),
@@ -226,6 +229,14 @@ export default function Lookup({
   }
   const selectedPrice =
     selected && visibleLevels(selected).find((l) => l.code === sellingLevel);
+  const filteredResults = categoryFilter
+    ? results.filter(
+        (product) => (product.category || "UNCATEGORIZED") === categoryFilter,
+      )
+    : results;
+  const resultCategories = [...new Set(results.map((p) => p.category || ""))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
   const estimate = selectedPrice
     ? new Decimal(selectedPrice.masterExcl)
         .mul(
@@ -238,7 +249,7 @@ export default function Lookup({
         .toFixed(2)
     : "0.00";
   return (
-    <div className="lookup-layout">
+    <div className={"lookup-layout" + (showAside ? "" : " compact")}>
       <section className="card lookup-card">
         <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
         <label className="search-box">
@@ -278,14 +289,34 @@ export default function Lookup({
           </div>
         )}
         {!!results.length && (
+          <div className="actions wrap lookup-filters">
+            <label className="grow">
+              {t("Category filter", "تصفية الفئة")}
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value="">
+                  {t("All categories", "كل الفئات")}
+                </option>
+                {resultCategories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        {!!results.length && (
           <div className="search-results">
             <div className="result-head tier-result-head">
               <span>{t("Part / description", "الصنف / الوصف")}</span>
               <span>
-                {t("Selling prices · excl. VAT", "أسعار البيع · قبل الضريبة")}
+                {t("Main selling price", "سعر البيع الرئيسي")}
               </span>
             </div>
-            {results.map((p) => (
+            {filteredResults.map((p) => (
               <button
                 className="result tier-result"
                 key={p.id}
@@ -294,29 +325,27 @@ export default function Lookup({
                 <span>
                   <strong>{p.partNumber}</strong>
                   <small>{p.description}</small>
+                  <small>
+                    {[p.brand, p.category].filter(Boolean).join(" · ") ||
+                      t("Catalog item", "صنف كتالوج")}
+                  </small>
                 </span>
                 <span className="result-levels">
-                  {visibleLevels(p).map((l) => (
-                    <span
-                      key={l.code}
-                      className={
-                        l.code === (p.defaultLevel ?? "END_CUSTOMER")
-                          ? "result-level default"
-                          : "result-level"
-                      }
-                    >
-                      <span>
-                        {levelLabel(l.code, t)}
-                        {l.code === (p.defaultLevel ?? "END_CUSTOMER")
-                          ? " ★"
-                          : ""}
+                  {(() => {
+                    const level =
+                      visibleLevels(p).find(
+                        (l) => l.code === (p.defaultLevel ?? "END_CUSTOMER"),
+                      ) || visibleLevels(p)[0];
+                    return level ? (
+                      <span className="result-level default">
+                        <span>{levelLabel(level.code, t)}</span>
+                        <b>{level.masterExcl}</b>
+                        <small>
+                          {t("Incl. VAT", "شامل الضريبة")} {level.masterIncl}
+                        </small>
                       </span>
-                      <b>{l.masterExcl}</b>
-                      <small>
-                        {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
-                      </small>
-                    </span>
-                  ))}
+                    ) : null;
+                  })()}
                 </span>
               </button>
             ))}
@@ -347,13 +376,15 @@ export default function Lookup({
                 <p>{selected.description}</p>
               </div>
               <span className="pill">
-                {selected.brand || t("Catalog item", "صنف كتالوج")}
+                {[selected.brand, selected.category]
+                  .filter(Boolean)
+                  .join(" · ") || t("Catalog item", "صنف كتالوج")}
               </span>
             </div>
             <div
               className="selling-levels"
               role="group"
-              aria-label={t("Selling level", "مستوى سعر البيع")}
+              aria-label={t("Price option", "خيار السعر")}
             >
               {visibleLevels(selected).map((l) => (
                 <button
@@ -376,7 +407,7 @@ export default function Lookup({
                     {levelLabel(l.code, t)} {sellingLevel === l.code ? "✓" : ""}
                   </span>
                   {l.code === (selected.defaultLevel ?? "END_CUSTOMER") && (
-                    <small>{t("Default", "الافتراضي")}</small>
+                    <small>{t("Main price", "السعر الرئيسي")}</small>
                   )}
                   <strong>{l.masterExcl}</strong>
                   <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
@@ -431,7 +462,7 @@ export default function Lookup({
               </div>
               {price?.maxDiscount !== undefined && (
                 <p className="muted">
-                  {t("Maximum permitted discount", "أقصى خصم مسموح")}:{" "}
+                  {t("Salesman limit", "حد المندوب")}:{" "}
                   {price.maxDiscount}%
                 </p>
               )}
@@ -450,8 +481,8 @@ export default function Lookup({
                   {price.minimumReached && (
                     <p className="notice">
                       {t(
-                        "Minimum allowed price reached",
-                        "تم الوصول إلى الحد الأدنى للسعر",
+                        "Minimum selling price reached",
+                        "تم الوصول إلى أقل سعر بيع",
                       )}
                     </p>
                   )}
@@ -516,7 +547,7 @@ export default function Lookup({
           </>
         )}
       </section>
-      <aside className="lookup-aside">
+      {showAside && <aside className="lookup-aside">
         <div className="eyebrow">
           {t("BUILT FOR YOUR COUNTER", "مصمم لخدمة العملاء")}
         </div>
@@ -548,7 +579,7 @@ export default function Lookup({
             "يتم التحقق من الأسعار على الخادم قبل إصدار عرض السعر.",
           )}
         </div>
-      </aside>
+      </aside>}
     </div>
   );
 }

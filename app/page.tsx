@@ -16,7 +16,7 @@ export default function App() {
     [session, setSession] = useState<any>(null),
     [setup, setSetup] = useState(false),
     [loading, setLoading] = useState(true),
-    [tab, setTab] = useState("lookup"),
+    [tab, setTab] = useState("workspace"),
     [online, setOnline] = useState(true),
     [cart, setCart] = useState<any>(emptyCart),
     [message, setMessage] = useState(""),
@@ -201,7 +201,7 @@ export default function App() {
       customer: q.customer,
       lines: q.lines,
     });
-    setTab("cart");
+    setTab("workspace");
   }
   return (
     <>
@@ -402,9 +402,8 @@ export default function App() {
             className="main-nav"
             aria-label={t("Main navigation", "التنقل الرئيسي")}
           >
-            {[
-              ["lookup", "Lookup", "البحث"],
-              ["cart", "Cart", "السلة"],
+            {[ 
+              ["workspace", "Workspace", "مساحة العمل"],
               ["quotations", "Quotations", "العروض"],
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [["admin", "Admin", "الإدارة"]]
@@ -416,7 +415,7 @@ export default function App() {
                 onClick={() => setTab(key)}
               >
                 {t(en, ar)}
-                {key === "cart" && !!cart.lines.length && (
+                {key === "workspace" && !!cart.lines.length && (
                   <span className="count">{cart.lines.length}</span>
                 )}
               </button>
@@ -432,11 +431,9 @@ export default function App() {
                   {t("YOUR COUNTER, CONNECTED", "مكتب مبيعاتك المتصل")}
                 </p>
                 <h1>
-                  {tab === "lookup"
-                    ? t("Part lookup", "البحث عن صنف")
-                    : tab === "cart"
-                      ? t("Build your quotation", "إنشاء عرض السعر")
-                      : tab === "admin"
+                  {tab === "workspace"
+                    ? t("Catalog and quotation workspace", "مساحة الكتالوج وعرض السعر")
+                    : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
                 </h1>
@@ -445,20 +442,32 @@ export default function App() {
                 SAR <span>·</span> {t("Saudi Riyal", "ريال سعودي")}
               </span>
             </div>
-            {tab === "lookup" && (
-              <Lookup
-                t={t}
-                user={session.user}
-                settings={session.settings}
-                online={online}
-                onAdd={(line) => {
-                  setCart({ ...cart, lines: [...cart.lines, line] });
-                  setMessage(t("Added to cart", "تمت الإضافة إلى السلة"));
-                }}
-              />
-            )}
-            {tab === "cart" && (
-              <>
+            {tab === "workspace" && (
+              <div className="workspace-layout">
+                <Lookup
+                  t={t}
+                  user={session.user}
+                  settings={session.settings}
+                  online={online}
+                  showAside={false}
+                  onAdd={(line) => {
+                    setCart({ ...cart, lines: [...cart.lines, line] });
+                    setMessage(t("Added to quotation", "تمت الإضافة إلى عرض السعر"));
+                  }}
+                />
+                <div className="workspace-side">
+                  <div className="card workspace-helper">
+                    <div className="eyebrow">
+                      {t("ONE PLACE", "كل شيء في مكان واحد")}
+                    </div>
+                    <h2>{t("Search, price, and save the draft here.", "ابحث وسعّر واحفظ المسودة هنا.")}</h2>
+                    <p>
+                      {t(
+                        "Use the catalog on the left for all categories. The quotation updates on the right without changing screens.",
+                        "استخدم الكتالوج على اليسار لكل الفئات. ويتم تحديث عرض السعر على اليمين دون تغيير الشاشة.",
+                      )}
+                    </p>
+                  </div>
                 <Cart
                   t={t}
                   cart={cart}
@@ -474,9 +483,6 @@ export default function App() {
                   }
                 />
                 <div className="actions footer-actions">
-                  <button onClick={() => setTab("lookup")}>
-                    {t("＋ Add another item", "＋ إضافة صنف آخر")}
-                  </button>
                   <button
                     onClick={() => {
                       if (
@@ -496,7 +502,8 @@ export default function App() {
                     {t("Open quotations", "فتح العروض")}
                   </button>
                 </div>
-              </>
+                </div>
+              </div>
             )}
             {tab === "quotations" &&
               (online ? (

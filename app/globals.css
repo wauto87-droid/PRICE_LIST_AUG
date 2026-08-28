@@ -318,6 +318,33 @@ h3 {
   grid-template-columns: minmax(0, 800px) 1fr;
   gap: 40px;
 }
+.lookup-layout.compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  gap: 28px;
+  align-items: start;
+}
+.workspace-side {
+  display: grid;
+  gap: 20px;
+}
+.workspace-helper {
+  background: linear-gradient(135deg, #fff7f7 0%, #fff 100%);
+  border-color: #efd6d9;
+}
+.workspace-helper h2 {
+  margin-bottom: 10px;
+}
+.workspace-helper p {
+  color: var(--muted);
+  margin-bottom: 0;
+}
+.lookup-filters {
+  margin-top: 14px;
+}
 .lookup-card > .eyebrow {
   font-size: 13px;
   margin-bottom: 20px;
@@ -1339,6 +1366,27 @@ body :is(h1, h2, h3, strong, b) {
   margin: 16px 0;
   padding: 16px;
 }
+.basic-pricing-panel {
+  margin: 24px 0;
+  padding: 22px;
+  border: 1px solid #ecd9dc;
+  border-radius: 16px;
+  background: #fff8f8;
+}
+.advanced-pricing {
+  margin-top: 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px 20px;
+  background: #fcfcfd;
+}
+.advanced-pricing > summary {
+  cursor: pointer;
+  color: var(--red);
+}
+.advanced-pricing[open] > summary {
+  margin-bottom: 14px;
+}
 .level-editor legend {
   color: var(--red);
   padding: 0 8px;
@@ -1401,6 +1449,9 @@ body :is(h1, h2, h3, strong, b) {
   margin: 12px 0;
 }
 @media (max-width: 600px) {
+  .workspace-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .selling-levels {
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     gap: 9px;

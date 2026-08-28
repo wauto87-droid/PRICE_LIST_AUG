@@ -9,6 +9,20 @@ import { quotationHtml, escapeHtml } from "../pdf/template";
 import { settings } from "../admin/service";
 import { exportCatalog } from "./export";
 const exec = promisify(execFile);
+
+function importFailureMessage(error: Error) {
+  const message = error.message || "Extraction failed";
+  if (message.includes("Maximum 10,000 rows"))
+    return "Import failed: the file has more than 10,000 rows. Split it into smaller files and upload again.";
+  if (message.includes("Expanded workbook exceeds 100 MB"))
+    return "Import failed: the Excel workbook expands beyond the 100 MB safety limit.";
+  if (message.includes("Too many or duplicate column headings"))
+    return "Import failed: the first sheet has too many columns or duplicate column names.";
+  if (message.includes("Unsupported format"))
+    return "Import failed: only XLSX, XLS, CSV, and PDF files are supported.";
+  return "Extraction failed. Check file format, size, page count, and worker availability.";
+}
+
 export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
@@ -124,7 +138,8 @@ export async function runJob(db: DB) {
       job.id,
     ]);
   } catch (e) {
-    console.error("Worker job failed", job.id, (e as Error).message);
+    const failure = e as Error;
+    console.error("Worker job failed", job.id, failure.message);
     await db.query("UPDATE jobs SET status='FAILED',error=$2 WHERE id=$1", [
       job.id,
       "Processing failed. Check the worker logs and source file.",
@@ -134,7 +149,7 @@ export async function runJob(db: DB) {
         "UPDATE import_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
         [
           job.payload.importId,
-          "Extraction failed. Check file format, size, page count, and worker availability.",
+          importFailureMessage(failure),
         ],
       );
   }
