@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildBulkItems,
+  chunkBulkItems,
   classifyBulkDeleteError,
   formatBulkDeleteError,
   getProductSuggestions,
@@ -21,6 +22,13 @@ test("Bulk item payload normalizes integer-like versions and sorts by id", () =>
       { id: "b-id", version: 7 },
       { id: "c-id", version: "not-a-number" },
     ],
+  );
+});
+
+test("Large bulk selections are split into steady smaller batches", () => {
+  assert.deepEqual(
+    chunkBulkItems([1, 2, 3, 4, 5], 2),
+    [[1, 2], [3, 4], [5]],
   );
 });
 

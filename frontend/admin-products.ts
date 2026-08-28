@@ -56,6 +56,13 @@ export function getProductSuggestions(items: any[], query: string, limit = 6) {
     .slice(0, limit);
 }
 
+export function chunkBulkItems<T>(items: T[], size = 250) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size)
+    chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
 function normalizeBulkVersion(version: unknown) {
   if (typeof version === "string" && /^-?\d+$/.test(version.trim()))
     return Number(version.trim());

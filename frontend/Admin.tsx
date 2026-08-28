@@ -10,6 +10,7 @@ import {
 } from "./admin-actions";
 import {
   buildBulkItems,
+  chunkBulkItems,
   formatBulkDeleteError,
   getProductSuggestions,
 } from "./admin-products";
@@ -227,6 +228,34 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       if (options.reload !== false) await load();
       return value;
     });
+  }
+  async function runBulkRequests<T>(
+    items: { id: string; version: unknown }[],
+    messages: {
+      title: string;
+      detail: string;
+      progress: (current: number, total: number) => string;
+    },
+    requestForChunk: (
+      chunk: { id: string; version: unknown }[],
+      index: number,
+      total: number,
+    ) => Promise<T>,
+  ) {
+    const chunks = chunkBulkItems(items);
+    const results: T[] = [];
+    for (let index = 0; index < chunks.length; index++) {
+      setActionState({
+        phase: "saving",
+        title: messages.title,
+        message:
+          chunks.length > 1
+            ? `${messages.detail} ${messages.progress(index + 1, chunks.length)}`
+            : messages.detail,
+      });
+      results.push(await requestForChunk(chunks[index], index, chunks.length));
+    }
+    return results;
   }
   const heading = sections.find((s) => s[0] === section)!;
   const visibleProductIds =
@@ -737,18 +766,55 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       {priceBulkOperations.has(bulk.operation) ? (
                         <button
                           disabled={busy || !selectedCount}
-                          onClick={() =>
-                            (async () => {
-                              if (busy) return;
-                              setPreview(
-                                await api("products/bulk", "POST", {
-                                  ...bulk,
-                                  items: bulkItems,
-                                  confirm: false,
-                                }),
+                          onClick={async () => {
+                            if (busy) return;
+                            setBusy(true);
+                            try {
+                              const responses = await runBulkRequests(
+                                bulkItems,
+                                {
+                                  title: t(
+                                    "Preparing bulk preview…",
+                                    "جارٍ تجهيز المعاينة الجماعية…",
+                                  ),
+                                  detail: t(
+                                    "AMT is building the preview in smaller batches.",
+                                    "يقوم AMT بإعداد المعاينة على دفعات أصغر.",
+                                  ),
+                                  progress: (current, total) =>
+                                    t(
+                                      `Batch ${current} of ${total}`,
+                                      `الدفعة ${current} من ${total}`,
+                                    ),
+                                },
+                                (chunk) =>
+                                  api("products/bulk", "POST", {
+                                    ...bulk,
+                                    items: chunk,
+                                    confirm: false,
+                                  }),
                               );
-                            })()
-                          }
+                              setPreview({
+                                preview: responses.flatMap(
+                                  (response: any) => response.preview,
+                                ),
+                                applied: false,
+                                deleted: [],
+                              });
+                              setActionState({ phase: "idle" });
+                            } catch (e) {
+                              setActionState({
+                                phase: "error",
+                                title: t(
+                                  "Bulk preview could not be prepared",
+                                  "تعذر تجهيز المعاينة الجماعية",
+                                ),
+                                message: (e as Error).message,
+                              });
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
                         >
                           {t("Preview", "معاينة")}
                         </button>
@@ -849,11 +915,41 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                         ),
                               },
                               async () => {
-                                await api("products/bulk", "POST", {
-                                  operation: bulk.operation,
-                                  items: bulkItems,
-                                  confirm: true,
-                                });
+                                await runBulkRequests(
+                                  bulkItems,
+                                  {
+                                    title:
+                                      bulk.operation === "DELETE"
+                                        ? t(
+                                            "Deleting products…",
+                                            "جارٍ حذف الأصناف…",
+                                          )
+                                        : bulk.operation === "ARCHIVE"
+                                          ? t(
+                                              "Archiving products…",
+                                              "جارٍ أرشفة الأصناف…",
+                                            )
+                                          : t(
+                                              "Reactivating products…",
+                                              "جارٍ إعادة تفعيل الأصناف…",
+                                            ),
+                                    detail: t(
+                                      "Large changes are processed in smaller batches so the app stays responsive.",
+                                      "تتم معالجة التغييرات الكبيرة على دفعات أصغر حتى يظل التطبيق مستجيباً.",
+                                    ),
+                                    progress: (current, total) =>
+                                      t(
+                                        `Batch ${current} of ${total}`,
+                                        `الدفعة ${current} من ${total}`,
+                                      ),
+                                  },
+                                  (chunk) =>
+                                    api("products/bulk", "POST", {
+                                      operation: bulk.operation,
+                                      items: chunk,
+                                      confirm: true,
+                                    }),
+                                );
                                 setSelected({});
                                 setPreview(null);
                               },
@@ -916,11 +1012,30 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                 ),
                               },
                               async () => {
-                                await api("products/bulk", "POST", {
-                                  ...bulk,
-                                  items: bulkItems,
-                                  confirm: true,
-                                });
+                                await runBulkRequests(
+                                  bulkItems,
+                                  {
+                                    title: t(
+                                      "Saving bulk update…",
+                                      "جارٍ حفظ التحديث الجماعي…",
+                                    ),
+                                    detail: t(
+                                      "Large updates are processed in smaller batches so the app keeps moving.",
+                                      "تتم معالجة التحديثات الكبيرة على دفعات أصغر حتى يظل التطبيق متحركاً.",
+                                    ),
+                                    progress: (current, total) =>
+                                      t(
+                                        `Batch ${current} of ${total}`,
+                                        `الدفعة ${current} من ${total}`,
+                                      ),
+                                  },
+                                  (chunk) =>
+                                    api("products/bulk", "POST", {
+                                      ...bulk,
+                                      items: chunk,
+                                      confirm: true,
+                                    }),
+                                );
                                 setSelected({});
                                 setPreview(null);
                               },
