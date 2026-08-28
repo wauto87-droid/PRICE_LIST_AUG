@@ -322,7 +322,6 @@ export default function Imports({
     setConfirmation(null);
     setPage(j.page || 0);
     setGroupValues(j.groupValues || []);
-    setMode(j.mode || "UPDATE_ONLY");
     setDefaults(
       Object.keys(productDefaults).length
         ? { ...defaultImportDefaults(productDefaults.vat || defaults.vat), ...productDefaults }
@@ -358,13 +357,15 @@ export default function Imports({
       nextMapping = auto;
     }
     setMapping(nextMapping);
+    const isSimple = isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns);
     setImportProfile(
-      isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns)
+      isSimple
         ? "SUPPLIER_SIMPLE"
         : guided?.mode === "PUBLIC_PRICE_DISCOUNT"
           ? "PUBLIC_PRICE_DISCOUNT"
           : "STANDARD",
     );
+    setMode(j.mode || (isSimple ? "CREATE_UPDATE" : "UPDATE_ONLY"));
   }
   const presetForGroup = (groupValue: string) =>
     guidedGroupPresets[groupValue] || guidedDefaultPreset;
@@ -555,9 +556,13 @@ export default function Imports({
                     {t("Import pricing flow", "مسار تسعير الاستيراد")}
                     <select
                       value={importProfile}
-                      onChange={(e) =>
-                        setImportProfile(e.target.value as ImportProfile)
-                      }
+                      onChange={(e) => {
+                        const p = e.target.value as ImportProfile;
+                        setImportProfile(p);
+                        if (p === "SUPPLIER_SIMPLE") {
+                          setMode("CREATE_UPDATE");
+                        }
+                      }}
                     >
                       <option value="STANDARD">
                         {t(
