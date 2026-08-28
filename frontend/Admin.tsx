@@ -42,17 +42,22 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [result, setResult] = useState<AdminResult>(null),
     [error, setError] = useState(""),
     [query, setQuery] = useState(""),
+    [productQuery, setProductQuery] = useState(""),
+    [productPage, setProductPage] = useState(0),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [actionState, setActionState] = useState<AdminActionState>({
       phase: "idle",
     }),
-    [selected, setSelected] = useState<string[]>([]),
+    [selected, setSelected] = useState<Record<string, number>>({}),
     [bulk, setBulk] = useState<any>({ operation: "MARKUP", value: "25" }),
     [preview, setPreview] = useState<any>(null),
     [roles, setRoles] = useState<any>(null),
     [exportJob, setExportJob] = useState<any>(null);
   const data = sectionData(result, section);
+  const productData =
+    section === "products" && data && !Array.isArray(data) ? data : null;
+  const productItems = productData?.items ?? [];
   const requestGeneration = useRef(0),
     currentSection = useRef(section),
     successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,7 +79,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     );
     return () => clearInterval(timer);
   }, [exportJob]);
-  async function load() {
+  async function load(overrides?: { page?: number; query?: string }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
@@ -82,7 +87,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     try {
       const payload = await api(
         section === "products"
-          ? "products?q=" + encodeURIComponent(query)
+          ? "products?q=" +
+              encodeURIComponent(overrides?.query ?? productQuery) +
+              "&page=" +
+              String(overrides?.page ?? productPage) +
+              "&pageSize=50"
           : "admin/" + section,
       );
       if (
@@ -90,6 +99,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         currentSection.current !== section
       )
         return;
+      if (section === "products" && payload && !Array.isArray(payload)) {
+        setProductPage(payload.page ?? 0);
+      }
       setResult({ section, payload: validateAdminData(section, payload) });
     } catch (e) {
       if (
@@ -104,8 +116,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   useEffect(() => {
     setResult(null);
     setEdit(null);
-    setSelected([]);
+    setSelected({});
     setPreview(null);
+    setProductPage(0);
     load();
     return () => {
       requestGeneration.current++;
@@ -191,14 +204,20 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   }
   const heading = sections.find((s) => s[0] === section)!;
   const visibleProductIds =
-    section === "products" && Array.isArray(data)
-      ? data.map((p: any) => p.id)
+    section === "products"
+      ? productItems.map((p: any) => p.id)
       : [];
+  const matchedProductItems = productData?.selectableItems ?? [];
   const allVisibleSelected =
     !!visibleProductIds.length &&
-    visibleProductIds.every((id) => selected.includes(id));
+    visibleProductIds.every((id: string) => id in selected);
   const someVisibleSelected =
-    visibleProductIds.some((id) => selected.includes(id)) && !allVisibleSelected;
+    visibleProductIds.some((id: string) => id in selected) &&
+    !allVisibleSelected;
+  const allMatchedSelected =
+    !!matchedProductItems.length &&
+    matchedProductItems.every((item: any) => item.id in selected);
+  const selectedCount = Object.keys(selected).length;
   const editField = (key: string, label: string, type = "text") => (
     <label key={key}>
       {label}
@@ -237,7 +256,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         <div className="section-title">
           <h2>{t(heading[1], heading[2])}</h2>
           {!["imports", "rules", "quotation-settings"].includes(section) && (
-            <button disabled={busy} onClick={load}>
+            <button disabled={busy} onClick={() => void load()}>
               {t("Refresh", "تحديث")}
             </button>
           )}
@@ -303,10 +322,26 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") load();
+                      if (e.key === "Enter") {
+                        setSelected({});
+                        setPreview(null);
+                        setProductQuery(query);
+                        setProductPage(0);
+                        load({ query, page: 0 });
+                      }
                     }}
                   />
-                  <button onClick={load}>{t("Search", "بحث")}</button>
+                  <button
+                    onClick={() => {
+                      setSelected({});
+                      setPreview(null);
+                      setProductQuery(query);
+                      setProductPage(0);
+                      load({ query, page: 0 });
+                    }}
+                  >
+                    {t("Search", "بحث")}
+                  </button>
                   <button
                     className="primary"
                     onClick={() =>
@@ -386,9 +421,17 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                             onChange={(e) => {
                               setSelected(
                                 e.target.checked
-                                  ? [...new Set([...selected, ...visibleProductIds])]
-                                  : selected.filter(
-                                      (id) => !visibleProductIds.includes(id),
+                                  ? Object.fromEntries([
+                                      ...Object.entries(selected),
+                                      ...productItems.map((item: any) => [
+                                        item.id,
+                                        item.version,
+                                      ]),
+                                    ])
+                                  : Object.fromEntries(
+                                      Object.entries(selected).filter(
+                                        ([id]) => !visibleProductIds.includes(id),
+                                      ),
                                     ),
                               );
                               setPreview(null);
@@ -403,18 +446,22 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.map((p: any) => (
+                      {productItems.map((p: any) => (
                         <tr key={p.id}>
                           <td>
                             <input
                               type="checkbox"
                               aria-label={"Select " + p.partNumber}
-                              checked={selected.includes(p.id)}
+                              checked={p.id in selected}
                               onChange={(e) => {
                                 setSelected(
                                   e.target.checked
-                                    ? [...selected, p.id]
-                                    : selected.filter((id) => id !== p.id),
+                                    ? { ...selected, [p.id]: p.version }
+                                    : Object.fromEntries(
+                                        Object.entries(selected).filter(
+                                          ([id]) => id !== p.id,
+                                        ),
+                                      ),
                                 );
                                 setPreview(null);
                               }}
@@ -441,7 +488,34 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     </tbody>
                   </table>
                 </div>
-                {!data.length && (
+                <div className="actions wrap">
+                  <button
+                    disabled={busy || (productData?.page ?? 0) === 0}
+                    onClick={() => {
+                      const nextPage = Math.max((productData?.page ?? 0) - 1, 0);
+                      setProductPage(nextPage);
+                      load({ page: nextPage });
+                    }}
+                  >
+                    {t("Previous page", "الصفحة السابقة")}
+                  </button>
+                  <span className="muted">
+                    {t("Page", "الصفحة")} {(productData?.page ?? 0) + 1} /{" "}
+                    {productData?.totalPages ?? 1} · {t("Results", "النتائج")}:{" "}
+                    {productData?.totalRows ?? 0}
+                  </span>
+                  <button
+                    disabled={busy || !productData?.hasMore}
+                    onClick={() => {
+                      const nextPage = (productData?.page ?? 0) + 1;
+                      setProductPage(nextPage);
+                      load({ page: nextPage });
+                    }}
+                  >
+                    {t("Next page", "الصفحة التالية")}
+                  </button>
+                </div>
+                {!productItems.length && (
                   <p className="empty-state">
                     {t(
                       "No products yet. Add one or import a supplier price list.",
@@ -449,32 +523,57 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     )}
                   </p>
                 )}
-                {!!selected.length && (
+                {!!selectedCount && (
                   <div className="review-panel">
                     <h3>
-                      {t("Bulk actions", "إجراءات جماعية")} ({selected.length})
+                      {t("Bulk actions", "إجراءات جماعية")} ({selectedCount})
                     </h3>
                     <div className="actions wrap">
                       <button
                         disabled={busy || !visibleProductIds.length}
                         onClick={() => {
-                          setSelected([...new Set([...selected, ...visibleProductIds])]);
+                          setSelected({
+                            ...selected,
+                            ...Object.fromEntries(
+                              productItems.map((item: any) => [item.id, item.version]),
+                            ),
+                          });
                           setPreview(null);
                         }}
                       >
                         {t("Select visible", "تحديد الظاهر")}
                       </button>
                       <button
-                        disabled={busy || !selected.length}
+                        disabled={busy || !matchedProductItems.length || allMatchedSelected}
                         onClick={() => {
-                          setSelected([]);
+                          setSelected({
+                            ...selected,
+                            ...Object.fromEntries(
+                              matchedProductItems.map((item: any) => [
+                                item.id,
+                                item.version,
+                              ]),
+                            ),
+                          });
+                          setPreview(null);
+                        }}
+                      >
+                        {t("Select all matched", "تحديد كل النتائج")}
+                      </button>
+                      <button
+                        disabled={busy || !selectedCount}
+                        onClick={() => {
+                          setSelected({});
                           setPreview(null);
                         }}
                       >
                         {t("Clear selection", "مسح التحديد")}
                       </button>
                       <span className="muted">
-                        {t("Selected", "المحدد")}: {selected.length}
+                        {t("Selected", "المحدد")}: {selectedCount}
+                        {productData?.selectionLimitReached
+                          ? t(" (first 5000 matches)", " (أول 5000 نتيجة)")
+                          : ""}
                       </span>
                       <select
                         value={bulk.operation}
@@ -533,12 +632,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               setPreview(
                                 await api("products/bulk", "POST", {
                                   ...bulk,
-                                  items: data
-                                    .filter((p: any) => selected.includes(p.id))
-                                    .map((p: any) => ({
-                                      id: p.id,
-                                      version: p.version,
-                                    })),
+                                  items: Object.entries(selected).map(
+                                    ([id, version]) => ({ id, version }),
+                                  ),
                                   confirm: false,
                                 }),
                               );
@@ -550,23 +646,23 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       ) : (
                         <button
                           className={bulk.operation === "DELETE" ? "primary" : ""}
-                          disabled={busy || !selected.length}
+                          disabled={busy || !selectedCount}
                           onClick={async () => {
                             if (
                               !(await showConfirm(
                                 bulk.operation === "DELETE"
                                   ? t(
-                                      `Permanently delete ${selected.length} selected products?`,
-                                      `حذف ${selected.length} من الأصناف المحددة نهائياً؟`,
+                                      `Permanently delete ${selectedCount} selected products?`,
+                                      `حذف ${selectedCount} من الأصناف المحددة نهائياً؟`,
                                     )
                                   : bulk.operation === "ARCHIVE"
                                     ? t(
-                                        `Archive ${selected.length} selected products?`,
-                                        `أرشفة ${selected.length} من الأصناف المحددة؟`,
+                                        `Archive ${selectedCount} selected products?`,
+                                        `أرشفة ${selectedCount} من الأصناف المحددة؟`,
                                       )
                                     : t(
-                                        `Reactivate ${selected.length} selected products?`,
-                                        `إعادة تفعيل ${selected.length} من الأصناف المحددة؟`,
+                                        `Reactivate ${selectedCount} selected products?`,
+                                        `إعادة تفعيل ${selectedCount} من الأصناف المحددة؟`,
                                       ),
                               ))
                             )
@@ -644,15 +740,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               async () => {
                                 await api("products/bulk", "POST", {
                                   operation: bulk.operation,
-                                  items: data
-                                    .filter((p: any) => selected.includes(p.id))
-                                    .map((p: any) => ({
-                                      id: p.id,
-                                      version: p.version,
-                                    })),
+                                  items: Object.entries(selected).map(
+                                    ([id, version]) => ({ id, version }),
+                                  ),
                                   confirm: true,
                                 });
-                                setSelected([]);
+                                setSelected({});
                                 setPreview(null);
                               },
                             );
@@ -716,15 +809,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               async () => {
                                 await api("products/bulk", "POST", {
                                   ...bulk,
-                                  items: data
-                                    .filter((p: any) => selected.includes(p.id))
-                                    .map((p: any) => ({
-                                      id: p.id,
-                                      version: p.version,
-                                    })),
+                                  items: Object.entries(selected).map(
+                                    ([id, version]) => ({ id, version }),
+                                  ),
                                   confirm: true,
                                 });
-                                setSelected([]);
+                                setSelected({});
                                 setPreview(null);
                               },
                             )

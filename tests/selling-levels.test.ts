@@ -197,10 +197,9 @@ test("Tier-aware catalog, snapshots, reviewed imports, exports and security", as
       ])
         assert.equal(view[secret], undefined);
       assert(!JSON.stringify(view.sellingLevels).includes("markup"));
-      assert.equal(
-        (await search(db, staff, "AMT-DIST", config))[0].sellingLevels.length,
-        3,
-      );
+      const staffResults = await search(db, staff, "AMT-DIST", config);
+      assert(Array.isArray(staffResults));
+      assert.equal(staffResults[0].sellingLevels.length, 3);
     },
   );
   await t.test(

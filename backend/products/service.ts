@@ -390,46 +390,157 @@ export async function search(
   actor: Actor,
   query: string,
   settings: any,
-  admin = false,
+  adminOrOptions:
+    | boolean
+    | {
+        admin?: boolean;
+        page?: number;
+        pageSize?: number;
+        selectionLimit?: number;
+      } = false,
 ) {
+  const options =
+    typeof adminOrOptions === "boolean" ? { admin: adminOrOptions } : adminOrOptions;
+  const admin = options.admin ?? false;
   requirePermission(actor, "PRODUCT_VIEW");
   if (admin) requirePermission(actor, "PRODUCT_EDIT");
   const q = normalizePart(query).slice(0, 100);
   const escaped = q.replace(/[\\%_]/g, "\\$&");
   const active = admin ? "true" : "active";
-  if (!q) {
-    const rows = await db.query(
-      productSelect +
-        ` WHERE ${admin ? "true" : "p.active"} ORDER BY p.normalized_part LIMIT 50`,
-    );
-    return rows.rows.map((r) =>
+  const pageSize = Math.min(Math.max(options.pageSize ?? 50, 1), 200);
+  const page = Math.max(options.page ?? 0, 0);
+  const offset = page * pageSize;
+  const selectionLimit = Math.min(
+    Math.max(options.selectionLimit ?? 5000, 1),
+    5000,
+  );
+  const mapRows = (rows: Record<string, any>[]) =>
+    rows.map((r) =>
       admin && has(actor, "COST_VIEW")
         ? { id: r.id, version: r.version, ...toInput(r) }
         : staffProduct(r, actor, settings),
     );
-  }
-  // Bound each ranked candidate set before joining prices; avoid sorting the entire catalog.
-  const candidates = `WITH candidates AS (
-    (SELECT id,0 AS rank FROM products WHERE ${active} AND normalized_part=$1 LIMIT 50)
-    UNION ALL (SELECT p.id,0 FROM products p JOIN product_aliases a ON a.product_id=p.id WHERE ${admin ? "true" : "p.active"} AND a.normalized=$1 LIMIT 50)
-    UNION ALL (SELECT id,1 FROM products WHERE ${active} AND normalized_part LIKE $2 ORDER BY normalized_part LIMIT 50)
-    UNION ALL (SELECT id,2 FROM products WHERE ${active} AND normalized_part LIKE $3 ORDER BY normalized_part LIMIT 50)
-    UNION ALL (SELECT p.id,2 FROM products p JOIN product_aliases a ON a.product_id=p.id WHERE ${admin ? "true" : "p.active"} AND a.normalized LIKE $3 ORDER BY p.normalized_part LIMIT 50)
-    UNION ALL (SELECT id,3 FROM products WHERE ${active} AND description ILIKE $3 LIMIT 50)
-    UNION ALL (SELECT id,4 FROM products WHERE ${active} AND keywords ILIKE $3 LIMIT 50)
-    UNION ALL (SELECT p.id,4 FROM products p JOIN brands b ON b.id=p.brand_id WHERE ${admin ? "true" : "p.active"} AND b.name ILIKE $3 LIMIT 50)
-    UNION ALL (SELECT p.id,4 FROM products p JOIN categories c ON c.id=p.category_id WHERE ${admin ? "true" : "p.active"} AND c.name ILIKE $3 LIMIT 50)
-  ), ranked AS (SELECT id,min(rank) AS rank FROM candidates GROUP BY id)
-  `;
-  const rows = await db.query(
-    candidates +
+  const productPredicate = `(
+    p.normalized_part=$1
+    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized=$1)
+    OR p.normalized_part LIKE $2 ESCAPE '\\'
+    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $2 ESCAPE '\\')
+    OR p.normalized_part LIKE $3 ESCAPE '\\'
+    OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $3 ESCAPE '\\')
+    OR p.description ILIKE $3 ESCAPE '\\'
+    OR p.keywords ILIKE $3 ESCAPE '\\'
+    OR EXISTS(SELECT 1 FROM brands b WHERE b.id=p.brand_id AND b.name ILIKE $3 ESCAPE '\\')
+    OR EXISTS(SELECT 1 FROM categories c WHERE c.id=p.category_id AND c.name ILIKE $3 ESCAPE '\\')
+  )`;
+  const ranked = `WITH ranked AS (
+    SELECT
+      p.id,
+      CASE
+        WHEN p.normalized_part=$1
+          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized=$1)
+          THEN 0
+        WHEN p.normalized_part LIKE $2 ESCAPE '\\'
+          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $2 ESCAPE '\\')
+          THEN 1
+        WHEN p.normalized_part LIKE $3 ESCAPE '\\'
+          OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.normalized LIKE $3 ESCAPE '\\')
+          THEN 2
+        WHEN p.description ILIKE $3 ESCAPE '\\' THEN 3
+        ELSE 4
+      END AS rank
+    FROM products p
+    WHERE ${active} AND ${productPredicate}
+  )`;
+  if (!q) {
+    if (!admin) {
+      const rows = await db.query(
+        productSelect +
+          ` WHERE ${admin ? "true" : "p.active"} ORDER BY p.normalized_part LIMIT 50`,
+      );
+      return mapRows(rows.rows);
+    }
+    const totalRows = Number(
+      (
+        await one(
+          db,
+          `SELECT count(*)::int AS n FROM products p WHERE ${
+            admin ? "true" : "p.active"
+          }`,
+        )
+      )!.n,
+    );
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    const safePage = Math.min(page, totalPages - 1);
+    const safeOffset = safePage * pageSize;
+    const rows = await db.query(
       productSelect +
-      ` JOIN ranked r ON r.id=p.id ORDER BY r.rank,p.normalized_part LIMIT 50`,
-    [q, escaped + "%", "%" + escaped + "%"],
+        ` WHERE true ORDER BY p.normalized_part LIMIT $1 OFFSET $2`,
+      [pageSize, safeOffset],
+    );
+    const selectableItems = (
+      await db.query(
+        `SELECT id,version FROM products p ORDER BY p.normalized_part LIMIT $1`,
+        [selectionLimit],
+      )
+    ).rows;
+    return {
+      items: mapRows(rows.rows),
+      page: safePage,
+      pageSize,
+      totalRows,
+      totalPages,
+      hasMore: safePage + 1 < totalPages,
+      selectableItems,
+      selectionLimitReached: totalRows > selectionLimit,
+    };
+  }
+  if (!admin) {
+    const rows = await db.query(
+      ranked +
+        productSelect +
+        ` JOIN ranked r ON r.id=p.id ORDER BY r.rank,p.normalized_part LIMIT 50`,
+      [q, escaped + "%", "%" + escaped + "%"],
+    );
+    return mapRows(rows.rows);
+  }
+  const totalRows = Number(
+    (
+      await one(
+        db,
+        ranked + " SELECT count(*)::int AS n FROM ranked",
+        [q, escaped + "%", "%" + escaped + "%"],
+      )
+    )!.n,
   );
-  return rows.rows.map((r) =>
-    admin && has(actor, "COST_VIEW")
-      ? { id: r.id, version: r.version, ...toInput(r) }
-      : staffProduct(r, actor, settings),
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const safeOffset = safePage * pageSize;
+  const args = [q, escaped + "%", "%" + escaped + "%"];
+  const rows = await db.query(
+    ranked +
+      productSelect +
+      ` JOIN ranked r ON r.id=p.id ORDER BY r.rank,p.normalized_part LIMIT $4 OFFSET $5`,
+    [...args, pageSize, safeOffset],
   );
+  const selectableItems = (
+    await db.query(
+      ranked +
+        ` SELECT p.id,p.version
+          FROM products p
+          JOIN ranked r ON r.id=p.id
+          ORDER BY r.rank,p.normalized_part
+          LIMIT $4`,
+      [...args, selectionLimit],
+    )
+  ).rows;
+  return {
+    items: mapRows(rows.rows),
+    page: safePage,
+    pageSize,
+    totalRows,
+    totalPages,
+    hasMore: safePage + 1 < totalPages,
+    selectableItems,
+    selectionLimitReached: totalRows > selectionLimit,
+  };
 }

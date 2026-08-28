@@ -219,7 +219,20 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             actor,
             url.searchParams.get("q") ?? "",
             settings,
-            true,
+            {
+              admin: true,
+              page: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              pageSize: z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
+            },
           ),
         );
       if (id === "bulk" && method === "POST")

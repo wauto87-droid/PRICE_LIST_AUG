@@ -413,6 +413,27 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.deepEqual(pageTwo.groupValues, ["LIGHTING", "PPCCB"]);
     assert.equal(pageTwo.reviewStats.unverifiedRows, 120);
   });
+  await t.test("Admin product list pages results and exposes full-match selection", async () => {
+    for (let i = 0; i < 55; i++)
+      await request("products", "POST", {
+        ...base,
+        partNumber: `PAGE-${String(i).padStart(3, "0")}`,
+        description: `Paged product ${i}`,
+        aliases: [],
+      });
+    const pageOne = (await request("products?q=PAGE")).data;
+    const pageTwo = (await request("products?q=PAGE&page=1&pageSize=50")).data;
+    assert.equal(pageOne.totalRows, 55);
+    assert.equal(pageOne.totalPages, 2);
+    assert.equal(pageOne.items.length, 50);
+    assert.equal(pageOne.selectableItems.length, 55);
+    assert.equal(pageTwo.page, 1);
+    assert.equal(pageTwo.items.length, 5);
+  });
+  await t.test("Product search matches partial description text", async () => {
+    const results = (await request("search?q=Contactor 9A")).data;
+    assert.equal(results[0].partNumber, "LC1D09M7");
+  });
   await t.test(
     "Import cannot publish until mapped, reviewed, and verified",
     async () => {
@@ -553,7 +574,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
   await t.test(
     "Bulk minimum can exceed 100 SAR and preview does not mutate data",
     async () => {
-      const before = (await request("products?q=LC1D")).data[0];
+      const before = (await request("products?q=LC1D")).data.items[0];
       const payload = {
         items: [{ id: productId, version: before.version }],
         operation: "MINIMUM",
@@ -562,31 +583,31 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       };
       await request("products/bulk", "POST", payload);
       assert.equal(
-        (await request("products?q=LC1D")).data[0].minimum,
+        (await request("products?q=LC1D")).data.items[0].minimum,
         before.minimum,
       );
       await request("products/bulk", "POST", { ...payload, confirm: true });
       assert.equal(
-        (await request("products?q=LC1D")).data[0].minimum,
+        (await request("products?q=LC1D")).data.items[0].minimum,
         "120.00",
       );
     },
   );
   await t.test("Bulk archive and reactivate update product status", async () => {
-    const before = (await request("products?q=LC1D")).data[0];
+    const before = (await request("products?q=LC1D")).data.items[0];
     await request("products/bulk", "POST", {
       items: [{ id: before.id, version: before.version }],
       operation: "ARCHIVE",
       confirm: true,
     });
-    const archived = (await request("products?q=LC1D")).data[0];
+    const archived = (await request("products?q=LC1D")).data.items[0];
     assert.equal(archived.active, false);
     await request("products/bulk", "POST", {
       items: [{ id: archived.id, version: archived.version }],
       operation: "REACTIVATE",
       confirm: true,
     });
-    const restored = (await request("products?q=LC1D")).data[0];
+    const restored = (await request("products?q=LC1D")).data.items[0];
     assert.equal(restored.active, true);
   });
   await t.test("Bulk delete removes unused products", async () => {
@@ -602,7 +623,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       operation: "DELETE",
       confirm: true,
     });
-    assert.equal((await request("products?q=DELETE-ME")).data.length, 0);
+    assert.equal((await request("products?q=DELETE-ME")).data.items.length, 0);
   });
   await t.test("Bulk delete blocks products used in quotations", async () => {
     const p = (
@@ -661,7 +682,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         rows: [{ id: ids[1], decision: "SKIP", verified: false }],
       });
       await request("imports/" + iid + "/confirm", "POST", { version: 4 });
-      const p = (await request("products?q=DOUBLE")).data[0];
+      const p = (await request("products?q=DOUBLE")).data.items[0];
       await request("products/" + p.id, "PUT", {
         ...p,
         id: undefined,

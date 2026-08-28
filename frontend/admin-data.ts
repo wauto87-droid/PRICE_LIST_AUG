@@ -15,6 +15,13 @@ export function validateAdminData(section: string, value: any) {
         ? object &&
           Array.isArray(value.roles) &&
           Array.isArray(value.permissions)
+        : section === "products"
+          ? object &&
+            Array.isArray(value.items) &&
+            Number.isInteger(value.page) &&
+            Number.isInteger(value.pageSize) &&
+            Number.isInteger(value.totalRows) &&
+            Number.isInteger(value.totalPages)
         : section === "settings"
           ? object
           : Array.isArray(value);
