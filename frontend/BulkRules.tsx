@@ -501,12 +501,12 @@ export default function BulkRules({
                       <input
                         type="checkbox"
                         aria-label={"Select " + item.partNumber}
-                        checked={selected?.includes(item.id) ?? false}
+                        checked={selected === null || selected.includes(item.id)}
                         onChange={(e) => {
                           setSelected(
                             e.target.checked
                               ? [...(selected ?? []), item.id]
-                              : (selected ?? []).filter((id) => id !== item.id),
+                              : (selected ?? preview.items.map((i: any) => i.id)).filter((id: string) => id !== item.id),
                           );
                           setSelectionChanged(true);
                         }}
