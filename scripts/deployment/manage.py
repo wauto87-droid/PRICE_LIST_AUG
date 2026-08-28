@@ -1232,7 +1232,10 @@ class Deployment:
         if not target_url:
             return
         target = parse_public_url(target_url)
-        upstream = self.stable_upstream()
+        try:
+            upstream = self.healthy_upstream()
+        except Exception:
+            upstream = self.stable_upstream()
         self.stage(f'Refresh Caddy proxy upstream to {upstream}')
         created_site = self._apply_caddy(target, upstream)
         atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
