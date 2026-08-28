@@ -685,6 +685,24 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       409,
     );
   });
+  await t.test("Bulk archive supports large matched selections up to 5000 items", async () => {
+    for (let i = 0; i < 1005; i++)
+      await request("products", "POST", {
+        ...base,
+        partNumber: `BULK-LARGE-${String(i).padStart(4, "0")}`,
+        description: `Large bulk product ${i}`,
+        aliases: [],
+      });
+    const matched = (await request("products?q=BULK-LARGE")).data;
+    assert.equal(matched.selectableItems.length, 1005);
+    await request("products/bulk", "POST", {
+      items: matched.selectableItems,
+      operation: "ARCHIVE",
+      confirm: true,
+    });
+    const archived = (await request("products?q=BULK-LARGE")).data;
+    assert(archived.items.every((item: any) => item.active === false));
+  });
   await t.test(
     "Import detects duplicates within the file atomically",
     async () => {
@@ -778,8 +796,18 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     "Audit includes pricing/import actions but not password hashes",
     async () => {
       const rows = (await request("admin/audit")).data;
-      assert(rows.some((r: any) => r.action === "EXCEL_IMPORT"));
-      assert(rows.some((r: any) => r.action === "IMPORT_ROLLBACK"));
+      assert(
+        await one(
+          db,
+          "SELECT 1 AS ok FROM audit_logs WHERE action='EXCEL_IMPORT' LIMIT 1",
+        ),
+      );
+      assert(
+        await one(
+          db,
+          "SELECT 1 AS ok FROM audit_logs WHERE action='IMPORT_ROLLBACK' LIMIT 1",
+        ),
+      );
       assert(!JSON.stringify(rows).includes("password_hash"));
     },
   );

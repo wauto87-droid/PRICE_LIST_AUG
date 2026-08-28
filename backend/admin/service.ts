@@ -257,7 +257,7 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
   requirePermission(actor, "PRODUCT_EDIT");
   const data = z
     .object({
-      items: z.array(bulkItemSchema).min(1).max(1000),
+      items: z.array(bulkItemSchema).min(1).max(5000),
       operation: z.enum([
         "ARCHIVE",
         "REACTIVATE",
