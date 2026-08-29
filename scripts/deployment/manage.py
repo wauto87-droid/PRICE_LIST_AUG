@@ -772,15 +772,21 @@ class Deployment:
                 if self.native_runtime():
                     states = self.pm2_running()
                     if all(states.get(name) == 'online' for name in PM2_PROCESSES):
-                        self.healthy_upstream()
-                        return
+                        try:
+                            self.healthy_upstream()
+                            return
+                        except DeployError:
+                            pass
                 else:
                     ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
                     if len(ids) == 3:
                         states = json.loads(decoded(self.engine('inspect', *ids)))
                         if all(c.get('State', {}).get('Running') for c in states):
-                            self.healthy_upstream()
-                            return
+                            try:
+                                self.healthy_upstream()
+                                return
+                            except DeployError:
+                                pass
             time.sleep(3)
         raise DeployError('Health checks failed; project remains in recovery state')
 

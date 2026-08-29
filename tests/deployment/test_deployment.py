@@ -731,6 +731,24 @@ www.softwaresolver.online {
             with self.assertRaisesRegex(m.DeployError, 'did not respond'):
                 d.healthy_upstream()
 
+    def test_healthy_retries_until_upstream_is_ready(self):
+        d = self.deployment()
+        d.env = m.new_env(18180, runtime='pm2')
+        d.database = Mock(return_value=result('1'))
+        d.pm2_running = Mock(return_value={
+            'amt-pricelist-app': 'online',
+            'amt-pricelist-worker': 'online',
+        })
+        d.healthy_upstream = Mock(side_effect=[
+            m.DeployError('not ready yet'),
+            None,
+        ])
+        with patch.object(m.time, 'sleep') as sleep, \
+             patch.object(m.time, 'monotonic', side_effect=[0, 1, 2]):
+            d.healthy()
+        self.assertEqual(d.healthy_upstream.call_count, 2)
+        sleep.assert_called_once_with(3)
+
     def test_external_images_and_local_tags_are_qualified(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
         compose = (ROOT / 'compose.yaml').read_text()
