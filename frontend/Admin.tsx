@@ -1024,6 +1024,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                             }}
                           />
                         )}
+                      {bulk.operation === "REMOVE_MINIMUM" && (
+                        <span className="muted">
+                          {t(
+                            "Remove minimum fully disables protection for this batch. Use this instead of setting the minimum to 0.",
+                            "إزالة الحد الأدنى تعطل الحماية بالكامل لهذه الدفعة. استخدمها بدلاً من تعيين الحد الأدنى إلى 0.",
+                          )}
+                        </span>
+                      )}
                       {priceBulkOperations.has(bulk.operation) ? (
                         <button
                           disabled={busy || !selectedCount}

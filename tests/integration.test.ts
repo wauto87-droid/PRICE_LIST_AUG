@@ -721,6 +721,38 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       );
     },
   );
+  await t.test(
+    "Remove minimum fully disables protection and dashboard excludes zero floors",
+    async () => {
+      const protectedBefore = (
+        await request("admin/dashboard")
+      ).data.products.protected;
+      const before = (await request("products?q=LC1D")).data.items[0];
+      await request("products/bulk", "POST", {
+        items: [{ id: before.id, version: before.version }],
+        operation: "REMOVE_MINIMUM",
+        confirm: true,
+      });
+      const after = (await request("products?q=LC1D")).data.items[0];
+      assert.equal(after.minimumEnabled, false);
+      assert.equal(after.minimum, "0.00");
+      const dashboardAfter = (await request("admin/dashboard")).data;
+      assert.equal(
+        dashboardAfter.minimumProtected.some((item: any) => item.id === before.id),
+        false,
+      );
+      assert.equal(
+        Number(dashboardAfter.products.protected) <= Number(protectedBefore),
+        true,
+      );
+      await request("products/" + before.id, "PUT", {
+        ...base,
+        version: after.version,
+        minimumEnabled: true,
+        minimum: "120",
+      });
+    },
+  );
   await t.test("Bulk archive and reactivate update product status", async () => {
     const before = (await request("products?q=LC1D")).data.items[0];
     await request("products/bulk", "POST", {

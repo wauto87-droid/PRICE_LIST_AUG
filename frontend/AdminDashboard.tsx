@@ -853,8 +853,8 @@ export default function AdminDashboard({
               <tr>
                 <td colSpan={6}>
                   {t(
-                    "No products currently use minimum protection",
-                    "لا توجد أصناف تستخدم حماية الحد الأدنى حالياً",
+                    "No products currently use a positive minimum protection rule.",
+                    "لا توجد أصناف تستخدم حالياً قاعدة حد أدنى موجبة للحماية.",
                   )}
                 </td>
               </tr>

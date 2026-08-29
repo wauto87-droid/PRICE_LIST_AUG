@@ -87,7 +87,7 @@ export async function dashboard(db: DB) {
   return {
     products: await one(
       db,
-      `SELECT count(*) AS total,count(*) FILTER(WHERE p.active) AS active,count(*) FILTER(WHERE method='COST_MARKUP') AS markup,count(*) FILTER(WHERE method='LIST_DISCOUNT') AS discount,count(*) FILTER(WHERE minimum_enabled) AS protected,count(*) FILTER(WHERE p.updated_at::date=current_date) AS updated FROM products p JOIN product_pricing pp ON p.id=pp.product_id`,
+      `SELECT count(*) AS total,count(*) FILTER(WHERE p.active) AS active,count(*) FILTER(WHERE method='COST_MARKUP') AS markup,count(*) FILTER(WHERE method='LIST_DISCOUNT') AS discount,count(*) FILTER(WHERE pp.minimum_enabled AND pp.minimum > 0) AS protected,count(*) FILTER(WHERE p.updated_at::date=current_date) AS updated FROM products p JOIN product_pricing pp ON p.id=pp.product_id`,
     ),
     quotes: await one(
       db,
@@ -162,6 +162,7 @@ export async function dashboard(db: DB) {
          FROM products p
          JOIN product_pricing pp ON pp.product_id = p.id
          WHERE pp.minimum_enabled
+           AND pp.minimum > 0
          ORDER BY p.updated_at DESC, p.part_number
          LIMIT 50`,
       )
@@ -482,7 +483,10 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
         after.minimum = data.value!;
         after.minimumEnabled = true;
       }
-      if (data.operation === "REMOVE_MINIMUM") after.minimumEnabled = false;
+      if (data.operation === "REMOVE_MINIMUM") {
+        after.minimumEnabled = false;
+        after.minimum = "0";
+      }
       validateProduct(productInput.parse(after));
       preview.push({
         id: item.id,
