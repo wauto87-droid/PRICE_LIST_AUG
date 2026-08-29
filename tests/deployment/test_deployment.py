@@ -941,8 +941,14 @@ www.softwaresolver.online {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'db',
             }}, 'State': {'Running': False}}])
+            d.compose = Mock(return_value=result())
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
             d.database = Mock(return_value=result('0'))
             d.check_replace_failed()
+            d.compose.assert_called_once_with('up', '-d', '--no-deps', '--no-build', 'db')
+            d.verify_limits.assert_called_once_with('db')
+            d.wait_db.assert_called_once()
             self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
 
     def test_replacement_guard_allows_empty_initialized_database(self):

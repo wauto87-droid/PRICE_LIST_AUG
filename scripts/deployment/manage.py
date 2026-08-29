@@ -1258,6 +1258,10 @@ class Deployment:
             require(len(db_owned) == 1, 'Database storage exists without exactly one recognized database container')
             if self.release is None:
                 self.release = self.recovery_release(recovery)
+            if 'db' not in running_services:
+                self.compose('up', '-d', '--no-deps', '--no-build', 'db')
+                self.verify_limits('db')
+                self.wait_db()
             exists = self.database("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='migrations';", check=False)
             require(exists.returncode == 0 and decoded(exists) in ('0', '1'), 'Replacement refused because database state is ambiguous')
             if decoded(exists) == '1':
