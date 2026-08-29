@@ -22,6 +22,18 @@ const actions: Record<string, [string, string]> = {
     "Below-minimum price approved",
     "تم اعتماد سعر أقل من الحد الأدنى",
   ],
+  DISCOUNT_REQUEST_CREATE: [
+    "Discount request created",
+    "تم إنشاء طلب خصم",
+  ],
+  DISCOUNT_REQUEST_APPROVE: [
+    "Discount request approved",
+    "تم اعتماد طلب الخصم",
+  ],
+  DISCOUNT_REQUEST_REJECT: [
+    "Discount request rejected",
+    "تم رفض طلب الخصم",
+  ],
   EXCEL_UPLOAD: ["Spreadsheet uploaded", "تم رفع جدول أسعار"],
   PDF_UPLOAD: ["PDF uploaded", "تم رفع ملف PDF"],
   EXCEL_IMPORT: ["Spreadsheet import completed", "اكتمل استيراد جدول الأسعار"],
@@ -93,6 +105,13 @@ const fields: Record<string, [string, string]> = {
   updated: ["Products updated", "أصناف محدثة"],
   skipped: ["Rows skipped", "صفوف متخطاة"],
   price: ["Approved price before VAT", "السعر المعتمد قبل الضريبة"],
+  requestedDiscount: ["Requested discount", "الخصم المطلوب"],
+  requestedFinalPrice: ["Requested final price", "السعر النهائي المطلوب"],
+  protectedPrice: ["Protected price", "السعر المحمي"],
+  sellingLevel: ["Selling level", "مستوى البيع"],
+  quantity: ["Quantity", "الكمية"],
+  status: ["Status", "الحالة"],
+  decisionNote: ["Decision note", "ملاحظة القرار"],
 };
 const permissions: Record<string, [string, string]> = {
   PRODUCT_VIEW: ["View products", "عرض الأصناف"],

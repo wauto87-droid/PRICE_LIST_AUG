@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
-import { showConfirm } from "./confirm";
 import {
   buildLookupLineRequest,
   previewLookupPrice,
@@ -15,6 +14,11 @@ import {
   suggestionOptionId,
   topSuggestions,
 } from "./lookup-suggestions";
+import {
+  isSelectedLookupQuery,
+  normalizeLookupQuery,
+  relatedLookupResults,
+} from "./lookup-view";
 export default function Lookup({
   t,
   onAdd,
@@ -44,10 +48,15 @@ export default function Lookup({
     [error, setError] = useState(""),
     [pricingBusy, setPricingBusy] = useState(false),
     [adding, setAdding] = useState(false),
+    [requestBusy, setRequestBusy] = useState(false),
     [searching, setSearching] = useState(false),
     [suggestionsOpen, setSuggestionsOpen] = useState(false),
+    [showRelatedMatches, setShowRelatedMatches] = useState(false),
     [highlightedIndex, setHighlightedIndex] = useState(-1),
-    [stamp, setStamp] = useState("");
+    [stamp, setStamp] = useState(""),
+    [requestDialogOpen, setRequestDialogOpen] = useState(false),
+    [discountRequestReason, setDiscountRequestReason] = useState(""),
+    [requestFeedback, setRequestFeedback] = useState("");
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
     comboboxId = useRef(`lookup-combobox-${Math.random().toString(36).slice(2)}`),
@@ -69,9 +78,10 @@ export default function Lookup({
         setResults([]);
         setSuggestionsOpen(false);
         setHighlightedIndex(-1);
+        setShowRelatedMatches(false);
         return;
       }
-      if (trimmedQuery === selected?.partNumber) {
+      if (isSelectedLookupQuery(trimmedQuery, selected?.partNumber)) {
         setSearching(false);
         setSuggestionsOpen(false);
         setHighlightedIndex(-1);
@@ -138,7 +148,9 @@ export default function Lookup({
         }
         if (current === searchGeneration.current) {
           setResults(rows);
-          setSuggestionsOpen(rows.length > 0 && trimmedQuery !== selected?.partNumber);
+          setSuggestionsOpen(
+            rows.length > 0 && !isSelectedLookupQuery(trimmedQuery, selected?.partNumber),
+          );
         }
       } catch (e) {
         if (current === searchGeneration.current)
@@ -146,12 +158,15 @@ export default function Lookup({
       } finally {
         if (current === searchGeneration.current) setSearching(false);
       }
-    }, 180);
+    }, 90);
     return () => clearTimeout(timer);
   }, [query, online, selected?.partNumber, settings.allowOfflineCache, user.id]);
   useEffect(() => {
     if (!selected) return;
     setError("");
+    setRequestDialogOpen(false);
+    setDiscountRequestReason("");
+    setRequestFeedback("");
   }, [selected?.id, sellingLevel, quantity, discount]);
   useEffect(() => {
     if (!selected || !online) {
@@ -212,6 +227,7 @@ export default function Lookup({
     setPrice(null);
     setError("");
     setSuggestionsOpen(false);
+    setShowRelatedMatches(false);
     setHighlightedIndex(-1);
   }
   function chooseLevel(code: string) {
@@ -251,6 +267,7 @@ export default function Lookup({
       setQuery("");
       setResults([]);
       setSuggestionsOpen(false);
+      setShowRelatedMatches(false);
       setHighlightedIndex(-1);
       setPrice(null);
       searchRef.current?.focus();
@@ -290,11 +307,12 @@ export default function Lookup({
     setQuery("");
     setResults([]);
     setSuggestionsOpen(false);
+    setShowRelatedMatches(false);
     setHighlightedIndex(-1);
     setPrice(null);
     searchRef.current?.focus();
   }
-  async function override() {
+  async function submitDiscountRequest() {
     if (!selected) return;
     let input;
     try {
@@ -303,54 +321,51 @@ export default function Lookup({
       setError((e as Error).message);
       return;
     }
-    const reason = prompt(
-      t(
-        "WARNING: Below-minimum pricing requires explicit approval. Enter the reason for this override.",
-        "تحذير: السعر أقل من الحد الأدنى. أدخل سبب التجاوز.",
-      ),
-    );
-    if (!reason?.trim()) return;
-    setPricingBusy(true);
+    if (!discountRequestReason.trim()) {
+      setError(
+        t(
+          "A reason is required before sending a discount request.",
+          "سبب الطلب مطلوب قبل إرسال طلب الخصم.",
+        ),
+      );
+      return;
+    }
+    setRequestBusy(true);
     try {
-      const p = await api("pricing", "POST", {
-        ...input,
-        override: true,
-        reason,
+      const request = await api("discount-requests", "POST", {
+        productId: input.productId,
+        sellingLevel: input.sellingLevel,
+        quantity: input.quantity,
+        discount: input.discount,
+        reason: discountRequestReason,
       });
-      if (
-        !(await showConfirm(
-          t(
-            `Minimum-protected price: SAR ${displayPrice?.finalExcl ?? p.finalExcl}. Requested final price: SAR ${p.finalExcl}. Confirm override?`,
-            `السعر المحمي: ${displayPrice?.finalExcl ?? p.finalExcl} ر.س. السعر المطلوب: ${p.finalExcl} ر.س. تأكيد التجاوز؟`,
-          ),
-        ))
-      )
-        return;
-      setPrice({
-        input: {
-          sellingLevel: input.sellingLevel,
-          quantity: input.quantity,
-          discount: input.discount,
-        },
-        value: { ...p, overrideReason: reason },
-      });
+      setRequestDialogOpen(false);
+      setDiscountRequestReason("");
+      setRequestFeedback(
+        t(
+          `Discount request sent for ${request.partNumber}. Requested SAR ${request.requestedFinalPrice} against protected SAR ${request.protectedPrice}.`,
+          `تم إرسال طلب خصم للصنف ${request.partNumber}. السعر المطلوب ${request.requestedFinalPrice} ر.س مقابل السعر المحمي ${request.protectedPrice} ر.س.`,
+        ),
+      );
+      setError("");
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setPricingBusy(false);
+      setRequestBusy(false);
     }
   }
   const selectedPrice =
     selected && visibleLevels(selected).find((l) => l.code === sellingLevel);
+  const normalizedSelectedPart = normalizeLookupQuery(selected?.partNumber);
   const filteredResults = categoryFilter
     ? results.filter(
         (product) => (product.category || "UNCATEGORIZED") === categoryFilter,
       )
     : results;
-  const visibleResults = selected
-    ? filteredResults.filter((product) => product.id !== selected.id)
-    : filteredResults;
+  const visibleResults = relatedLookupResults(filteredResults, selected);
   const filteredSuggestions = topSuggestions(filteredResults, 8);
+  const relatedMatchesVisible = !selected || showRelatedMatches;
+  const hasRelatedMatches = !!selected && visibleResults.length > 0;
   const resolvedHighlightedIndex = activeSuggestionIndex(
     highlightedIndex,
     filteredSuggestions.length,
@@ -456,7 +471,10 @@ export default function Lookup({
                 )}
                 value={query}
                 onFocus={() => {
-                  if (filteredSuggestions.length) {
+                  if (
+                    filteredSuggestions.length &&
+                    !isSelectedLookupQuery(query, selected?.partNumber)
+                  ) {
                     setSuggestionsOpen(true);
                     setHighlightedIndex((current) =>
                       activeSuggestionIndex(current, filteredSuggestions.length),
@@ -464,9 +482,18 @@ export default function Lookup({
                   }
                 }}
                 onChange={(e) => {
-                  setQuery(e.target.value);
+                  const nextQuery = e.target.value;
+                  const keepsSelection =
+                    !!selected &&
+                    normalizeLookupQuery(nextQuery) === normalizedSelectedPart;
+                  setQuery(nextQuery);
                   setCategoryFilter("");
-                  setSuggestionsOpen(!!e.target.value.trim());
+                  setShowRelatedMatches(false);
+                  setSuggestionsOpen(!!nextQuery.trim() && !keepsSelection);
+                  if (selected && !keepsSelection) {
+                    setSelected(null);
+                    setPrice(null);
+                  }
                   setHighlightedIndex(0);
                 }}
                 onKeyDown={(e) => {
@@ -599,7 +626,7 @@ export default function Lookup({
             {t("Last synced", "آخر مزامنة")}: {new Date(stamp).toLocaleString()}
           </div>
         )}
-        {!!results.length && (
+        {!!results.length && (!selected || showRelatedMatches) && (
           <div className="actions wrap lookup-filters lookup-filter-bar">
             <label className="grow">
               {t("Category filter", "تصفية الفئة")}
@@ -625,7 +652,7 @@ export default function Lookup({
             </div>
           </div>
         )}
-        {!!visibleResults.length && (
+        {!!visibleResults.length && relatedMatchesVisible && (
           <div className="search-results lookup-results-panel">
             <div className="lookup-results-header">
               <div>
@@ -711,6 +738,22 @@ export default function Lookup({
                   .join(" · ") || t("Catalog item", "صنف كتالوج")}
               </span>
             </div>
+            {hasRelatedMatches && (
+              <div className="actions wrap">
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => setShowRelatedMatches((current) => !current)}
+                >
+                  {showRelatedMatches
+                    ? t("Hide related matches", "إخفاء النتائج ذات الصلة")
+                    : t(
+                        `Show related matches (${visibleResults.length})`,
+                        `عرض النتائج ذات الصلة (${visibleResults.length})`,
+                      )}
+                </button>
+              </div>
+            )}
             <div
               className="selling-levels"
               role="group"
@@ -877,16 +920,23 @@ export default function Lookup({
                     : t(
                         `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
                         `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
-                      )}
+                  )}
                 </p>
               )}
             </div>
-            {user.permissions.includes("OVERRIDE_MINIMUM_PRICE") &&
-              displayPrice?.minimumReached && (
-                <button className="link-button" onClick={override}>
-                  {t("Request below-minimum override", "طلب تجاوز الحد الأدنى")}
-                </button>
-              )}
+            {requestFeedback && <div className="notice">{requestFeedback}</div>}
+            {displayPrice?.minimumReached && (
+              <button
+                className="link-button"
+                onClick={() => {
+                  setError("");
+                  setRequestFeedback("");
+                  setRequestDialogOpen(true);
+                }}
+              >
+                {t("Request discount approval", "طلب اعتماد خصم")}
+              </button>
+            )}
             <button
               className="primary add-button"
               onClick={add}
@@ -930,6 +980,82 @@ export default function Lookup({
             )}
           </div>
         </aside>
+      )}
+      {requestDialogOpen && selected && displayPrice?.minimumReached && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="section-title">
+              <h2>{t("Request discount approval", "طلب اعتماد خصم")}</h2>
+              <button
+                type="button"
+                disabled={requestBusy}
+                onClick={() => setRequestDialogOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="notice">
+              {selected.partNumber} · {selected.description}
+            </div>
+            <div className="form-grid">
+              <label>
+                {t("Selling level", "مستوى البيع")}
+                <input value={levelLabel(sellingLevel, t)} readOnly />
+              </label>
+              <label>
+                {t("Quantity", "الكمية")}
+                <input value={quantity} readOnly />
+              </label>
+              <label>
+                {t("Requested discount", "الخصم المطلوب")}
+                <input value={`${discount || "0"}%`} readOnly />
+              </label>
+              <label>
+                {t("Protected price", "السعر المحمي")}
+                <input value={`SAR ${displayPrice.finalExcl}`} readOnly />
+              </label>
+              <label>
+                {t("Requested final price", "السعر النهائي المطلوب")}
+                <input value={`SAR ${estimate}`} readOnly />
+              </label>
+              <label>
+                {t("Current total incl. VAT", "الإجمالي الحالي شامل الضريبة")}
+                <input value={`SAR ${displayPrice.total}`} readOnly />
+              </label>
+              <label className="grow" style={{ gridColumn: "1 / -1" }}>
+                {t("Reason", "السبب")}
+                <textarea
+                  rows={4}
+                  value={discountRequestReason}
+                  onChange={(e) => setDiscountRequestReason(e.target.value)}
+                  placeholder={t(
+                    "Why is this price needed? This reason is required and will be visible to admin.",
+                    "لماذا تحتاج هذا السعر؟ هذا السبب مطلوب وسيظهر للإدارة.",
+                  )}
+                />
+              </label>
+            </div>
+            <div className="actions footer-actions">
+              <button
+                type="button"
+                disabled={requestBusy}
+                onClick={() => setRequestDialogOpen(false)}
+              >
+                {t("Cancel", "إلغاء")}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={requestBusy || !discountRequestReason.trim()}
+                onClick={submitDiscountRequest}
+              >
+                {requestBusy
+                  ? t("Sending…", "جارٍ الإرسال…")
+                  : t("Submit request", "إرسال الطلب")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

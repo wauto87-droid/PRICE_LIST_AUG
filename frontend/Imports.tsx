@@ -148,6 +148,7 @@ export default function Imports({
   const [jobs, setJobs] = useState<any[]>([]),
     [mode, setMode] = useState("UPDATE_ONLY"),
     [page, setPage] = useState(0),
+    [rowView, setRowView] = useState<"all" | "repair">("all"),
     [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
     [groupValues, setGroupValues] = useState<string[]>([]),
@@ -169,7 +170,8 @@ export default function Imports({
     [busy, setBusy] = useState(false),
     [linkDiscounts, setLinkDiscounts] = useState(true),
     [quickImportMode, setQuickImportMode] = useState(false),
-    [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false);
+    [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false),
+    [quickActionMessage, setQuickActionMessage] = useState("");
 
   const updateDefaultPreset = (field: keyof DiscountPreset, value: string) => {
     setGuidedDefaultPreset((prev) => {
@@ -282,19 +284,33 @@ export default function Imports({
     nextPage = 0,
     nextGroupColumn?: string,
     drafts = reviewDrafts,
+    nextRowView = rowView,
   ) {
     const query = new URLSearchParams({
       page: String(nextPage),
       pageSize: String(IMPORT_PAGE_SIZE),
+      rowView: nextRowView,
     });
     if (nextGroupColumn?.trim()) query.set("groupColumn", nextGroupColumn.trim());
     const j = await api("imports/" + id + "?" + query.toString());
     return { ...j, rows: applyReviewDrafts(j.rows || [], drafts) };
   }
-  async function loadJobPage(id: string, nextPage = 0, nextGroupColumn?: string) {
-    const j = await fetchJobPage(id, nextPage, nextGroupColumn);
+  async function loadJobPage(
+    id: string,
+    nextPage = 0,
+    nextGroupColumn?: string,
+    nextRowView = rowView,
+  ) {
+    const j = await fetchJobPage(
+      id,
+      nextPage,
+      nextGroupColumn,
+      reviewDrafts,
+      nextRowView,
+    );
     setJob(j);
     setPage(j.page || 0);
+    setRowView(nextRowView);
     setGroupValues(j.groupValues || []);
     return j;
   }
@@ -313,13 +329,13 @@ export default function Imports({
   }
   async function changePage(nextPage: number) {
     if (!job) return;
-    await loadJobPage(job.id, nextPage, guidedGroupColumn);
+    await loadJobPage(job.id, nextPage, guidedGroupColumn, rowView);
     if (confirmation) await loadConfirmation(job.id, nextPage);
   }
   async function open(id: string) {
     const emptyDrafts: Record<string, { decision?: string; verified?: boolean }> =
       {};
-    const j = await fetchJobPage(id, 0, undefined, emptyDrafts);
+    const j = await fetchJobPage(id, 0, undefined, emptyDrafts, "all");
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
     const { guidedImport, quickImport, ...productDefaults } = savedDefaults;
@@ -328,6 +344,8 @@ export default function Imports({
     setJob(j);
     setConfirmation(null);
     setPage(j.page || 0);
+    setRowView("all");
+    setQuickActionMessage("");
     setGroupValues(j.groupValues || []);
     setDefaults(
       Object.keys(productDefaults).length
@@ -931,8 +949,42 @@ export default function Imports({
                     {t("Valid rows", "الصفوف الصالحة")}: {job.quickStats.validRows} ·{" "}
                     {t("Invalid rows", "الصفوف غير الصالحة")}: {job.quickStats.invalidRows} ·{" "}
                     {t("Selected", "المحددة")}: {job.quickStats.selectedRows} ·{" "}
-                    {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows}
+                    {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows} ·{" "}
+                    {t("Ready to import", "جاهزة للاستيراد")}: {job.reviewStats?.readyRows ?? 0}
                   </div>
+                )}
+                {quickImportMode && (
+                  <div className="actions wrap">
+                    <button
+                      type="button"
+                      className={rowView === "all" ? "primary" : ""}
+                      disabled={busy || actionBusy}
+                      onClick={() =>
+                        run(async () => {
+                          setConfirmation(null);
+                          await loadJobPage(job.id, 0, guidedGroupColumn, "all");
+                        })
+                      }
+                    >
+                      {t("All rows", "كل الصفوف")} ({job.rowViewCounts?.allRows ?? job.totalRows})
+                    </button>
+                    <button
+                      type="button"
+                      className={rowView === "repair" ? "primary" : ""}
+                      disabled={busy || actionBusy || !(job.rowViewCounts?.repairRows ?? 0)}
+                      onClick={() =>
+                        run(async () => {
+                          setConfirmation(null);
+                          await loadJobPage(job.id, 0, guidedGroupColumn, "repair");
+                        })
+                      }
+                    >
+                      {t("Repair items", "عناصر الإصلاح")} ({job.rowViewCounts?.repairRows ?? 0})
+                    </button>
+                  </div>
+                )}
+                {quickImportMode && quickActionMessage && (
+                  <div className="notice warning">{quickActionMessage}</div>
                 )}
                 <div className="actions wrap">
                   {quickImportMode ? (
@@ -955,7 +1007,18 @@ export default function Imports({
                                 version: job.version,
                                 action: "SELECT_ALL",
                               });
-                              await open(job.id);
+                              const opened = await loadJobPage(
+                                job.id,
+                                rowView === "repair" ? 0 : page,
+                                guidedGroupColumn,
+                                rowView,
+                              );
+                              setQuickActionMessage(
+                                t(
+                                  `${opened.quickStats?.selectedRows ?? 0} rows selected for import`,
+                                  `تم تحديد ${opened.quickStats?.selectedRows ?? 0} صفوف للاستيراد`,
+                                ),
+                              );
                               await load();
                             },
                           )
@@ -981,7 +1044,18 @@ export default function Imports({
                                 version: job.version,
                                 action: "SKIP_INVALID",
                               });
-                              await open(job.id);
+                              const opened = await loadJobPage(
+                                job.id,
+                                rowView === "repair" ? 0 : page,
+                                guidedGroupColumn,
+                                rowView,
+                              );
+                              setQuickActionMessage(
+                                t(
+                                  `${opened.quickStats?.skippedRows ?? 0} rows marked to skip. ${opened.reviewStats?.readyRows ?? 0} valid rows remain ready to import`,
+                                  `تم وضع ${opened.quickStats?.skippedRows ?? 0} صفوف للتخطي. ما زال ${opened.reviewStats?.readyRows ?? 0} صفوف صالحة جاهزة للاستيراد`,
+                                ),
+                              );
                               await load();
                             },
                           )
@@ -1212,6 +1286,21 @@ export default function Imports({
                       </td>
                     </tr>
                   ))}
+                  {!job.rows.length && (
+                    <tr>
+                      <td colSpan={5}>
+                        {rowView === "repair"
+                          ? t(
+                              "No repair items on this import right now.",
+                              "لا توجد عناصر إصلاح في هذا الاستيراد حالياً.",
+                            )
+                          : t(
+                              "No rows are available on this page.",
+                              "لا توجد صفوف متاحة في هذه الصفحة.",
+                            )}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1228,7 +1317,10 @@ export default function Imports({
                   Previous
                 </button>
                 <span>
-                  Page {(job.page ?? page) + 1} / {job.totalPages ?? 1}
+                  {rowView === "repair"
+                    ? t("Repair page", "صفحة الإصلاح")
+                    : t("Page", "الصفحة")}{" "}
+                  {(job.page ?? page) + 1} / {job.totalPages ?? 1}
                 </span>
                 <button
                   disabled={!job.hasMore || busy || actionBusy}
@@ -1464,10 +1556,24 @@ export default function Imports({
               <>
                 {quickImportMode && job.quickStats?.invalidRows > 0 && (
                   <div className="notice warning">
-                    {t(
-                      `This import finished with ${job.quickStats.invalidRows} skipped rows. They remain available in these pages for repair.`,
-                      `اكتمل هذا الاستيراد مع ${job.quickStats.invalidRows} صفوف متخطاة. ما زالت متاحة في هذه الصفحات للإصلاح.`,
-                    )}
+                    <span>
+                      {t(
+                        `This import finished with ${job.quickStats.invalidRows} skipped rows. Open Repair items to fix them quickly.`,
+                        `اكتمل هذا الاستيراد مع ${job.quickStats.invalidRows} صفوف متخطاة. افتح عناصر الإصلاح لتصحيحها بسرعة.`,
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="link-button"
+                      disabled={busy || actionBusy}
+                      onClick={() =>
+                        run(async () => {
+                          await loadJobPage(job.id, 0, guidedGroupColumn, "repair");
+                        })
+                      }
+                    >
+                      {t("Open repair items", "فتح عناصر الإصلاح")}
+                    </button>
                   </div>
                 )}
                 <button

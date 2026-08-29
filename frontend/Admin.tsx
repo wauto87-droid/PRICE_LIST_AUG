@@ -20,6 +20,7 @@ import ProductEditor, { blankProduct } from "./ProductEditor";
 import Imports from "./Imports";
 import BulkRules from "./BulkRules";
 import QuotationSettings from "./QuotationSettings";
+import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
@@ -35,6 +36,7 @@ const sections = [
   ["dashboard", "Dashboard", "لوحة التحكم", "ADMIN_VIEW"],
   ["products", "Products", "الأصناف", "PRODUCT_EDIT"],
   ["imports", "Imports / PDF", "الاستيراد / PDF", "IMPORT_CONFIRM"],
+  ["discount-requests", "Discount Requests", "طلبات الخصم", "OVERRIDE_MINIMUM_PRICE"],
   ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
   ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
   ["users", "Users", "المستخدمون", "USER_MANAGE"],
@@ -127,7 +129,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
-    if (["imports", "rules", "quotation-settings"].includes(section)) return;
+    if (["imports", "rules", "quotation-settings", "discount-requests"].includes(section)) return;
     try {
       const payload = await api(
         section === "products"
@@ -380,7 +382,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       <section className="card admin-content">
         <div className="section-title">
           <h2>{t(heading[1], heading[2])}</h2>
-          {!["imports", "rules", "quotation-settings"].includes(section) && (
+          {!["imports", "rules", "quotation-settings", "discount-requests"].includes(section) && (
             <button disabled={busy} onClick={() => void load()}>
               {t("Refresh", "تحديث")}
             </button>
@@ -397,6 +399,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <BulkRules t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "quotation-settings" ? (
           <QuotationSettings t={t} actionBusy={busy} onAction={runAction} />
+        ) : section === "discount-requests" ? (
+          <DiscountRequestsAdmin t={t} actionBusy={busy} onAction={runAction} />
         ) : !data ? (
           <p>
             {error

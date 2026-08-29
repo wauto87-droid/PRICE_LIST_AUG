@@ -11,6 +11,7 @@ import * as quotes from "../quotations/service";
 import * as quoteSettings from "../quotations/settings";
 import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
+import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
@@ -210,6 +211,24 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         ...price,
         ...(settings.showMaxDiscount ? { maxDiscount } : {}),
       });
+    }
+    if (root === "discount-requests") {
+      if (!id && method === "POST")
+        return response(
+          await discountRequests.createRequest(db, actor, await body(req)),
+        );
+      if (!id && method === "GET")
+        return response(await discountRequests.listRequests(db, actor));
+      if (id && method === "GET")
+        return response(await discountRequests.getRequestDetail(db, actor, uuid(id)));
+      if (id && action === "approve" && method === "POST")
+        return response(
+          await discountRequests.approveRequest(db, actor, uuid(id), await body(req)),
+        );
+      if (id && action === "reject" && method === "POST")
+        return response(
+          await discountRequests.rejectRequest(db, actor, uuid(id), await body(req)),
+        );
     }
     if (root === "products") {
       if (method === "GET" && !id)
@@ -512,6 +531,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               z.coerce.number().int().min(0).parse(url.searchParams.get("page") ?? 0),
               z.coerce.number().int().min(1).max(200).parse(url.searchParams.get("pageSize") ?? 50),
               url.searchParams.get("groupColumn"),
+              z.enum(["all", "repair"]).parse(url.searchParams.get("rowView") ?? "all"),
             ),
           );
         if (action === "mapping" && method === "POST")

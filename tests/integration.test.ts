@@ -276,6 +276,73 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       );
     },
   );
+  await t.test(
+    "Below-minimum discount requests persist for admin review with history and quotation context",
+    async () => {
+      await request(
+        "discount-requests",
+        "POST",
+        {
+          productId,
+          sellingLevel: "END_CUSTOMER",
+          quantity: "2",
+          discount: "20",
+          reason: "",
+        },
+        400,
+      );
+      const rejected = (
+        await request("discount-requests", "POST", {
+          productId,
+          sellingLevel: "END_CUSTOMER",
+          quantity: "2",
+          discount: "20",
+          reason: "Need approval for a project customer",
+        })
+      ).data;
+      const approved = (
+        await request("discount-requests", "POST", {
+          productId,
+          sellingLevel: "END_CUSTOMER",
+          quantity: "3",
+          discount: "18",
+          reason: "Repeat customer request",
+        })
+      ).data;
+      await request("discount-requests", "GET", undefined, 403);
+      cookie = adminCookie;
+      csrf = adminCsrf;
+      const pending = (await request("discount-requests")).data;
+      assert.equal(pending.counts.pending, 2);
+      const detail = (await request("discount-requests/" + rejected.id)).data;
+      assert.equal(detail.reason, "Need approval for a project customer");
+      assert.equal(detail.quotations[0].id, quoteId);
+      assert(detail.history.length >= 1);
+      await request("discount-requests/" + rejected.id + "/reject", "POST", {
+        note: "Below protected floor for this order",
+      });
+      await request("discount-requests/" + approved.id + "/approve", "POST", {
+        note: "Approved for strategic account",
+      });
+      const rejectedDetail = (
+        await request("discount-requests/" + rejected.id)
+      ).data;
+      const approvedDetail = (
+        await request("discount-requests/" + approved.id)
+      ).data;
+      assert.equal(rejectedDetail.status, "REJECTED");
+      assert.equal(rejectedDetail.decisionNote, "Below protected floor for this order");
+      assert.equal(rejectedDetail.events.length, 2);
+      assert.equal(approvedDetail.status, "APPROVED");
+      assert.equal(approvedDetail.decisionNote, "Approved for strategic account");
+      const afterReview = (await request("discount-requests")).data;
+      assert.equal(afterReview.counts.pending, 0);
+      assert.equal(afterReview.counts.approved, 1);
+      assert.equal(afterReview.counts.rejected, 1);
+      cookie = staffCookie;
+      csrf = staffCsrf;
+    },
+  );
   cookie = adminCookie;
   csrf = adminCsrf;
   await t.test(
@@ -483,6 +550,18 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(fallback[0].partNumber, "DESC-ONLY-PANEL");
     },
   );
+  await t.test("Lookup search returns a lean payload with pricing-ready fields", async () => {
+    const results = (await request("search?q=LC1D09M7")).data;
+    assert.equal(results[0].partNumber, "LC1D09M7");
+    assert.equal(results[0].defaultLevel, "END_CUSTOMER");
+    assert.equal(Array.isArray(results[0].sellingLevels), true);
+    assert.equal(typeof results[0].sellingLevels[0].masterExcl, "string");
+    assert.equal(typeof results[0].sellingLevels[0].masterIncl, "string");
+    assert.equal("version" in results[0], false);
+    assert.equal("aliases" in results[0], false);
+    assert.equal("keywords" in results[0], false);
+    assert.equal("active" in results[0], false);
+  });
   await t.test(
     "Import cannot publish until mapped, reviewed, and verified",
     async () => {
@@ -918,6 +997,19 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(imported.quickStats.invalidRows, 2);
       assert.equal(imported.rows[2].decision, "SKIP");
       assert.equal(imported.rows[3].decision, "SKIP");
+      const repairPageOne = (
+        await request("imports/" + iid + "?rowView=repair&page=0&pageSize=1")
+      ).data;
+      const repairPageTwo = (
+        await request("imports/" + iid + "?rowView=repair&page=1&pageSize=1")
+      ).data;
+      assert.equal(repairPageOne.rowView, "repair");
+      assert.equal(repairPageOne.totalRows, 4);
+      assert.equal(repairPageOne.filteredRows, 2);
+      assert.equal(repairPageOne.rowViewCounts.repairRows, 2);
+      assert.equal(repairPageOne.totalPages, 2);
+      assert.equal(repairPageOne.rows[0].row_number, 3);
+      assert.equal(repairPageTwo.rows[0].row_number, 4);
       assert.equal((await request("products?q=EZ9F56116")).data.items.length, 1);
       const noDesc = (await request("products?q=QUICK-NO-DESC")).data.items;
       assert.equal(noDesc.length, 1);

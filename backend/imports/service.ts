@@ -324,6 +324,7 @@ export async function getImportPage(
   page = 0,
   pageSize = IMPORT_PAGE_SIZE_DEFAULT,
   groupColumn?: string | null,
+  rowView: "all" | "repair" = "all",
 ) {
   requirePermission(actor, "COST_VIEW");
   const job = await one(
@@ -349,16 +350,25 @@ export async function getImportPage(
     [id],
   );
   const totalRows = totals?.total_rows ?? 0;
+  const filteredRows =
+    rowView === "repair" ? totals?.problem_rows ?? 0 : totalRows;
   const safePageSize = Math.min(
     Math.max(pageSize, 1),
     IMPORT_PAGE_SIZE_MAX,
   );
-  const totalPages = Math.max(1, Math.ceil(totalRows / safePageSize));
+  const totalPages = Math.max(1, Math.ceil(filteredRows / safePageSize));
   const safePage = Math.min(Math.max(page, 0), totalPages - 1);
   const offset = safePage * safePageSize;
+  const filterClause =
+    rowView === "repair"
+      ? " AND coalesce(jsonb_array_length(errors), 0) > 0"
+      : "";
   const rows = (
     await db.query(
-      "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number LIMIT $2 OFFSET $3",
+      `SELECT * FROM import_rows
+       WHERE job_id=$1${filterClause}
+       ORDER BY row_number
+       LIMIT $2 OFFSET $3`,
       [id, safePageSize, offset],
     )
   ).rows;
@@ -388,13 +398,19 @@ export async function getImportPage(
     ...job,
     summary: { ...(job.summary || {}), rows: totalRows },
     rows,
+    rowView,
     page: safePage,
     pageSize: safePageSize,
     totalRows,
+    filteredRows,
     totalPages,
     hasMore: safePage + 1 < totalPages,
     groupColumn: resolvedGroupColumn || null,
     groupValues,
+    rowViewCounts: {
+      allRows: totalRows,
+      repairRows: totals?.problem_rows ?? 0,
+    },
     reviewStats: {
       unverifiedRows: totals?.unverified_rows ?? 0,
       problemRows: totals?.problem_rows ?? 0,

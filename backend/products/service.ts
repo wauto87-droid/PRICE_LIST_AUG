@@ -565,6 +565,99 @@ async function hydrateProductsByIds(db: DB, ids: string[]) {
   ).rows;
 }
 
+async function hydrateLookupProductsByIds(db: DB, ids: string[]) {
+  if (!ids.length) return [];
+  return (
+    await db.query(
+      `WITH ordered AS (
+        SELECT id, ord
+        FROM unnest($1::uuid[]) WITH ORDINALITY AS input(id, ord)
+      )
+      SELECT
+        p.id,
+        p.part_number,
+        p.description,
+        p.unit,
+        p.quantity_precision,
+        p.active,
+        pp.master_excl,
+        pp.vat,
+        pp.minimum_enabled,
+        pp.minimum,
+        pp.default_level,
+        b.name AS brand,
+        c.name AS category,
+        (
+          SELECT json_agg(
+            json_build_object(
+              'code',l.code,
+              'masterExcl', level_price.master_excl,
+              'masterIncl', level_price.master_incl
+            )
+            ORDER BY CASE l.code WHEN 'WHOLESALE' THEN 0 WHEN 'RETAIL' THEN 1 ELSE 2 END
+          )
+          FROM product_selling_levels l
+          CROSS JOIN LATERAL (
+            SELECT
+              CASE
+                WHEN l.method='FIXED' THEN l.fixed_price::text
+                WHEN l.method='COST_MARKUP' THEN round(pp.cost * (1 + l.markup / 100.0), 2)::text
+                ELSE round(l.list_price * (1 - l.base_discount / 100.0), 2)::text
+              END AS master_excl,
+              round(
+                (
+                  CASE
+                    WHEN l.method='FIXED' THEN l.fixed_price
+                    WHEN l.method='COST_MARKUP' THEN pp.cost * (1 + l.markup / 100.0)
+                    ELSE l.list_price * (1 - l.base_discount / 100.0)
+                  END
+                ) * (1 + pp.vat / 100.0),
+                2
+              )::text AS master_incl
+          ) AS level_price
+          WHERE l.product_id=p.id AND l.active
+        ) AS selling_levels
+      FROM ordered
+      JOIN products p ON p.id=ordered.id
+      JOIN product_pricing pp ON pp.product_id=p.id
+      LEFT JOIN brands b ON b.id=p.brand_id
+      LEFT JOIN categories c ON c.id=p.category_id
+      ORDER BY ordered.ord`,
+      [ids],
+    )
+  ).rows;
+}
+
+function lookupProduct(
+  row: Record<string, any>,
+  actor: Actor,
+  settings: Record<string, any>,
+) {
+  const masterExcl = row.master_excl;
+  const vat = row.vat;
+  const result: Record<string, any> = {
+    id: row.id,
+    partNumber: row.part_number,
+    description: row.description,
+    brand: row.brand ?? "",
+    category: row.category ?? "",
+    unit: row.unit,
+    quantityPrecision: row.quantity_precision,
+    masterExcl,
+    masterIncl: money(
+      new Decimal(masterExcl).mul(new Decimal(1).add(new Decimal(vat).div(100))),
+    ),
+    vat,
+    defaultLevel: row.default_level ?? "END_CUSTOMER",
+    sellingLevels: Array.isArray(row.selling_levels) ? row.selling_levels : [],
+  };
+  if (has(actor, "MIN_PRICE_VIEW") || settings.minimumVisible) {
+    result.minimumEnabled = row.minimum_enabled;
+    result.minimum = row.minimum;
+  }
+  return result;
+}
+
 export async function search(
   db: DB,
   actor: Actor,
@@ -661,8 +754,8 @@ export async function search(
       );
       rankedIds.push(...textMatches.map((row) => row.id));
     }
-    const rows = await hydrateProductsByIds(db, rankedIds);
-    return mapRows(rows);
+    const rows = await hydrateLookupProductsByIds(db, rankedIds);
+    return rows.map((row) => lookupProduct(row, actor, settings));
   }
   const partTotal = await countRankedPartMatches(db, activeClause, q, escaped);
   const needsFallback =
