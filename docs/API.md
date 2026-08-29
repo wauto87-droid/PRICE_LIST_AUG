@@ -17,6 +17,7 @@ Public routes: `GET /health`, `GET /setup`, token-protected `POST /setup`, rate-
 | Customers              | `GET/POST /customers`                                                                                           | QUOTE_CREATE                                                                         |
 | Imports                | `GET/POST /imports`, `GET /imports/:id`, `POST /imports/:id/mapping`, `/review`, `/confirm`, `/rollback`        | Import permission + COST_VIEW; confirmation requires IMPORT_CONFIRM and PRODUCT_EDIT |
 | Spreadsheet export     | `POST /exports`, `GET /exports/:job`, `/download`                                                               | EXPORT and job ownership; sensitive workbooks require current COST_VIEW              |
+| Sales price checks     | `GET/POST /sales-price-checks`, `GET/DELETE /sales-price-checks/:id`, `/analyze`, `/excel`, `/pdf`              | SALES_PRICE_CHECK; read-only catalog comparison with retained report history          |
 | Administration         | `/admin/dashboard`, `/settings`, `/users`, `/roles`, `/brands`, `/categories`, `/history`, `/audit`, `/backups` | ADMIN_VIEW and capability-specific permission                                        |
 
 All mutation payloads use strict server schemas. Pricing requests:

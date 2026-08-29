@@ -13,6 +13,7 @@ import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
 import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
+import * as salesChecks from "../sales-checks/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 const response = (
@@ -628,6 +629,96 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (action === "rollback" && method === "POST")
           return response(await imports.rollback(db, actor, id));
       }
+    }
+    if (root === "sales-price-checks") {
+      auth.requirePermission(actor, "SALES_PRICE_CHECK");
+      if (!id && method === "GET")
+        return response(await salesChecks.list(db, actor));
+      if (!id && method === "POST") {
+        const bytes = await readLimited(
+          req,
+          (Number(process.env.UPLOAD_MAX_MB || 20) + 1) * 1024 * 1024,
+        );
+        const form = await new Response(new Uint8Array(bytes), {
+          headers: { "Content-Type": req.headers.get("content-type") ?? "" },
+        }).formData();
+        const file = form.get("file");
+        assert(file instanceof File, 400, "Select a file");
+        return response(await salesChecks.upload(db, actor, file));
+      }
+      if (id) {
+        uuid(id);
+        if (!action && method === "GET")
+          return response(
+            await salesChecks.get(
+              db,
+              actor,
+              id,
+              z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
+              url.searchParams.get("filter") ?? "ALL",
+              url.searchParams.get("q") ?? "",
+            ),
+          );
+        if (action === "analyze" && method === "POST")
+          return response(
+            await salesChecks.analyze(db, actor, id, await body(req)),
+          );
+        if (action === "excel" && method === "POST")
+          return response(await salesChecks.queueExport(db, actor, id, "XLSX"));
+        if (action === "pdf" && method === "POST")
+          return response(await salesChecks.queueExport(db, actor, id, "PDF"));
+        if (!action && method === "DELETE")
+          return response(await salesChecks.remove(db, actor, id));
+      }
+    }
+    if (root === "sales-price-check-exports" && id) {
+      auth.requirePermission(actor, "SALES_PRICE_CHECK");
+      uuid(id);
+      const job = await one(
+        db,
+        "SELECT * FROM jobs WHERE id=$1 AND kind IN ('SALES_CHECK_XLSX','SALES_CHECK_PDF')",
+        [id],
+      );
+      assert(job && job.payload.ownerId === actor.id, 404, "Export not found");
+      if (action === "download") {
+        assert(job.status === "DONE", 409, "Export is not ready");
+        const pdf = job.kind === "SALES_CHECK_PDF",
+          ext = pdf ? "pdf" : "xlsx";
+        return new Response(
+          await fs.readFile(
+            path.join(
+              path.resolve(process.env.UPLOAD_DIR || ".data/uploads"),
+              "sales-check-exports",
+              id + "." + ext,
+            ),
+          ),
+          {
+            headers: {
+              "Content-Type": pdf
+                ? "application/pdf"
+                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "Content-Disposition": `attachment; filename="AMT-sales-price-check.${ext}"`,
+              "Cache-Control": "no-store",
+            },
+          },
+        );
+      }
+      return response({
+        id: job.id,
+        status: job.status,
+        error: job.error,
+        format: job.kind.endsWith("PDF") ? "PDF" : "XLSX",
+      });
     }
     if (root === "exports") {
       auth.requirePermission(actor, "EXPORT");

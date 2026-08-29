@@ -33,6 +33,7 @@ export const PERMISSIONS = [
   "AUDIT_VIEW",
   "ADMIN_VIEW",
   "EXPORT",
+  "SALES_PRICE_CHECK",
 ] as const;
 export type Actor = {
   id: string;

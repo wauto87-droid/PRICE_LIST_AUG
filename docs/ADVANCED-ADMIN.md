@@ -4,6 +4,10 @@
 
 Download Simple Price Update, Simple Supplier Pricelist, or Advanced Catalog from **Admin → Imports / PDF**. Importable data goes in the first worksheet; Instructions and Examples are reference sheets. Keep part numbers as text and paste values, not spreadsheet formulas.
 
+## Sales price check
+
+**Admin → Sales Price Check** accepts XLS, XLSX, or CSV sales exports without changing the catalog. Map the source part-number and pre-VAT unit sales-price columns. Matching tries the normalized part number and aliases, then a punctuation-insensitive key only when it identifies one unique product. Each source row remains separate; the report snapshots the matched default-level public list price and shows the row discount percentage. Retained reports support filters plus Excel and PDF exports.
+
 Simple `WHOLESALE.sellingPrice`, `RETAIL.sellingPrice`, `END_CUSTOMER.sellingPrice` explicitly set fixed before-VAT prices for populated cells. Advanced level fields retain FIXED / COST_MARKUP / LIST_DISCOUNT formulas. Blank/unmapped cells preserve current values and other levels. Supplier list prices belong in `listPrice`, not confidential purchase `cost`.
 
 Update Existing Only is the default: unknown parts cannot publish. Create & Update requires PRODUCT_CREATE at mapping and publication; each new item must be verified individually. Save decisions, use **Preview saved prices**, inspect old/new amounts and percentage differences, then confirm. The 30-minute confirmation fingerprint binds rows, job/product/settings versions, actor and permissions. Duplicates must be resolved. Retries do not reapply completed imports; rollback refuses later-edited products and retains history.

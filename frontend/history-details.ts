@@ -133,6 +133,7 @@ const permissions: Record<string, [string, string]> = {
   IMPORT_EXCEL: ["Upload spreadsheets", "رفع جداول"],
   IMPORT_PDF: ["Upload PDF files", "رفع ملفات PDF"],
   IMPORT_CONFIRM: ["Confirm imports", "تأكيد الاستيراد"],
+  SALES_PRICE_CHECK: ["Run sales price checks", "تشغيل فحص أسعار المبيعات"],
   USER_MANAGE: ["Manage users", "إدارة المستخدمين"],
   BACKUP_MANAGE: ["Manage backups", "إدارة النسخ الاحتياطية"],
   SETTINGS_MANAGE: ["Manage settings", "إدارة الإعدادات"],

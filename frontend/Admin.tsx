@@ -21,6 +21,7 @@ import Imports from "./Imports";
 import BulkRules from "./BulkRules";
 import QuotationSettings from "./QuotationSettings";
 import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
+import SalesPriceCheck from "./SalesPriceCheck";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
@@ -36,7 +37,18 @@ const sections = [
   ["dashboard", "Dashboard", "لوحة التحكم", "ADMIN_VIEW"],
   ["products", "Products", "الأصناف", "PRODUCT_EDIT"],
   ["imports", "Imports / PDF", "الاستيراد / PDF", "IMPORT_CONFIRM"],
-  ["discount-requests", "Discount Requests", "طلبات الخصم", "OVERRIDE_MINIMUM_PRICE"],
+  [
+    "discount-requests",
+    "Discount Requests",
+    "طلبات الخصم",
+    "OVERRIDE_MINIMUM_PRICE",
+  ],
+  [
+    "sales-price-check",
+    "Sales Price Check",
+    "فحص أسعار المبيعات",
+    "SALES_PRICE_CHECK",
+  ],
   ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
   ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
   ["users", "Users", "المستخدمون", "USER_MANAGE"],
@@ -68,9 +80,15 @@ function formatImportActionError(rawMessage: string, t: Translate) {
       "Please correct the highlighted import values. Check the mapped columns, defaults, and selected import before trying again.",
       "يرجى تصحيح قيم الاستيراد المظللة. تحقق من ربط الأعمدة والقيم الافتراضية والاستيراد المحدد ثم حاول مرة أخرى.",
     );
-  if (/Map at least one column/i.test(rawMessage) || /Map the part number column/i.test(rawMessage))
+  if (
+    /Map at least one column/i.test(rawMessage) ||
+    /Map the part number column/i.test(rawMessage)
+  )
     return rawMessage;
-  if (/Import changed or is not awaiting review/i.test(rawMessage) || /Import changed\. Reload/i.test(rawMessage))
+  if (
+    /Import changed or is not awaiting review/i.test(rawMessage) ||
+    /Import changed\. Reload/i.test(rawMessage)
+  )
     return t(
       "This import changed while you were reviewing it. Refresh the import, review the latest rows, then try again.",
       "تم تغيير هذا الاستيراد أثناء مراجعته. حدّث الاستيراد وراجع أحدث الصفوف ثم حاول مرة أخرى.",
@@ -137,7 +155,16 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
-    if (["imports", "rules", "quotation-settings", "discount-requests"].includes(section)) return;
+    if (
+      [
+        "imports",
+        "rules",
+        "quotation-settings",
+        "discount-requests",
+        "sales-price-check",
+      ].includes(section)
+    )
+      return;
     try {
       const payload = await api(
         section === "products"
@@ -256,11 +283,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         phase: "error",
         title: messages.error,
         message:
-          messages.error === t("Products could not be deleted", "تعذر حذف الأصناف")
+          messages.error ===
+          t("Products could not be deleted", "تعذر حذف الأصناف")
             ? formatBulkDeleteError(rawMessage, t)
             : importActionErrors.has(messages.error)
               ? formatImportActionError(rawMessage, t)
-            : rawMessage,
+              : rawMessage,
       });
       return undefined;
     } finally {
@@ -331,9 +359,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   }
   const heading = sections.find((s) => s[0] === section)!;
   const visibleProductIds =
-    section === "products"
-      ? productItems.map((p: any) => p.id)
-      : [];
+    section === "products" ? productItems.map((p: any) => p.id) : [];
   const suggestions =
     section === "products" && loadedProductQuery.trim() === query.trim()
       ? getProductSuggestions(productItems, query)
@@ -416,7 +442,13 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       <section className="card admin-content">
         <div className="section-title">
           <h2>{t(heading[1], heading[2])}</h2>
-          {!["imports", "rules", "quotation-settings", "discount-requests"].includes(section) && (
+          {![
+            "imports",
+            "rules",
+            "quotation-settings",
+            "discount-requests",
+            "sales-price-check",
+          ].includes(section) && (
             <button disabled={busy} onClick={() => void load()}>
               {t("Refresh", "تحديث")}
             </button>
@@ -435,6 +467,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <QuotationSettings t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "discount-requests" ? (
           <DiscountRequestsAdmin t={t} actionBusy={busy} onAction={runAction} />
+        ) : section === "sales-price-check" ? (
+          <SalesPriceCheck t={t} />
         ) : !data ? (
           <p>
             {error
@@ -504,7 +538,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           setSearchFocused(true);
                           setActiveSuggestion((current) =>
                             Math.min(
-                              activeSuggestionIndex(current, suggestions.length) + 1,
+                              activeSuggestionIndex(
+                                current,
+                                suggestions.length,
+                              ) + 1,
                               suggestions.length - 1,
                             ),
                           );
@@ -514,7 +551,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           e.preventDefault();
                           setActiveSuggestion((current) =>
                             Math.max(
-                              activeSuggestionIndex(current, suggestions.length) - 1,
+                              activeSuggestionIndex(
+                                current,
+                                suggestions.length,
+                              ) - 1,
                               0,
                             ),
                           );
@@ -578,9 +618,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </div>
                     )}
                   </div>
-                  <button
-                    onClick={() => triggerProductSearch(query)}
-                  >
+                  <button onClick={() => triggerProductSearch(query)}>
                     {t("Search", "بحث")}
                   </button>
                   <button
@@ -605,10 +643,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               "Queueing export…",
                               "جارٍ تجهيز التصدير…",
                             ),
-                            success: t(
-                              "Export queued",
-                              "تمت إضافة التصدير",
-                            ),
+                            success: t("Export queued", "تمت إضافة التصدير"),
                             successDetail: t(
                               "The workbook is being prepared now.",
                               "يجري تجهيز ملف التصدير الآن.",
@@ -618,7 +653,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               "تعذر بدء التصدير",
                             ),
                           },
-                          async () => setExportJob(await api("exports", "POST", {})),
+                          async () =>
+                            setExportJob(await api("exports", "POST", {})),
                           { reload: false },
                         )
                       }
@@ -657,7 +693,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                             )}
                             checked={allVisibleSelected}
                             ref={(node) => {
-                              if (node) node.indeterminate = someVisibleSelected;
+                              if (node)
+                                node.indeterminate = someVisibleSelected;
                             }}
                             onChange={(e) => {
                               setSelected(
@@ -671,7 +708,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                     ])
                                   : Object.fromEntries(
                                       Object.entries(selected).filter(
-                                        ([id]) => !visibleProductIds.includes(id),
+                                        ([id]) =>
+                                          !visibleProductIds.includes(id),
                                       ),
                                     ),
                               );
@@ -733,7 +771,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   <button
                     disabled={busy || (productData?.page ?? 0) === 0}
                     onClick={() => {
-                      const nextPage = Math.max((productData?.page ?? 0) - 1, 0);
+                      const nextPage = Math.max(
+                        (productData?.page ?? 0) - 1,
+                        0,
+                      );
                       setProductPage(nextPage);
                       load({ page: nextPage });
                     }}
@@ -776,7 +817,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           setSelected({
                             ...selected,
                             ...Object.fromEntries(
-                              productItems.map((item: any) => [item.id, item.version]),
+                              productItems.map((item: any) => [
+                                item.id,
+                                item.version,
+                              ]),
                             ),
                           });
                           setPreview(null);
@@ -785,7 +829,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         {t("Select visible", "تحديد الظاهر")}
                       </button>
                       <button
-                        disabled={busy || !matchedProductItems.length || allMatchedSelected}
+                        disabled={
+                          busy ||
+                          !matchedProductItems.length ||
+                          allMatchedSelected
+                        }
                         onClick={() => {
                           setSelected({
                             ...selected,
@@ -922,7 +970,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       ) : (
                         <button
                           className={
-                            bulk.operation === "DELETE" ? "primary danger-action" : ""
+                            bulk.operation === "DELETE"
+                              ? "primary danger-action"
+                              : ""
                           }
                           disabled={busy || !selectedCount}
                           onClick={async () => {
@@ -1061,10 +1111,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                             ? t("Delete selected", "حذف المحدد")
                             : bulk.operation === "ARCHIVE"
                               ? t("Archive selected", "أرشفة المحدد")
-                              : t(
-                                  "Reactivate selected",
-                                  "إعادة تفعيل المحدد",
-                                )}
+                              : t("Reactivate selected", "إعادة تفعيل المحدد")}
                         </button>
                       )}
                     </div>
@@ -1342,10 +1389,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           "Starting backup…",
                           "جارٍ بدء النسخ الاحتياطي…",
                         ),
-                        success: t(
-                          "Backup started",
-                          "بدأ النسخ الاحتياطي",
-                        ),
+                        success: t("Backup started", "بدأ النسخ الاحتياطي"),
                         successDetail: t(
                           "The backup job was queued successfully.",
                           "تمت إضافة مهمة النسخ الاحتياطي بنجاح.",
@@ -1385,14 +1429,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 onSave={(p) =>
                   mutate(
                     {
-                      saving: t(
-                        "Saving settings…",
-                        "جارٍ حفظ الإعدادات…",
-                      ),
-                      success: t(
-                        "Settings saved",
-                        "تم حفظ الإعدادات",
-                      ),
+                      saving: t("Saving settings…", "جارٍ حفظ الإعدادات…"),
+                      success: t("Settings saved", "تم حفظ الإعدادات"),
                       successDetail: t(
                         "The latest settings were saved and reloaded.",
                         "تم حفظ الإعدادات الأخيرة وإعادة تحميلها.",
@@ -1418,22 +1456,13 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             onSave={async (p) => {
               const ok = await mutate(
                 {
-                  saving: t(
-                    "Saving product…",
-                    "جارٍ حفظ الصنف…",
-                  ),
-                  success: t(
-                    "Product saved",
-                    "تم حفظ الصنف",
-                  ),
+                  saving: t("Saving product…", "جارٍ حفظ الصنف…"),
+                  success: t("Product saved", "تم حفظ الصنف"),
                   successDetail: t(
                     "The product and price history were updated.",
                     "تم تحديث الصنف وسجل الأسعار.",
                   ),
-                  error: t(
-                    "Product could not be saved",
-                    "تعذر حفظ الصنف",
-                  ),
+                  error: t("Product could not be saved", "تعذر حفظ الصنف"),
                 },
                 async () => {
                   await api(
@@ -1456,14 +1485,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 e.preventDefault();
                 mutate(
                   {
-                    saving: t(
-                      "Saving changes…",
-                      "جارٍ حفظ التغييرات…",
-                    ),
-                    success: t(
-                      "Changes saved",
-                      "تم حفظ التغييرات",
-                    ),
+                    saving: t("Saving changes…", "جارٍ حفظ التغييرات…"),
+                    success: t("Changes saved", "تم حفظ التغييرات"),
                     successDetail: t(
                       "The administration record was updated.",
                       "تم تحديث سجل الإدارة.",
@@ -1498,7 +1521,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             >
               <div className="section-title">
                 <h2>{t("Edit record", "تعديل السجل")}</h2>
-                <button type="button" disabled={busy} onClick={() => setEdit(null)}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setEdit(null)}
+                >
                   ×
                 </button>
               </div>
@@ -1722,7 +1749,9 @@ function Settings({
         )}
       </p>
       <button className="primary" disabled={busy}>
-        {busy ? t("Saving…", "جارٍ الحفظ…") : t("Save settings", "حفظ الإعدادات")}
+        {busy
+          ? t("Saving…", "جارٍ الحفظ…")
+          : t("Save settings", "حفظ الإعدادات")}
       </button>
     </form>
   );
