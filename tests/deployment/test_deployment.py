@@ -49,6 +49,20 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(parsed['amt-pricelist-app'], 'online')
         self.assertEqual(parsed['other'], 'stopped')
 
+    def test_db_id_falls_back_to_owned_stopped_database_container(self):
+        d = self.deployment()
+        d.release = ROOT
+        d.compose = Mock(return_value=result(''))
+        d.inventory = Mock(return_value=[{
+            'Id': 'db123',
+            'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }},
+            'State': {'Running': False},
+        }])
+        self.assertEqual(d.db_id(), 'db123')
+
     def test_foreign_or_unclear_listener_refused(self):
         for tcp, udp, reserved, running in [
             ({18188: ['127.0.0.1:18188']}, {}, {}, False),

@@ -691,6 +691,14 @@ class Deployment:
 
     def db_id(self):
         ids = decoded(self.compose('ps', '-q', 'db')).split()
+        if not ids:
+            ids = [
+                item.get('Id')
+                for item in self.inventory()
+                if self.owned(item)
+                and item.get('Config', {}).get('Labels', {}).get('com.docker.compose.service') == 'db'
+                and item.get('Id')
+            ]
         require(len(ids) == 1, 'Expected exactly one dedicated database container')
         return ids[0]
 
