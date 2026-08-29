@@ -919,6 +919,18 @@ www.softwaresolver.online {
             d.check_replace_failed()
             self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
 
+    def test_replacement_guard_allows_stopped_database_container(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}, 'State': {'Running': False}}])
+            d.database = Mock(return_value=result('0'))
+            d.check_replace_failed()
+            self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
+
     def test_replacement_guard_allows_empty_initialized_database(self):
         with tempfile.TemporaryDirectory() as temp:
             d = self.replacement_guard_fixture(temp)
