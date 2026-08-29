@@ -177,7 +177,7 @@ test("Half-cent master rounding is deterministic", () => {
     "1.01",
   );
 });
-test("Spreadsheet floating-point noise is normalized without hiding real precision", () => {
+test("Spreadsheet import decimals are normalized to storage precision", () => {
   assert.equal(
     normalizeImportedDecimal("listPrice", "95.19999999999999").value,
     "95.2",
@@ -191,8 +191,16 @@ test("Spreadsheet floating-point noise is normalized without hiding real precisi
     "80.90",
   );
   assert.equal(
+    normalizeImportedDecimal("listPrice", "21.126328146000006").value,
+    "21.126328",
+  );
+  assert.equal(
+    normalizeImportedDecimal("listPrice", "48.988366811999995").value,
+    "48.988367",
+  );
+  assert.equal(
     normalizeImportedDecimal("listPrice", "1.1234567").value,
-    "1.1234567",
+    "1.123457",
   );
   assert.equal(normalizeImportedDecimal("listPrice", "1,200").value, "1,200");
 });

@@ -26,11 +26,6 @@ export function normalizeImportedDecimal(field: string, input: unknown) {
   if (!decimal.isFinite()) return { value: source };
   const places = twoDecimalFields.has(leaf) ? 2 : 6;
   const rounded = decimal.toDecimalPlaces(places, Decimal.ROUND_HALF_UP);
-  if (
-    decimal.decimalPlaces() > places &&
-    decimal.sub(rounded).abs().gt("0.000000001")
-  )
-    return { value: source };
   const value = twoDecimalFields.has(leaf)
     ? rounded.toFixed(2)
     : rounded.toString();

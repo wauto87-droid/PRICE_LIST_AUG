@@ -343,13 +343,13 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
               part: "DISC-PPCCB",
               description: "Preset A",
               Activity: "PPCCB",
-              "Public Pricelist": "100",
+              "Public Pricelist": "21.126328146000006",
             },
             {
               part: "DISC-OTHER",
               description: "Preset B",
               Activity: "LIGHTING",
-              "Public Pricelist": "200",
+              "Public Pricelist": "48.988366811999995",
             },
           ],
           "CREATE_UPDATE",
@@ -389,18 +389,20 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           )
         ).rows;
         assert.deepEqual(rows[0].errors, []);
+        assert.equal(rows[0].proposed.listPrice, "21.126328");
         assert.equal(rows[0].proposed.method, "LIST_DISCOUNT");
         assert.equal(rows[0].proposed.defaultLevel, "END_CUSTOMER");
         assert.equal(rows[0].proposed.baseDiscount, "60");
-        assert.equal(rows[0].proposed.minimum, "30.00");
+        assert.equal(rows[0].proposed.minimum, "6.34");
         assert.equal(
           rows[0].proposed.levels.find((level: any) => level.code === "WHOLESALE")
             .baseDiscount,
           "55",
         );
         assert.deepEqual(rows[1].errors, []);
+        assert.equal(rows[1].proposed.listPrice, "48.988367");
         assert.equal(rows[1].proposed.baseDiscount, "50");
-        assert.equal(rows[1].proposed.minimum, "70.00");
+        assert.equal(rows[1].proposed.minimum, "17.15");
         assert.equal(
           rows[1].proposed.levels.find((level: any) => level.code === "WHOLESALE")
             .baseDiscount,
