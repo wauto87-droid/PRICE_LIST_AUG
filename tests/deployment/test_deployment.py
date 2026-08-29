@@ -752,6 +752,7 @@ www.softwaresolver.online {
         self.assertEqual(compose.count('database_socket:/var/run/postgresql:ro'), 4)
         self.assertIn('unix_socket_permissions=0777', compose)
         self.assertIn('hba_file=/etc/postgresql/amt-pg_hba.conf', compose)
+        self.assertIn('listen_addresses=*', compose)
         self.assertIn('local all all scram-sha-256', (ROOT / 'docker/pg_hba.conf').read_text())
         self.assertNotRegex(compose, r'(?m)^\s*network_mode:\s*host')
         self.assertIn('127.0.0.1:${DB_PORT:-15432}:5432', compose)

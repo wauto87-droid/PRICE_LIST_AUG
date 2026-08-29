@@ -22,7 +22,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
     command:
-      [postgres, -c, hba_file=/etc/postgresql/amt-pg_hba.conf, -c, unix_socket_directories=/var/run/postgresql, -c, unix_socket_permissions=0777]
+      [postgres, -c, listen_addresses=*, -c, hba_file=/etc/postgresql/amt-pg_hba.conf, -c, unix_socket_directories=/var/run/postgresql, -c, unix_socket_permissions=0777]
     volumes:
       - database:/var/lib/postgresql/data
       - database_socket:/var/run/postgresql
