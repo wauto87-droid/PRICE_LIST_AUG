@@ -1240,6 +1240,7 @@ class Deployment:
         if state_file.exists():
             require(json.loads(state_file.read_text()).get('phase') in ('BUILT', 'MIGRATING'), 'Replacement blocked after migrations or ambiguous recovery state')
         self.release = self.active_release()
+        active_release = self.release
         volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
         owned = [c for c in self.inventory() if self.owned(c)]
         services = {c.get('Config', {}).get('Labels', {}).get('com.docker.compose.service') for c in owned}
@@ -1264,7 +1265,7 @@ class Deployment:
                 self.wait_db()
             exists = self.database("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='migrations';", check=False)
             require(exists.returncode == 0 and decoded(exists) in ('0', '1'), 'Replacement refused because database state is ambiguous')
-            if decoded(exists) == '1':
+            if decoded(exists) == '1' and active_release is None:
                 applied = self.database('SELECT count(*) FROM migrations;', check=False)
                 require(applied.returncode == 0 and decoded(applied) == '0', 'Replacement refused because database migrations exist or database state is ambiguous')
 

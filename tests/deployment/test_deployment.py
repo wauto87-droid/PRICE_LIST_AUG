@@ -988,6 +988,31 @@ www.softwaresolver.online {
                 d.check_replace_failed()
             self.assertEqual(d.release.name, 'bbbbbbbbbbbb-22222222')
 
+    def test_replacement_guard_allows_applied_migrations_for_active_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            current_release = d.root / 'releases' / 'bbbbbbbbbbbb-22222222'
+            current_release.mkdir(parents=True)
+            (current_release / 'release.json').write_text(json.dumps({'commit': 'b' * 40}))
+            current_link = d.root / 'current'
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current_link:
+                    return current_release
+                return original_resolve(path_obj, strict=strict)
+
+            current_link.mkdir()
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}, 'State': {'Running': True}}])
+            d.database = Mock(return_value=result('1'))
+            with patch.object(Path, 'resolve', resolve_override):
+                d.check_replace_failed()
+            self.assertEqual(d.release.name, 'bbbbbbbbbbbb-22222222')
+
     def test_replacement_guard_rejects_applied_migrations(self):
         with tempfile.TemporaryDirectory() as temp:
             d = self.replacement_guard_fixture(temp)
