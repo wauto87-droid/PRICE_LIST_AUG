@@ -9,6 +9,7 @@ import { quotationHtml, escapeHtml } from "../pdf/template";
 import { settings } from "../admin/service";
 import { exportCatalog } from "./export";
 import { exportSalesCheckXlsx, salesCheckHtml } from "./sales-check";
+import { processAnalysis } from "../sales-checks/service";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -31,7 +32,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_XLSX','SALES_CHECK_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -61,8 +62,18 @@ export async function runJob(db: DB) {
         );
         if (!report) throw new Error("Sales price report missing");
         await db.query(
-          "UPDATE sales_price_reports SET status='PROCESSING',updated_at=now() WHERE id=$1",
-          [report.id],
+          "UPDATE sales_price_reports SET status='PROCESSING',progress=$2,updated_at=now() WHERE id=$1",
+          [
+            report.id,
+            json({
+              phase: "READING",
+              processedRows: 0,
+              totalRows: 0,
+              percentage: null,
+              startedAt: new Date().toISOString(),
+              remainingSeconds: null,
+            }),
+          ],
         );
         const { stdout } = await exec(
           process.env.PYTHON_BIN || "python3",
@@ -90,13 +101,20 @@ export async function runJob(db: DB) {
               [randomUUID(), report.id, i + 1, json(extracted.rows[i])],
             );
           await tx.query(
-            "UPDATE sales_price_reports SET status='AWAITING_MAPPING',columns=$2,summary=$3,version=version+1,updated_at=now() WHERE id=$1",
+            "UPDATE sales_price_reports SET status='AWAITING_MAPPING',columns=$2,summary=$3,progress=$4,version=version+1,updated_at=now() WHERE id=$1",
             [
               report.id,
               json(extracted.columns || []),
               json({
                 totalRows: extracted.rows.length,
                 warnings: extracted.warnings || [],
+              }),
+              json({
+                phase: "COMPLETE",
+                processedRows: extracted.rows.length,
+                totalRows: extracted.rows.length,
+                percentage: 100,
+                remainingSeconds: 0,
               }),
             ],
           );
@@ -156,7 +174,9 @@ export async function runJob(db: DB) {
           );
         });
       }
-    } else if (job.kind === "SALES_CHECK_XLSX")
+    } else if (job.kind === "SALES_CHECK_ANALYZE")
+      await processAnalysis(db, job.payload.reportId, job.payload.actorId);
+    else if (job.kind === "SALES_CHECK_XLSX")
       await exportSalesCheckXlsx(db, job.id, job.payload.reportId);
     else if (job.kind === "SALES_CHECK_PDF" || job.kind === "QUOTE_PDF") {
       if (job.kind === "SALES_CHECK_PDF") {
@@ -250,10 +270,19 @@ export async function runJob(db: DB) {
         "UPDATE import_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
         [job.payload.importId, importFailureMessage(failure)],
       );
-    if (job.kind === "SALES_CHECK_EXTRACT")
+    if (
+      job.kind === "SALES_CHECK_EXTRACT" ||
+      job.kind === "SALES_CHECK_ANALYZE"
+    )
       await db.query(
-        "UPDATE sales_price_reports SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
-        [job.payload.reportId, importFailureMessage(failure)],
+        "UPDATE sales_price_reports SET status='FAILED',error=$2,progress=progress||$3::jsonb,updated_at=now() WHERE id=$1",
+        [
+          job.payload.reportId,
+          job.kind === "SALES_CHECK_ANALYZE"
+            ? failure.message
+            : importFailureMessage(failure),
+          json({ phase: "FAILED", remainingSeconds: null }),
+        ],
       );
   }
   return true;

@@ -85,8 +85,21 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
       setBusy(false);
     }
   };
+  const money = (value: unknown) =>
+    value === null || value === undefined || value === ""
+      ? "—"
+      : Number(value).toFixed(2);
+  const phaseLabel: Record<string, string> = {
+    READING: "Reading spreadsheet",
+    SAVING: "Saving spreadsheet rows",
+    PREPARING: "Preparing catalog matches",
+    CHECKING: "Checking rows",
+    FINALIZING: "Finalizing results",
+    COMPLETE: "Check complete",
+    FAILED: "Check failed",
+  };
   return (
-    <div>
+    <div className="sales-check">
       <div className="section-title">
         <div>
           <h2>{t("Sales Price Check", "فحص أسعار المبيعات")}</h2>
@@ -99,7 +112,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
         </div>
       </div>
       <form
-        className="actions wrap"
+        className="actions wrap sales-check-toolbar"
         onSubmit={(e) => {
           e.preventDefault();
           const form = new FormData(e.currentTarget);
@@ -149,6 +162,45 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
               </button>
             </div>
           </div>
+          {report.status === "PROCESSING" && (
+            <div className="sales-check-progress" role="status">
+              <div className="sales-check-progress-head">
+                <strong>
+                  {phaseLabel[report.progress?.phase] || "Preparing report"}
+                </strong>
+                <span>
+                  {report.progress?.processedRows ?? 0} /{" "}
+                  {report.progress?.totalRows ?? report.summary?.totalRows ?? 0}{" "}
+                  rows
+                </span>
+              </div>
+              <div
+                className={`admin-progress ${typeof report.progress?.percentage !== "number" ? "indeterminate" : ""}`}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={report.progress?.percentage}
+              >
+                <span
+                  style={
+                    typeof report.progress?.percentage === "number"
+                      ? { width: `${report.progress.percentage}%` }
+                      : undefined
+                  }
+                />
+              </div>
+              <div className="admin-progress-meta">
+                <span>{report.progress?.percentage ?? "—"}%</span>
+                <span>
+                  {report.progress?.remainingSeconds == null
+                    ? "Estimating remaining time…"
+                    : report.progress.remainingSeconds > 0
+                      ? `About ${report.progress.remainingSeconds}s remaining`
+                      : "Almost complete"}
+                </span>
+              </div>
+            </div>
+          )}
           {report.error && <div className="notice error">{report.error}</div>}
           {["AWAITING_MAPPING", "READY"].includes(report.status) && (
             <>
@@ -213,7 +265,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   </div>
                 ))}
               </div>
-              <div className="actions wrap">
+              <div className="actions wrap sales-check-toolbar">
                 <select
                   value={filter}
                   onChange={(e) => {
@@ -292,8 +344,8 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   ),
                 )}
               </div>
-              <div className="table-scroll">
-                <table>
+              <div className="table-scroll sales-check-table-wrap">
+                <table className="sales-check-table">
                   <thead>
                     <tr>
                       {[
@@ -315,22 +367,47 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   <tbody>
                     {report.rows.map((r: any) => (
                       <tr key={r.id}>
-                        <td>{r.row_number}</td>
-                        <td>{r.source_part}</td>
-                        <td>{r.matched_part}</td>
-                        <td>{r.description}</td>
-                        <td>{r.sales_price}</td>
-                        <td>{r.list_price}</td>
-                        <td>{r.discount_percent}</td>
-                        <td>{r.item_check}</td>
-                        <td>{r.match_type}</td>
-                        <td>
+                        <td data-label="#">{r.row_number}</td>
+                        <td data-label="Source part" className="part-cell">
+                          {r.source_part}
+                        </td>
+                        <td data-label="Matched part" className="part-cell">
+                          {r.matched_part || "—"}
+                        </td>
+                        <td
+                          data-label="Description"
+                          className="description-cell"
+                          title={r.description}
+                        >
+                          {r.description || "—"}
+                        </td>
+                        <td data-label="Sales price" className="number-cell">
+                          {money(r.sales_price)}
+                        </td>
+                        <td data-label="App list price" className="number-cell">
+                          {money(r.list_price)}
+                        </td>
+                        <td data-label="Discount %" className="number-cell">
+                          {money(r.discount_percent)}
+                        </td>
+                        <td data-label="Item Check">
+                          <span
+                            className={`sales-check-badge ${r.product_id ? "checked" : "not-matched"}`}
+                          >
+                            {r.item_check}
+                          </span>
+                        </td>
+                        <td data-label="Match">{r.match_type}</td>
+                        <td
+                          data-label="Status / reason"
+                          className="status-cell"
+                        >
                           <span
                             className={`pill ${r.status === "MATCHED" ? "" : "warning"}`}
                           >
                             {r.status}
                           </span>
-                          <small>{r.error}</small>
+                          {r.error && <small>{r.error}</small>}
                           <details>
                             <summary>{t("Source row", "صف المصدر")}</summary>
                             <pre>{JSON.stringify(r.raw, null, 2)}</pre>

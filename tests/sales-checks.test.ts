@@ -12,7 +12,7 @@ import {
   sessionCookie,
 } from "../backend/auth/service";
 import { saveProduct } from "../backend/products/service";
-import { analyze, get } from "../backend/sales-checks/service";
+import { analyze, get, processAnalysis } from "../backend/sales-checks/service";
 import {
   exportSalesCheckXlsx,
   salesCheckHtml,
@@ -102,13 +102,28 @@ test("Sales price check preserves lines, loosely matches punctuation, and export
       "INSERT INTO sales_price_rows(id,report_id,row_number,raw) VALUES($1,$2,$3,$4)",
       [randomUUID(), reportId, i + 1, json(raw[i])],
     );
-  await analyze(db, actor, reportId, {
+  const queued = await analyze(db, actor, reportId, {
     version: 1,
     partNumber: "Item Code",
     salesPrice: "Sales Price",
   });
+  assert.equal(queued.status, "PENDING");
+  const processing: any = await get(db, actor, reportId, 0, 50, "ALL", "");
+  assert.equal(processing.status, "PROCESSING");
+  assert.equal(processing.progress.percentage, 0);
+  await assert.rejects(
+    analyze(db, actor, reportId, {
+      version: 1,
+      partNumber: "Item Code",
+      salesPrice: "Sales Price",
+    }),
+    /already being checked|not ready for mapping/,
+  );
+  await processAnalysis(db, reportId, actor.id);
   const report = await get(db, actor, reportId, 0, 50, "ALL", "");
   assert.equal(report.rows.length, 5);
+  assert.equal((report as any).progress.percentage, 100);
+  assert.equal((report as any).progress.remainingSeconds, 0);
   assert.equal(report.rows[0].product_id, product.id);
   assert.equal(report.rows[0].match_type, "LOOSE");
   assert.equal(report.rows[0].item_check, "Checked");
