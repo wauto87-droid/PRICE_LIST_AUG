@@ -94,6 +94,8 @@ export async function get(
   pageSize = 50,
   filter = "ALL",
   search = "",
+  minDiscount = "",
+  sort = "ROW_ASC",
 ) {
   permission(actor);
   const report = await one(
@@ -113,18 +115,36 @@ export async function get(
     ZERO: "discount_percent=0",
     ABOVE_LIST: "discount_percent<0",
   };
+  const sortSql: Record<string, string> = {
+    ROW_ASC: "row_number ASC",
+    DISCOUNT_DESC: "discount_percent DESC NULLS LAST, row_number ASC",
+    DISCOUNT_ASC: "discount_percent ASC NULLS LAST, row_number ASC",
+    SALES_PRICE_DESC: "sales_price DESC NULLS LAST, row_number ASC",
+    SALES_PRICE_ASC: "sales_price ASC NULLS LAST, row_number ASC",
+    LIST_PRICE_DESC: "list_price DESC NULLS LAST, row_number ASC",
+    LIST_PRICE_ASC: "list_price ASC NULLS LAST, row_number ASC",
+  };
+  const discount =
+    minDiscount.trim() === "" ? null : decimal(minDiscount, "Minimum discount");
   const condition = filterSql[filter] ?? "true";
-  const args = [id, `%${search}%`, pageSize, page * pageSize];
+  const orderBy = sortSql[sort] ?? sortSql.ROW_ASC;
+  const args = [
+    id,
+    `%${search}%`,
+    discount?.toString() ?? null,
+    pageSize,
+    page * pageSize,
+  ];
   const rows = (
     await db.query(
-      `SELECT * FROM sales_price_rows WHERE report_id=$1 AND (${condition}) AND ($2='' OR coalesce(source_part,'') ILIKE $2 OR coalesce(matched_part,'') ILIKE $2 OR coalesce(description,'') ILIKE $2) ORDER BY row_number LIMIT $3 OFFSET $4`,
+      `SELECT * FROM sales_price_rows WHERE report_id=$1 AND (${condition}) AND ($2='' OR coalesce(source_part,'') ILIKE $2 OR coalesce(matched_part,'') ILIKE $2 OR coalesce(description,'') ILIKE $2) AND ($3::numeric IS NULL OR (discount_percent IS NOT NULL AND discount_percent >= $3::numeric)) ORDER BY ${orderBy} LIMIT $4 OFFSET $5`,
       args,
     )
   ).rows;
   const count = await one(
     db,
-    `SELECT count(*)::int AS total FROM sales_price_rows WHERE report_id=$1 AND (${condition}) AND ($2='' OR coalesce(source_part,'') ILIKE $2 OR coalesce(matched_part,'') ILIKE $2 OR coalesce(description,'') ILIKE $2)`,
-    [id, `%${search}%`],
+    `SELECT count(*)::int AS total FROM sales_price_rows WHERE report_id=$1 AND (${condition}) AND ($2='' OR coalesce(source_part,'') ILIKE $2 OR coalesce(matched_part,'') ILIKE $2 OR coalesce(description,'') ILIKE $2) AND ($3::numeric IS NULL OR (discount_percent IS NOT NULL AND discount_percent >= $3::numeric))`,
+    [id, `%${search}%`, discount?.toString() ?? null],
   );
   return {
     ...report,

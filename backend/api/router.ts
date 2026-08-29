@@ -667,6 +667,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .parse(url.searchParams.get("pageSize") ?? 50),
               url.searchParams.get("filter") ?? "ALL",
               url.searchParams.get("q") ?? "",
+              url.searchParams.get("minDiscount") ?? "",
+              url.searchParams.get("sort") ?? "ROW_ASC",
             ),
           );
         if (action === "analyze" && method === "POST")

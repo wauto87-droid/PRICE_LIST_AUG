@@ -14,14 +14,29 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
     [page, setPage] = useState(0),
     [filter, setFilter] = useState("ALL"),
     [query, setQuery] = useState(""),
+    [minDiscount, setMinDiscount] = useState(""),
+    [sort, setSort] = useState("ROW_ASC"),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [exports, setExports] = useState<any[]>([]);
   const load = () => api("sales-price-checks").then(setReports);
-  const open = async (id: string, p = 0, f = filter, q = query) => {
-    const r = await api(
-      `sales-price-checks/${id}?page=${p}&pageSize=50&filter=${encodeURIComponent(f)}&q=${encodeURIComponent(q)}`,
-    );
+  const open = async (
+    id: string,
+    p = 0,
+    f = filter,
+    q = query,
+    discount = minDiscount,
+    sortBy = sort,
+  ) => {
+    const params = new URLSearchParams({
+      page: String(p),
+      pageSize: "50",
+      filter: f,
+      q,
+      sort: sortBy,
+    });
+    if (discount.trim()) params.set("minDiscount", discount.trim());
+    const r = await api(`sales-price-checks/${id}?${params.toString()}`);
     setReport(r);
     setPage(p);
     setMapping(
@@ -42,6 +57,24 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
           },
     );
   };
+  const applyFilters = (
+    id: string,
+    next: {
+      page?: number;
+      filter?: string;
+      query?: string;
+      minDiscount?: string;
+      sort?: string;
+    } = {},
+  ) =>
+    open(
+      id,
+      next.page ?? 0,
+      next.filter ?? filter,
+      next.query ?? query,
+      next.minDiscount ?? minDiscount,
+      next.sort ?? sort,
+    );
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, []);
@@ -265,84 +298,158 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   </div>
                 ))}
               </div>
-              <div className="actions wrap sales-check-toolbar">
-                <select
-                  value={filter}
-                  onChange={(e) => {
-                    setFilter(e.target.value);
-                    open(report.id, 0, e.target.value, query);
-                  }}
-                >
-                  {[
-                    "ALL",
-                    "CHECKED",
-                    "NOT_MATCHED",
-                    "MATCHED",
-                    "UNMATCHED",
-                    "AMBIGUOUS",
-                    "INVALID",
-                    "DISCOUNT",
-                    "ZERO",
-                    "ABOVE_LIST",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-                <input
-                  placeholder={t(
-                    "Search part or description",
-                    "بحث عن صنف أو وصف",
-                  )}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <button onClick={() => open(report.id, 0, filter, query)}>
-                  {t("Search", "بحث")}
-                </button>
-                <button
-                  onClick={() =>
-                    run(async () => {
-                      const x = await api(
-                        `sales-price-checks/${report.id}/excel`,
-                        "POST",
-                        {},
-                      );
-                      setExports((v) => [...v, x]);
-                    })
-                  }
-                >
-                  Excel
-                </button>
-                <button
-                  onClick={() =>
-                    run(async () => {
-                      const x = await api(
-                        `sales-price-checks/${report.id}/pdf`,
-                        "POST",
-                        {},
-                      );
-                      setExports((v) => [...v, x]);
-                    })
-                  }
-                >
-                  PDF
-                </button>
-                {exports.map((x) =>
-                  x.status === "DONE" ? (
-                    <a
-                      key={x.id}
-                      href={appPath(
-                        `/api/v1/sales-price-check-exports/${x.id}/download`,
-                      )}
+              <div className="sales-check-toolbar sales-check-toolbar-ready">
+                <div className="sales-check-toolbar-group sales-check-toolbar-filters">
+                  <label className="sales-check-field">
+                    <span>{t("Status", "الحالة")}</span>
+                    <select
+                      value={filter}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setFilter(next);
+                        applyFilters(report.id, { filter: next });
+                      }}
                     >
-                      {t("Download", "تنزيل")} {x.format}
-                    </a>
-                  ) : (
-                    <span key={x.id}>
-                      {x.format}: {x.status}
-                    </span>
-                  ),
-                )}
+                      {[
+                        "ALL",
+                        "CHECKED",
+                        "NOT_MATCHED",
+                        "MATCHED",
+                        "UNMATCHED",
+                        "AMBIGUOUS",
+                        "INVALID",
+                        "DISCOUNT",
+                        "ZERO",
+                        "ABOVE_LIST",
+                      ].map((x) => (
+                        <option key={x}>{x}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="sales-check-field sales-check-search-field">
+                    <span>{t("Search", "بحث")}</span>
+                    <input
+                      placeholder={t(
+                        "Search part or description",
+                        "بحث عن صنف أو وصف",
+                      )}
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyFilters(report.id);
+                      }}
+                    />
+                  </label>
+                  <label className="sales-check-field sales-check-number-field">
+                    <span>{t("Discount %+", "الخصم %+")}</span>
+                    <input
+                      inputMode="decimal"
+                      placeholder="10"
+                      value={minDiscount}
+                      onChange={(e) => setMinDiscount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyFilters(report.id);
+                      }}
+                    />
+                  </label>
+                  <label className="sales-check-field">
+                    <span>{t("Sort", "الترتيب")}</span>
+                    <select
+                      value={sort}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setSort(next);
+                        applyFilters(report.id, { sort: next });
+                      }}
+                    >
+                      <option value="ROW_ASC">
+                        {t("Row order", "ترتيب الصف")}
+                      </option>
+                      <option value="DISCOUNT_DESC">
+                        {t("Discount high to low", "الخصم من الأعلى إلى الأقل")}
+                      </option>
+                      <option value="DISCOUNT_ASC">
+                        {t("Discount low to high", "الخصم من الأقل إلى الأعلى")}
+                      </option>
+                      <option value="SALES_PRICE_DESC">
+                        {t(
+                          "Sales price high to low",
+                          "سعر البيع من الأعلى إلى الأقل",
+                        )}
+                      </option>
+                      <option value="SALES_PRICE_ASC">
+                        {t(
+                          "Sales price low to high",
+                          "سعر البيع من الأقل إلى الأعلى",
+                        )}
+                      </option>
+                      <option value="LIST_PRICE_DESC">
+                        {t(
+                          "List price high to low",
+                          "سعر القائمة من الأعلى إلى الأقل",
+                        )}
+                      </option>
+                      <option value="LIST_PRICE_ASC">
+                        {t(
+                          "List price low to high",
+                          "سعر القائمة من الأقل إلى الأعلى",
+                        )}
+                      </option>
+                    </select>
+                  </label>
+                  <div className="sales-check-toolbar-actions">
+                    <button onClick={() => applyFilters(report.id)}>
+                      {t("Apply", "تطبيق")}
+                    </button>
+                  </div>
+                </div>
+                <div className="sales-check-toolbar-group sales-check-toolbar-exports">
+                  <button
+                    onClick={() =>
+                      run(async () => {
+                        const x = await api(
+                          `sales-price-checks/${report.id}/excel`,
+                          "POST",
+                          {},
+                        );
+                        setExports((v) => [...v, x]);
+                      })
+                    }
+                  >
+                    Excel
+                  </button>
+                  <button
+                    onClick={() =>
+                      run(async () => {
+                        const x = await api(
+                          `sales-price-checks/${report.id}/pdf`,
+                          "POST",
+                          {},
+                        );
+                        setExports((v) => [...v, x]);
+                      })
+                    }
+                  >
+                    PDF
+                  </button>
+                  {exports.map((x) =>
+                    x.status === "DONE" ? (
+                      <a
+                        key={x.id}
+                        className="button"
+                        href={appPath(
+                          `/api/v1/sales-price-check-exports/${x.id}/download`,
+                        )}
+                      >
+                        {t("Download", "تنزيل")} {x.format}
+                      </a>
+                    ) : (
+                      <span key={x.id} className="sales-check-export-status">
+                        {x.format}: {x.status}
+                      </span>
+                    ),
+                  )}
+                </div>
               </div>
               <div className="table-scroll sales-check-table-wrap">
                 <table className="sales-check-table">
@@ -367,7 +474,9 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   <tbody>
                     {report.rows.map((r: any) => (
                       <tr key={r.id}>
-                        <td data-label="#">{r.row_number}</td>
+                        <td data-label="#" className="row-number-cell">
+                          {r.row_number}
+                        </td>
                         <td data-label="Source part" className="part-cell">
                           {r.source_part}
                         </td>
@@ -394,7 +503,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                           <span
                             className={`sales-check-badge ${r.product_id ? "checked" : "not-matched"}`}
                           >
-                            {r.item_check}
+                            {r.product_id ? "Checked" : "Not matched"}
                           </span>
                         </td>
                         <td data-label="Match">{r.match_type}</td>
@@ -407,8 +516,10 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                           >
                             {r.status}
                           </span>
-                          {r.error && <small>{r.error}</small>}
-                          <details>
+                          {r.error && (
+                            <small className="sales-check-error">{r.error}</small>
+                          )}
+                          <details className="sales-check-raw">
                             <summary>{t("Source row", "صف المصدر")}</summary>
                             <pre>{JSON.stringify(r.raw, null, 2)}</pre>
                           </details>
@@ -421,7 +532,9 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
               <div className="actions">
                 <button
                   disabled={page === 0}
-                  onClick={() => open(report.id, page - 1)}
+                  onClick={() =>
+                    open(report.id, page - 1, filter, query, minDiscount, sort)
+                  }
                 >
                   Previous
                 </button>
@@ -430,7 +543,9 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                 </span>
                 <button
                   disabled={(page + 1) * 50 >= report.resultCount}
-                  onClick={() => open(report.id, page + 1)}
+                  onClick={() =>
+                    open(report.id, page + 1, filter, query, minDiscount, sort)
+                  }
                 >
                   Next
                 </button>

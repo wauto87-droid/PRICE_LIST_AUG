@@ -143,6 +143,69 @@ test("Sales price check preserves lines, loosely matches punctuation, and export
     (await get(db, actor, reportId, 0, 50, "NOT_MATCHED", "")).resultCount,
     2,
   );
+  const minimumDiscount = await get(
+    db,
+    actor,
+    reportId,
+    0,
+    50,
+    "ALL",
+    "",
+    "10",
+  );
+  assert.deepEqual(
+    minimumDiscount.rows.map((row: any) => row.row_number),
+    [1],
+  );
+  const stackedDiscountFilter = await get(
+    db,
+    actor,
+    reportId,
+    0,
+    50,
+    "MATCHED",
+    "",
+    "10",
+  );
+  assert.deepEqual(
+    stackedDiscountFilter.rows.map((row: any) => row.row_number),
+    [1],
+  );
+  const discountDescending = await get(
+    db,
+    actor,
+    reportId,
+    0,
+    50,
+    "ALL",
+    "",
+    "",
+    "DISCOUNT_DESC",
+  );
+  assert.deepEqual(
+    discountDescending.rows.map((row: any) => row.row_number),
+    [1, 2, 3, 4, 5],
+  );
+  const discountAscending = await get(
+    db,
+    actor,
+    reportId,
+    0,
+    50,
+    "ALL",
+    "",
+    "",
+    "DISCOUNT_ASC",
+  );
+  assert.deepEqual(
+    discountAscending.rows.map((row: any) => row.row_number),
+    [2, 1, 3, 4, 5],
+  );
+  const defaultOrder = await get(db, actor, reportId, 0, 50, "ALL", "");
+  assert.deepEqual(
+    defaultOrder.rows.map((row: any) => row.row_number),
+    [1, 2, 3, 4, 5],
+  );
   const exportId = randomUUID();
   await exportSalesCheckXlsx(db, exportId, reportId);
   const book = new ExcelJS.Workbook();
