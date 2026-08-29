@@ -831,6 +831,19 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     const archived = (await request("products?q=BULK-LARGE")).data;
     assert(archived.items.every((item: any) => item.active === false));
   });
+  await t.test("Bulk selection can load the next matched batch without repeating the first", async () => {
+    const firstBatch = (await request("products?q=BULK-LARGE&selectionOffset=0")).data;
+    const nextBatch = (await request("products?q=BULK-LARGE&selectionOffset=500")).data;
+    assert.equal(firstBatch.selectionOffset, 0);
+    assert.equal(nextBatch.selectionOffset, 500);
+    assert.equal(firstBatch.selectableItems.length, 1005);
+    assert.equal(nextBatch.selectableItems.length, 505);
+    assert.notEqual(
+      firstBatch.selectableItems[0]?.id,
+      nextBatch.selectableItems[0]?.id,
+    );
+    assert.equal(nextBatch.selectionHasMore, false);
+  });
   await t.test(
     "Import mapping accepts integer-like versions and reports targeted validation details",
     async () => {

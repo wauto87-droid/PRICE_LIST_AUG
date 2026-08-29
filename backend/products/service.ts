@@ -670,6 +670,7 @@ export async function search(
         page?: number;
         pageSize?: number;
         selectionLimit?: number;
+        selectionOffset?: number;
       } = false,
 ) {
   const options =
@@ -687,6 +688,7 @@ export async function search(
     Math.max(options.selectionLimit ?? 5000, 1),
     5000,
   );
+  const selectionOffset = Math.max(options.selectionOffset ?? 0, 0);
   const activeClause = admin ? "true" : "p.active";
   const mapRows = (rows: Record<string, any>[]) =>
     rows.map((r) =>
@@ -720,8 +722,8 @@ export async function search(
     );
     const selectableItems = (
       await db.query(
-        `SELECT id,version FROM products p ORDER BY p.normalized_part LIMIT $1`,
-        [selectionLimit],
+        `SELECT id,version FROM products p ORDER BY p.normalized_part LIMIT $1 OFFSET $2`,
+        [selectionLimit, selectionOffset],
       )
     ).rows;
     return {
@@ -733,6 +735,8 @@ export async function search(
       hasMore: safePage + 1 < totalPages,
       selectableItems,
       selectionLimitReached: totalRows > selectionLimit,
+      selectionOffset,
+      selectionHasMore: selectionOffset + selectableItems.length < totalRows,
     };
   }
   if (!admin) {
@@ -805,18 +809,23 @@ export async function search(
     db,
     [...pagePartMatches, ...pageTextMatches].map((row) => row.id),
   );
-  const selectableItems = [
-    ...(
-      await getRankedPartMatches(
-        db,
-        activeClause,
-        q,
-        escaped,
-        Math.min(selectionLimit, partTotal),
-      )
-    ).map(({ id, version }) => ({ id, version })),
-  ];
+  const selectablePartMatches =
+    selectionOffset < partTotal
+      ? await getRankedPartMatches(
+          db,
+          activeClause,
+          q,
+          escaped,
+          Math.min(selectionLimit, partTotal - selectionOffset),
+          selectionOffset,
+        )
+      : [];
+  const selectableItems = selectablePartMatches.map(({ id, version }) => ({
+    id,
+    version,
+  }));
   if (selectableItems.length < selectionLimit && needsFallback) {
+    const selectionTextOffset = Math.max(selectionOffset - partTotal, 0);
     selectableItems.push(
       ...(
         await getRankedTextMatches(
@@ -825,6 +834,7 @@ export async function search(
           "%" + escaped + "%",
           partIdsForFallback,
           selectionLimit - selectableItems.length,
+          selectionTextOffset,
         )
       ).map(({ id, version }) => ({ id, version })),
     );
@@ -838,5 +848,7 @@ export async function search(
     hasMore: safePage + 1 < totalPages,
     selectableItems,
     selectionLimitReached: totalRows > selectionLimit,
+    selectionOffset,
+    selectionHasMore: selectionOffset + selectableItems.length < totalRows,
   };
 }

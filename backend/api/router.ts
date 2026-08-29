@@ -268,6 +268,11 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .min(1)
                 .max(200)
                 .parse(url.searchParams.get("pageSize") ?? 50),
+              selectionOffset: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("selectionOffset") ?? 0),
             },
           ),
         );

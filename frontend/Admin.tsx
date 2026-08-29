@@ -113,6 +113,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [query, setQuery] = useState(""),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
+    [productSelectionOffset, setProductSelectionOffset] = useState(0),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [actionState, setActionState] = useState<AdminActionState>({
@@ -152,7 +153,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     );
     return () => clearInterval(timer);
   }, [exportJob]);
-  async function load(overrides?: { page?: number; query?: string }) {
+  async function load(overrides?: {
+    page?: number;
+    query?: string;
+    selectionOffset?: number;
+  }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
@@ -173,7 +178,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               encodeURIComponent(overrides?.query ?? productQuery) +
               "&page=" +
               String(overrides?.page ?? productPage) +
-              "&pageSize=50"
+              "&pageSize=50&selectionOffset=" +
+              String(overrides?.selectionOffset ?? productSelectionOffset)
           : "admin/" + section,
       );
       if (
@@ -183,6 +189,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         return;
       if (section === "products" && payload && !Array.isArray(payload)) {
         setProductPage(payload.page ?? 0);
+        setProductSelectionOffset(
+          overrides?.selectionOffset ?? payload.selectionOffset ?? 0,
+        );
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
       setResult({ section, payload: validateAdminData(section, payload) });
@@ -202,6 +211,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setSelected({});
     setPreview(null);
     setProductPage(0);
+    setProductSelectionOffset(0);
     setLoadedProductQuery("");
     setSearchFocused(false);
     setActiveSuggestion(-1);
@@ -215,7 +225,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     const timer = setTimeout(() => {
       setProductQuery(query);
       setProductPage(0);
-      void load({ query, page: 0 });
+      setProductSelectionOffset(0);
+      void load({ query, page: 0, selectionOffset: 0 });
     }, 220);
     return () => clearTimeout(timer);
   }, [section, query, productQuery]);
@@ -391,6 +402,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     !!matchedProductItems.length &&
     matchedProductItems.every((item: any) => item.id in selected);
   const selectedCount = Object.keys(selected).length;
+  const showProductSelectionBar =
+    section === "products" &&
+    (!!visibleProductIds.length || !!matchedProductItems.length || !!selectedCount);
+  const selectionOffset = productData?.selectionOffset ?? productSelectionOffset;
+  const selectionBatchStart = matchedProductItems.length ? selectionOffset + 1 : 0;
+  const selectionBatchEnd = selectionOffset + matchedProductItems.length;
   const bulkItems = buildBulkItems(selected);
   const editField = (key: string, label: string, type = "text") => (
     <label key={key}>
@@ -408,8 +425,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setPreview(null);
     setProductQuery(nextQuery);
     setProductPage(0);
+    setProductSelectionOffset(0);
     setActiveSuggestion(-1);
-    void load({ query: nextQuery, page: 0 });
+    void load({ query: nextQuery, page: 0, selectionOffset: 0 });
   };
   const chooseSuggestion = (item: any) => {
     setQuery(item.partNumber);
@@ -666,6 +684,115 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     ))}
                 </div>
                 <div className="table-scroll">
+                  {showProductSelectionBar && (
+                    <div className="review-panel admin-selection-panel">
+                      <h3>
+                        {t("Selection", "التحديد")} ({selectedCount})
+                      </h3>
+                      <div className="actions wrap">
+                        <button
+                          disabled={busy || !visibleProductIds.length}
+                          onClick={() => {
+                            setSelected({
+                              ...selected,
+                              ...Object.fromEntries(
+                                productItems.map((item: any) => [
+                                  item.id,
+                                  item.version,
+                                ]),
+                              ),
+                            });
+                            setPreview(null);
+                          }}
+                        >
+                          {t("Select visible 50", "تحديد 50 الظاهرة")}
+                        </button>
+                        <button
+                          disabled={
+                            busy ||
+                            !matchedProductItems.length ||
+                            allMatchedSelected
+                          }
+                          onClick={() => {
+                            setSelected({
+                              ...selected,
+                              ...Object.fromEntries(
+                                matchedProductItems.map((item: any) => [
+                                  item.id,
+                                  item.version,
+                                ]),
+                              ),
+                            });
+                            setPreview(null);
+                          }}
+                        >
+                          {t("Select current batch", "تحديد الدفعة الحالية")}
+                        </button>
+                        <button
+                          disabled={busy || selectionOffset === 0}
+                          onClick={() => {
+                            const nextOffset = Math.max(
+                              selectionOffset - 5000,
+                              0,
+                            );
+                            setSelected({});
+                            setPreview(null);
+                            setProductSelectionOffset(nextOffset);
+                            void load({
+                              page: productPage,
+                              query: productQuery,
+                              selectionOffset: nextOffset,
+                            });
+                          }}
+                        >
+                          {t("Previous batch", "الدفعة السابقة")}
+                        </button>
+                        <button
+                          disabled={busy || !productData?.selectionHasMore}
+                          onClick={() => {
+                            const nextOffset =
+                              selectionOffset + matchedProductItems.length;
+                            setSelected({});
+                            setPreview(null);
+                            setProductSelectionOffset(nextOffset);
+                            void load({
+                              page: productPage,
+                              query: productQuery,
+                              selectionOffset: nextOffset,
+                            });
+                          }}
+                        >
+                          {t("Next batch", "الدفعة التالية")}
+                        </button>
+                        <button
+                          disabled={busy || !selectedCount}
+                          onClick={() => {
+                            setSelected({});
+                            setPreview(null);
+                          }}
+                        >
+                          {t("Clear selection", "مسح التحديد")}
+                        </button>
+                        <span className="muted">
+                          {matchedProductItems.length
+                            ? t(
+                                `Batch ${selectionBatchStart}-${selectionBatchEnd} of ${productData?.totalRows ?? matchedProductItems.length} matched products.`,
+                                `الدفعة ${selectionBatchStart}-${selectionBatchEnd} من ${productData?.totalRows ?? matchedProductItems.length} من الأصناف المطابقة.`,
+                              )
+                            : t(
+                                "Load products to use bulk selection.",
+                                "حمّل الأصناف لاستخدام التحديد الجماعي.",
+                              )}
+                          {productData?.selectionLimitReached
+                            ? t(
+                                " Move to the next batch after applying the current one.",
+                                " انتقل إلى الدفعة التالية بعد تطبيق الدفعة الحالية.",
+                              )
+                            : ""}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <table>
                     <thead>
                       <tr>
@@ -673,8 +800,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           <input
                             type="checkbox"
                             aria-label={t(
-                              "Select all visible products",
-                              "تحديد كل الأصناف الظاهرة",
+                              "Select all products on this page",
+                              "تحديد كل الأصناف في هذه الصفحة",
                             )}
                             checked={allVisibleSelected}
                             ref={(node) => {
@@ -797,44 +924,6 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     </h3>
                     <div className="actions wrap">
                       <button
-                        disabled={busy || !visibleProductIds.length}
-                        onClick={() => {
-                          setSelected({
-                            ...selected,
-                            ...Object.fromEntries(
-                              productItems.map((item: any) => [
-                                item.id,
-                                item.version,
-                              ]),
-                            ),
-                          });
-                          setPreview(null);
-                        }}
-                      >
-                        {t("Select visible", "تحديد الظاهر")}
-                      </button>
-                      <button
-                        disabled={
-                          busy ||
-                          !matchedProductItems.length ||
-                          allMatchedSelected
-                        }
-                        onClick={() => {
-                          setSelected({
-                            ...selected,
-                            ...Object.fromEntries(
-                              matchedProductItems.map((item: any) => [
-                                item.id,
-                                item.version,
-                              ]),
-                            ),
-                          });
-                          setPreview(null);
-                        }}
-                      >
-                        {t("Select all matched", "تحديد كل النتائج")}
-                      </button>
-                      <button
                         disabled={busy || !selectedCount}
                         onClick={() => {
                           setSelected({});
@@ -846,7 +935,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       <span className="muted">
                         {t("Selected", "المحدد")}: {selectedCount}
                         {productData?.selectionLimitReached
-                          ? t(" (first 5000 matches)", " (أول 5000 نتيجة)")
+                          ? t(
+                              ` (batch ${selectionBatchStart}-${selectionBatchEnd})`,
+                              ` (الدفعة ${selectionBatchStart}-${selectionBatchEnd})`,
+                            )
                           : ""}
                       </span>
                       <select

@@ -3,6 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
+import {
+  importSummaryDetails,
+  importSummaryLines,
+} from "./admin-dashboard-summary";
 
 type DashboardPanel =
   | "pending-imports"
@@ -30,6 +34,9 @@ const panelTitle = (panel: DashboardPanel, t: Translate) => {
 const customerName = (customer: any) =>
   customer?.name || customer?.number || "—";
 
+const isAwaitingReview = (job: any) => job.status === "AWAITING_REVIEW";
+const isImported = (job: any) => job.status === "IMPORTED";
+
 export default function AdminDashboard({
   t,
   data,
@@ -46,6 +53,7 @@ export default function AdminDashboard({
   onEditProduct: (id: string) => Promise<void>;
 }) {
   const [panel, setPanel] = useState<DashboardPanel>("pending-imports");
+  const [selectedImports, setSelectedImports] = useState<Record<string, any>>({});
   const [selectedDuplicates, setSelectedDuplicates] = useState<
     Record<string, { jobId: string; errors: string[] }>
   >({});
@@ -55,6 +63,7 @@ export default function AdminDashboard({
   const [newMinimum, setNewMinimum] = useState("");
 
   useEffect(() => {
+    setSelectedImports({});
     setSelectedDuplicates({});
     setSelectedMinimums({});
   }, [data]);
@@ -73,16 +82,29 @@ export default function AdminDashboard({
     ["Updated today", "محدثة اليوم", data.products.updated, "updated-today"],
     ["Draft quotations", "مسودات", data.quotes.drafts, "draft-quotations"],
     ["Issued today", "صادرة اليوم", data.quotes.today, "issued-today"],
-    ["Pending imports", "استيراد معلق", data.imports.pending, "pending-imports"],
+    [
+      "Pending imports",
+      "استيراد معلق",
+      data.imports.pending,
+      "pending-imports",
+    ],
     ["Import errors", "أخطاء الاستيراد", data.imports.errors, "import-errors"],
     ["Duplicate rows", "صفوف مكررة", data.duplicates, "duplicate-rows"],
   ] as const;
 
+  const recentImports = data.recentImports || [];
   const duplicateSelection = Object.entries(selectedDuplicates);
   const minimumItems = Object.entries(selectedMinimums).map(([id, version]) => ({
     id,
     version,
   }));
+  const importItems = Object.values(selectedImports);
+
+  const awaitingReviewSelected = importItems.filter(isAwaitingReview);
+  const importedSelected = importItems.filter(isImported);
+  const allImportsVisible =
+    !!recentImports.length &&
+    recentImports.every((job: any) => job.id in selectedImports);
   const allMinimumVisible =
     !!data.minimumProtected.length &&
     data.minimumProtected.every((row: any) => row.id in selectedMinimums);
@@ -108,7 +130,10 @@ export default function AdminDashboard({
           "The selected import rows were updated from the dashboard.",
           "تم تحديث صفوف الاستيراد المحددة من لوحة التحكم.",
         ),
-        error: t("Duplicate rows could not be updated", "تعذر تحديث الصفوف المكررة"),
+        error: t(
+          "Duplicate rows could not be updated",
+          "تعذر تحديث الصفوف المكررة",
+        ),
       },
       async () => {
         const byJob = new Map<string, string[]>();
@@ -117,7 +142,9 @@ export default function AdminDashboard({
         }
         for (const [jobId, ids] of byJob.entries()) {
           const rows = ids.map((id) => {
-            const source = (data.duplicateRows || []).find((row: any) => row.id === id);
+            const source = (data.duplicateRows || []).find(
+              (row: any) => row.id === id,
+            );
             const verified =
               decision === "UPDATE" &&
               !!source &&
@@ -179,6 +206,61 @@ export default function AdminDashboard({
     );
   }
 
+  async function bulkImportReadyRows() {
+    if (!awaitingReviewSelected.length) return;
+    await onAction(
+      {
+        saving: t("Importing selected ready rows…", "جارٍ استيراد الصفوف الجاهزة المحددة…"),
+        success: t("Selected imports completed", "اكتملت عمليات الاستيراد المحددة"),
+        successDetail: t(
+          "The selected review-ready imports were processed.",
+          "تمت معالجة عمليات الاستيراد المحددة الجاهزة للمراجعة.",
+        ),
+        error: t("Selected imports could not be completed", "تعذر إكمال عمليات الاستيراد المحددة"),
+      },
+      async () => {
+        for (const job of awaitingReviewSelected) {
+          await api("imports/" + job.id + "/auto-confirm", "POST", {
+            version: job.version,
+          });
+        }
+        setSelectedImports({});
+        await onReload();
+      },
+    );
+  }
+
+  async function bulkRollbackImports() {
+    if (!importedSelected.length) return;
+    if (
+      !(await showConfirm(
+        t(
+          `Roll back ${importedSelected.length} selected imports? Later product edits will block rollback.`,
+          `هل تريد التراجع عن ${importedSelected.length} عمليات استيراد محددة؟ ستمنع تعديلات الأصناف اللاحقة التراجع.`,
+        ),
+      ))
+    )
+      return;
+    await onAction(
+      {
+        saving: t("Rolling back selected imports…", "جارٍ التراجع عن عمليات الاستيراد المحددة…"),
+        success: t("Selected imports rolled back", "تم التراجع عن عمليات الاستيراد المحددة"),
+        successDetail: t(
+          "The selected completed imports were rolled back.",
+          "تم التراجع عن عمليات الاستيراد المكتملة المحددة.",
+        ),
+        error: t("Selected imports could not be rolled back", "تعذر التراجع عن عمليات الاستيراد المحددة"),
+      },
+      async () => {
+        for (const job of importedSelected) {
+          await api("imports/" + job.id + "/rollback", "POST", {});
+        }
+        setSelectedImports({});
+        await onReload();
+      },
+    );
+  }
+
   async function applyMinimumBulk(operation: "REMOVE_MINIMUM" | "MINIMUM") {
     if (!minimumItems.length) return;
     if (
@@ -219,7 +301,10 @@ export default function AdminDashboard({
               ),
         error:
           operation === "REMOVE_MINIMUM"
-            ? t("Minimum protection could not be removed", "تعذر إزالة حماية الحد الأدنى")
+            ? t(
+                "Minimum protection could not be removed",
+                "تعذر إزالة حماية الحد الأدنى",
+              )
             : t("Minimum prices could not be saved", "تعذر حفظ أسعار الحد الأدنى"),
       },
       async () => {
@@ -236,6 +321,36 @@ export default function AdminDashboard({
     );
   }
 
+  const renderImportSummary = (job: any) => {
+    const lines = importSummaryLines(job.summary, job.status);
+    const details = importSummaryDetails(job.summary);
+    return (
+      <div className="dashboard-summary">
+        <div className="dashboard-summary-chips">
+          {lines.map((line) => (
+            <span
+              key={line}
+              className={`pill ${line === "0 rows" ? "warning" : ""}`}
+            >
+              {line}
+            </span>
+          ))}
+        </div>
+        {details && (
+          <details className="dashboard-summary-details">
+            <summary>{t("Columns & warnings", "الأعمدة والتحذيرات")}</summary>
+            {!!details.columns.length && (
+              <small>{details.columns.join(" · ")}</small>
+            )}
+            {!!details.warnings.length && (
+              <small>{details.warnings.join(" · ")}</small>
+            )}
+          </details>
+        )}
+      </div>
+    );
+  };
+
   const renderPendingImports = () => (
     <div className="dashboard-panel">
       <div className="section-title">
@@ -249,16 +364,64 @@ export default function AdminDashboard({
           </p>
         </div>
         <div className="actions wrap">
-          <button onClick={() => onReload()}>{t("Refresh data", "تحديث البيانات")}</button>
+          <button onClick={() => onReload()}>
+            {t("Refresh data", "تحديث البيانات")}
+          </button>
           <button onClick={() => onOpenSection("imports")}>
             {t("Open Imports", "فتح الاستيراد")}
           </button>
         </div>
       </div>
+      <div className="dashboard-bulk-bar">
+        <span>
+          {Object.keys(selectedImports).length
+            ? t(
+                `${Object.keys(selectedImports).length} imports selected`,
+                `تم تحديد ${Object.keys(selectedImports).length} عمليات استيراد`,
+              )
+            : t(
+                "Select imports for bulk actions",
+                "حدد عمليات الاستيراد للإجراءات الجماعية",
+              )}
+        </span>
+        <button
+          disabled={!awaitingReviewSelected.length}
+          onClick={() => void bulkImportReadyRows()}
+        >
+          {t("Import ready selected", "استيراد الجاهز المحدد")}
+        </button>
+        <button
+          disabled={!importedSelected.length}
+          onClick={() => void bulkRollbackImports()}
+        >
+          {t("Roll back selected", "التراجع عن المحدد")}
+        </button>
+        <button
+          disabled={!Object.keys(selectedImports).length}
+          onClick={() => setSelectedImports({})}
+        >
+          {t("Clear selection", "مسح التحديد")}
+        </button>
+      </div>
       <div className="table-scroll">
         <table className="dashboard-table">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  checked={allImportsVisible}
+                  onChange={(e) =>
+                    setSelectedImports(
+                      e.target.checked
+                        ? Object.fromEntries(
+                            recentImports.map((job: any) => [job.id, job]),
+                          )
+                        : {},
+                    )
+                  }
+                />
+              </th>
               <th>{t("File", "الملف")}</th>
               <th>{t("Status", "الحالة")}</th>
               <th>{t("Summary", "الملخص")}</th>
@@ -267,23 +430,40 @@ export default function AdminDashboard({
             </tr>
           </thead>
           <tbody>
-            {data.recentImports.map((job: any) => (
+            {recentImports.map((job: any) => (
               <tr key={job.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={job.id in selectedImports}
+                    onChange={(e) =>
+                      setSelectedImports((current) =>
+                        e.target.checked
+                          ? { ...current, [job.id]: job }
+                          : Object.fromEntries(
+                              Object.entries(current).filter(
+                                ([id]) => id !== job.id,
+                              ),
+                            ),
+                      )
+                    }
+                  />
+                </td>
                 <td>
                   <strong>{job.filename}</strong>
                   <small>{job.kind}</small>
                 </td>
                 <td>
-                  <span className={`pill ${job.status === "FAILED" ? "warning" : ""}`}>
+                  <span
+                    className={`pill ${job.status === "ROLLED_BACK" ? "warning" : ""}`}
+                  >
                     {job.status}
                   </span>
                 </td>
-                <td>
-                  <small>{JSON.stringify(job.summary || {})}</small>
-                </td>
+                <td>{renderImportSummary(job)}</td>
                 <td>{new Date(job.updated_at).toLocaleString()}</td>
                 <td>
-                  <div className="actions wrap">
+                  <div className="actions wrap dashboard-row-actions">
                     <button onClick={() => onOpenSection("imports")}>
                       {job.status === "AWAITING_REVIEW"
                         ? t("Continue review", "متابعة المراجعة")
@@ -303,9 +483,11 @@ export default function AdminDashboard({
                 </td>
               </tr>
             ))}
-            {!data.recentImports.length && (
+            {!recentImports.length && (
               <tr>
-                <td colSpan={5}>{t("No recent imports", "لا توجد عمليات استيراد حديثة")}</td>
+                <td colSpan={6}>
+                  {t("No recent imports", "لا توجد عمليات استيراد حديثة")}
+                </td>
               </tr>
             )}
           </tbody>
@@ -360,7 +542,9 @@ export default function AdminDashboard({
             ))}
             {!data.importErrors.length && (
               <tr>
-                <td colSpan={4}>{t("No failed imports", "لا توجد عمليات استيراد فاشلة")}</td>
+                <td colSpan={4}>
+                  {t("No failed imports", "لا توجد عمليات استيراد فاشلة")}
+                </td>
               </tr>
             )}
           </tbody>
@@ -414,7 +598,9 @@ export default function AdminDashboard({
                   type="checkbox"
                   checked={
                     !!data.duplicateRows.length &&
-                    data.duplicateRows.every((row: any) => row.id in selectedDuplicates)
+                    data.duplicateRows.every(
+                      (row: any) => row.id in selectedDuplicates,
+                    )
                   }
                   onChange={(e) =>
                     setSelectedDuplicates(
@@ -449,10 +635,15 @@ export default function AdminDashboard({
                         e.target.checked
                           ? {
                               ...current,
-                              [row.id]: { jobId: row.job_id, errors: row.errors || [] },
+                              [row.id]: {
+                                jobId: row.job_id,
+                                errors: row.errors || [],
+                              },
                             }
                           : Object.fromEntries(
-                              Object.entries(current).filter(([id]) => id !== row.id),
+                              Object.entries(current).filter(
+                                ([id]) => id !== row.id,
+                              ),
                             ),
                       )
                     }
@@ -465,7 +656,12 @@ export default function AdminDashboard({
                   </small>
                   <small>
                     {t("Source part", "الصنف من الملف")}:{" "}
-                    {String(row.raw?.part ?? row.raw?.["Part Reference"] ?? row.proposed?.partNumber ?? "—")}
+                    {String(
+                      row.raw?.part ??
+                        row.raw?.["Part Reference"] ??
+                        row.proposed?.partNumber ??
+                        "—",
+                    )}
                   </small>
                 </td>
                 <td>
@@ -478,10 +674,14 @@ export default function AdminDashboard({
                 </td>
                 <td>
                   <span className="pill">{row.decision}</span>
-                  <small>{Array.isArray(row.errors) && row.errors.length ? row.errors.join("; ") : "OK"}</small>
+                  <small>
+                    {Array.isArray(row.errors) && row.errors.length
+                      ? row.errors.join("; ")
+                      : "OK"}
+                  </small>
                 </td>
                 <td>
-                  <div className="actions wrap">
+                  <div className="actions wrap dashboard-row-actions">
                     <button
                       onClick={() =>
                         void onAction(
@@ -520,7 +720,9 @@ export default function AdminDashboard({
             ))}
             {!data.duplicateRows.length && (
               <tr>
-                <td colSpan={6}>{t("No duplicate import rows", "لا توجد صفوف استيراد مكررة")}</td>
+                <td colSpan={6}>
+                  {t("No duplicate import rows", "لا توجد صفوف استيراد مكررة")}
+                </td>
               </tr>
             )}
           </tbody>
@@ -591,7 +793,10 @@ export default function AdminDashboard({
                     setSelectedMinimums(
                       e.target.checked
                         ? Object.fromEntries(
-                            data.minimumProtected.map((row: any) => [row.id, row.version]),
+                            data.minimumProtected.map((row: any) => [
+                              row.id,
+                              row.version,
+                            ]),
                           )
                         : {},
                     )
@@ -617,7 +822,9 @@ export default function AdminDashboard({
                         e.target.checked
                           ? { ...current, [row.id]: row.version }
                           : Object.fromEntries(
-                              Object.entries(current).filter(([id]) => id !== row.id),
+                              Object.entries(current).filter(
+                                ([id]) => id !== row.id,
+                              ),
                             ),
                       )
                     }
@@ -626,7 +833,11 @@ export default function AdminDashboard({
                 <td>
                   <strong>{row.partNumber}</strong>
                   <small>{row.description}</small>
-                  <small>{row.active ? t("Active", "نشط") : t("Archived", "مؤرشف")}</small>
+                  <small>
+                    {row.active
+                      ? t("Active", "نشط")
+                      : t("Archived", "مؤرشف")}
+                  </small>
                 </td>
                 <td>SAR {row.minimum}</td>
                 <td>SAR {row.masterExcl}</td>
@@ -641,7 +852,10 @@ export default function AdminDashboard({
             {!data.minimumProtected.length && (
               <tr>
                 <td colSpan={6}>
-                  {t("No products currently use minimum protection", "لا توجد أصناف تستخدم حماية الحد الأدنى حالياً")}
+                  {t(
+                    "No products currently use minimum protection",
+                    "لا توجد أصناف تستخدم حماية الحد الأدنى حالياً",
+                  )}
                 </td>
               </tr>
             )}
@@ -682,7 +896,9 @@ export default function AdminDashboard({
             ))}
             {!data.updatedTodayItems.length && (
               <tr>
-                <td colSpan={3}>{t("No products updated today", "لا توجد أصناف محدثة اليوم")}</td>
+                <td colSpan={3}>
+                  {t("No products updated today", "لا توجد أصناف محدثة اليوم")}
+                </td>
               </tr>
             )}
           </tbody>
@@ -691,7 +907,10 @@ export default function AdminDashboard({
     </div>
   );
 
-  const renderQuotes = (rows: any[], current: "draft-quotations" | "issued-today") => (
+  const renderQuotes = (
+    rows: any[],
+    current: "draft-quotations" | "issued-today",
+  ) => (
     <div className="dashboard-panel">
       <div className="section-title">
         <h3>{panelTitle(current, t)}</h3>
@@ -715,7 +934,10 @@ export default function AdminDashboard({
                 <td>{customerName(row.customer)}</td>
                 <td>SAR {row.totals?.total || "0.00"}</td>
                 <td>
-                  {new Date((current === "issued-today" ? row.issued_at : row.updated_at) || row.created_at).toLocaleString()}
+                  {new Date(
+                    (current === "issued-today" ? row.issued_at : row.updated_at) ||
+                      row.created_at,
+                  ).toLocaleString()}
                 </td>
               </tr>
             ))}
@@ -724,7 +946,10 @@ export default function AdminDashboard({
                 <td colSpan={4}>
                   {current === "draft-quotations"
                     ? t("No draft quotations", "لا توجد مسودات")
-                    : t("No quotations issued today", "لا توجد عروض صادرة اليوم")}
+                    : t(
+                        "No quotations issued today",
+                        "لا توجد عروض صادرة اليوم",
+                      )}
                 </td>
               </tr>
             )}
@@ -754,8 +979,10 @@ export default function AdminDashboard({
       {panel === "duplicate-rows" && renderDuplicateRows()}
       {panel === "minimum-protected" && renderMinimumProtected()}
       {panel === "updated-today" && renderUpdatedToday()}
-      {panel === "draft-quotations" && renderQuotes(data.draftQuotations, "draft-quotations")}
-      {panel === "issued-today" && renderQuotes(data.issuedTodayItems, "issued-today")}
+      {panel === "draft-quotations" &&
+        renderQuotes(data.draftQuotations, "draft-quotations")}
+      {panel === "issued-today" &&
+        renderQuotes(data.issuedTodayItems, "issued-today")}
     </>
   );
 }

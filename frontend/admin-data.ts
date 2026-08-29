@@ -33,6 +33,8 @@ export function validateAdminData(section: string, value: any) {
             Number.isInteger(value.totalRows) &&
             Number.isInteger(value.totalPages) &&
             typeof value.hasMore === "boolean" &&
+            Number.isInteger(value.selectionOffset) &&
+            typeof value.selectionHasMore === "boolean" &&
             typeof value.selectionLimitReached === "boolean"
         : section === "settings"
           ? object
