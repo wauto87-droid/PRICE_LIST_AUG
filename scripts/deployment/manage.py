@@ -21,7 +21,7 @@ import signal
 import socket
 import tempfile
 import stat
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 import ipaddress
 from collections import deque
 
@@ -222,6 +222,9 @@ def runtime_for_env(values, override=None):
 def database_url(values):
     if app_runtime(values) == 'pm2':
         host = values.get('DB_HOST', '127.0.0.1')
+        if host.startswith('/'):
+            return (f"postgresql://{values['POSTGRES_USER']}:{values['POSTGRES_PASSWORD']}@/"
+                    f"{values['POSTGRES_DB']}?host={quote(host, safe='')}")
         port = values.get('DB_PORT', DEFAULT_DB_PORT)
         return (f"postgresql://{values['POSTGRES_USER']}:{values['POSTGRES_PASSWORD']}@"
                 f"{host}:{port}/{values['POSTGRES_DB']}")
@@ -504,12 +507,16 @@ class Deployment:
         host = values.get('DB_HOST', '127.0.0.1')
         port = int(values.get('DB_PORT', DEFAULT_DB_PORT))
         if host in ('127.0.0.1', 'localhost') and not self.host_port_ready(host, port):
-            values['DB_HOST'] = self.db_private_ipv4()
-            values['DB_PORT'] = '5432'
+            socket_dir = self.db_socket_host_path()
+            if socket_dir is not None:
+                values['DB_HOST'] = socket_dir
+            else:
+                values['DB_HOST'] = self.db_private_ipv4()
+                values['DB_PORT'] = '5432'
         return self.native_env(
             extra=extra,
             release=release,
-            values_override={'DB_HOST': values['DB_HOST'], 'DB_PORT': values['DB_PORT']},
+            values_override={'DB_HOST': values['DB_HOST'], 'DB_PORT': values.get('DB_PORT', DEFAULT_DB_PORT)},
         )
 
     def host_port_ready(self, host, port, timeout=1.5):
@@ -687,6 +694,20 @@ class Deployment:
 
     def db_private_ipv4(self):
         return self.container_private_ipv4(self.db_id(), 'Database')
+
+    def db_socket_host_path(self):
+        try:
+            resource = json.loads(decoded(self.engine('volume', 'inspect', f'{PROJECT}_database_socket')))[0]
+        except Exception:
+            return None
+        mountpoint = resource.get('Mountpoint')
+        if not mountpoint:
+            return None
+        path = Path(mountpoint)
+        socket_file = path / '.s.PGSQL.5432'
+        if path.is_dir() and socket_file.exists():
+            return str(path)
+        return None
 
     def app_id(self):
         ids = decoded(self.compose('ps', '-q', 'app')).split()

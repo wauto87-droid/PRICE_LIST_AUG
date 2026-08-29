@@ -748,6 +748,8 @@ www.softwaresolver.online {
         self.assertNotIn('@db:', rendered)
         pm2_rendered = m.env_text(m.new_env(18180, runtime='pm2'))
         self.assertIn('@127.0.0.1:15432/', pm2_rendered)
+        pm2_socket_rendered = m.env_text(dict(m.new_env(18180, runtime='pm2'), DB_HOST='/podman/volumes/database_socket'))
+        self.assertIn('?host=%2Fpodman%2Fvolumes%2Fdatabase_socket', pm2_socket_rendered)
         self.assertIn('database_socket:/var/run/postgresql', compose)
         self.assertEqual(compose.count('database_socket:/var/run/postgresql:ro'), 4)
         self.assertIn('unix_socket_permissions=0777', compose)
@@ -795,11 +797,24 @@ www.softwaresolver.online {
         self.assertIn('query_timeout:5000', script)
         self.assertIn('statement_timeout:5000', script)
 
+    def test_native_runtime_env_prefers_database_socket_when_loopback_port_is_unreachable(self):
+        d = self.deployment()
+        d.env = m.new_env(18180, runtime='pm2')
+        d.release = ROOT
+        d.host_port_ready = Mock(return_value=False)
+        d.db_socket_host_path = Mock(return_value='/podman/volumes/database_socket')
+        d.db_private_ipv4 = Mock()
+        env = d.native_runtime_env()
+        self.assertEqual(env['DB_HOST'], '/podman/volumes/database_socket')
+        self.assertIn('?host=%2Fpodman%2Fvolumes%2Fdatabase_socket', env['DATABASE_URL'])
+        d.db_private_ipv4.assert_not_called()
+
     def test_native_runtime_env_falls_back_to_database_private_ip_when_loopback_port_is_unreachable(self):
         d = self.deployment()
         d.env = m.new_env(18180, runtime='pm2')
         d.release = ROOT
         d.host_port_ready = Mock(return_value=False)
+        d.db_socket_host_path = Mock(return_value=None)
         d.db_private_ipv4 = Mock(return_value='10.89.4.200')
         env = d.native_runtime_env()
         self.assertEqual(env['DB_HOST'], '10.89.4.200')
@@ -811,10 +826,12 @@ www.softwaresolver.online {
         d.env = m.new_env(18180, runtime='pm2')
         d.release = ROOT
         d.host_port_ready = Mock(return_value=True)
+        d.db_socket_host_path = Mock()
         d.db_private_ipv4 = Mock()
         env = d.native_runtime_env()
         self.assertEqual(env['DB_HOST'], '127.0.0.1')
         self.assertIn('@127.0.0.1:15432/', env['DATABASE_URL'])
+        d.db_socket_host_path.assert_not_called()
         d.db_private_ipv4.assert_not_called()
 
     def replacement_guard_fixture(self, temp):
