@@ -55,6 +55,14 @@ const importActionErrors = new Set([
   "Import rollback failed",
 ]);
 function formatImportActionError(rawMessage: string, t: Translate) {
+  if (
+    /Please correct the highlighted values/i.test(rawMessage) &&
+    /(?:^|—)\s*Invalid input$/i.test(rawMessage.trim())
+  )
+    return t(
+      "Please correct the highlighted import values. One or more mapped fields still have an invalid format.",
+      "يرجى تصحيح قيم الاستيراد المظللة. لا يزال واحد أو أكثر من الحقول المرتبطة بتنسيق غير صالح.",
+    );
   if (/Please correct the highlighted values/i.test(rawMessage))
     return t(
       "Please correct the highlighted import values. Check the mapped columns, defaults, and selected import before trying again.",

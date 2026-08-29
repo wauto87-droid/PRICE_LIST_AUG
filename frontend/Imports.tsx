@@ -144,6 +144,12 @@ const decisionLabel = (decision: string, t: Translate) => {
   if (decision === "SKIP") return t("Ignore / Skip", "تجاهل / تخطي");
   return decision;
 };
+const applyRowUpdates = (
+  rows: any[],
+  ids: Set<string>,
+  updates: { decision?: string; verified?: boolean },
+) =>
+  rows.map((row) => (ids.has(row.id) ? { ...row, ...updates } : row));
 export default function Imports({
   t,
   actionBusy,
@@ -171,6 +177,7 @@ export default function Imports({
     [guidedGroupPresets, setGuidedGroupPresets] = useState<
       Record<string, DiscountPreset>
     >({}),
+    [selectedRows, setSelectedRows] = useState<Record<string, boolean>>({}),
     [reviewDrafts, setReviewDrafts] = useState<
       Record<string, { decision?: string; verified?: boolean }>
     >({}),
@@ -318,6 +325,7 @@ export default function Imports({
       nextRowView,
     );
     setJob(j);
+    setSelectedRows({});
     setPage(j.page || 0);
     setRowView(nextRowView);
     setGroupValues(j.groupValues || []);
@@ -343,6 +351,7 @@ export default function Imports({
   }
   async function openReviewSection(nextSection: ReviewSection, nextJob = job) {
     setConfirmation(null);
+    setSelectedRows({});
     setReviewSection(nextSection);
     if (!nextJob || nextSection === "summary") return;
     await loadJobPage(
@@ -361,6 +370,7 @@ export default function Imports({
     const { guidedImport, quickImport, ...productDefaults } = savedDefaults;
     const columns = j.summary.columns || [];
     setReviewDrafts(emptyDrafts);
+    setSelectedRows({});
     setJob(j);
     setConfirmation(null);
     setPage(j.page || 0);
@@ -446,6 +456,29 @@ export default function Imports({
       ? t("Repair items", "عناصر الإصلاح")
       : t("All rows", "كل الصفوف");
   const showRowList = !!job && reviewSection !== "summary";
+  const visibleRowIds: string[] = (job?.rows ?? []).map((row: any) => row.id);
+  const selectedVisibleIds = visibleRowIds.filter(
+    (id: string) => selectedRows[id],
+  );
+  const selectedVisibleSet = new Set(selectedVisibleIds);
+  const selectedVisibleCount = selectedVisibleIds.length;
+  const allVisibleSelected =
+    visibleRowIds.length > 0 && visibleRowIds.every((id: string) => selectedRows[id]);
+  const someVisibleSelected =
+    visibleRowIds.some((id: string) => selectedRows[id]) && !allVisibleSelected;
+  const updateSelectedRows = (updates: { decision?: string; verified?: boolean }) => {
+    if (!job || !selectedVisibleCount) return;
+    setReviewDrafts((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        selectedVisibleIds.map((id) => [id, { ...current[id], ...updates }]),
+      ),
+    }));
+    setJob({
+      ...job,
+      rows: applyRowUpdates(job.rows, selectedVisibleSet, updates),
+    });
+  };
   return (
     <>
       <div className="actions wrap">
@@ -1342,9 +1375,101 @@ export default function Imports({
                       )}
                 </span>
               </div>
+              <div className="import-selection-toolbar">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(input) => {
+                      if (input) input.indeterminate = someVisibleSelected;
+                    }}
+                    aria-label={t("Select all visible rows", "تحديد كل الصفوف الظاهرة")}
+                    onChange={(e) =>
+                      setSelectedRows(
+                        e.target.checked
+                          ? Object.fromEntries(
+                              visibleRowIds.map((id: string) => [id, true]),
+                            )
+                          : {},
+                      )
+                    }
+                  />
+                  {t("Select all visible", "تحديد الكل الظاهر")}
+                </label>
+                <span className="muted">
+                  {t("Selected", "المحدد")}: {selectedVisibleCount}
+                </span>
+                <button
+                  type="button"
+                  disabled={!selectedVisibleCount}
+                  onClick={() =>
+                    setSelectedRows(
+                      Object.fromEntries(
+                        visibleRowIds
+                          .filter((id: string) => !selectedRows[id])
+                          .map((id: string) => [id, true]),
+                      ),
+                    )
+                  }
+                >
+                  {t("Select visible", "تحديد الظاهر")}
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedVisibleCount}
+                  onClick={() => setSelectedRows({})}
+                >
+                  {t("Clear selection", "مسح التحديد")}
+                </button>
+              </div>
+              {selectedVisibleCount > 0 && (
+                <div className="import-bulk-bar">
+                  <span>
+                    {selectedVisibleCount}{" "}
+                    {t("visible rows selected", "صفوف ظاهرة محددة")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ decision: "UPDATE" })}
+                  >
+                    {t("Import changes", "استيراد التغييرات")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ decision: "KEEP" })}
+                  >
+                    {t("Keep existing", "إبقاء الحالي")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ decision: "SKIP" })}
+                  >
+                    {t("Ignore / Skip", "تجاهل / تخطي")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ decision: "REVIEW" })}
+                  >
+                    {t("Needs review", "بحاجة لمراجعة")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ verified: true })}
+                  >
+                    {t("Mark verified", "تحديد كمتحقق")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSelectedRows({ verified: false })}
+                  >
+                    {t("Unverify", "إلغاء التحقق")}
+                  </button>
+                </div>
+              )}
               <table className="import-review-table">
                 <thead>
                   <tr>
+                    <th>{t("Select", "تحديد")}</th>
                     <th>#</th>
                     <th>{t("Incoming row", "الصف الوارد")}</th>
                     <th>{t("Status / problem", "الحالة / المشكلة")}</th>
@@ -1354,7 +1479,23 @@ export default function Imports({
                 </thead>
                 <tbody>
                   {job.rows.map((r: any) => (
-                    <tr key={r.id}>
+                    <tr
+                      key={r.id}
+                      className={selectedRows[r.id] ? "selected-row" : ""}
+                    >
+                      <td data-label={t("Select", "تحديد")}>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedRows[r.id]}
+                          aria-label={`Select row ${r.row_number}`}
+                          onChange={(e) =>
+                            setSelectedRows((current) => ({
+                              ...current,
+                              [r.id]: e.target.checked,
+                            }))
+                          }
+                        />
+                      </td>
                       <td data-label="#">{r.row_number}</td>
                       <td data-label={t("Incoming row", "الصف الوارد")}>
                         <strong>
@@ -1497,7 +1638,7 @@ export default function Imports({
                   ))}
                   {!job.rows.length && (
                     <tr>
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         {rowView === "repair"
                           ? t(
                               "No repair items on this import right now.",

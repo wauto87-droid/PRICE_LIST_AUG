@@ -38,7 +38,13 @@ export async function api<T = any>(
       window.dispatchEvent(new Event("amt-session-expired"));
     const details = Array.isArray(data.details)
       ? data.details
-          .map((i: any) => `${i.path?.join(".")}: ${i.message}`)
+          .map((i: any) => {
+            const pathLabel = Array.isArray(i.path)
+              ? i.path.filter(Boolean).join(".")
+              : "";
+            return pathLabel ? `${pathLabel}: ${i.message}` : String(i.message);
+          })
+          .filter(Boolean)
           .join("; ")
       : "";
     const error = new Error(
