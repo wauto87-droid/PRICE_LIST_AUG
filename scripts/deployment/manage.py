@@ -482,7 +482,7 @@ class Deployment:
             'python': shared / 'python',
             'browsers': shared / 'playwright',
             'logs': shared / 'pm2-logs',
-            'ecosystem': release / 'scripts' / 'deployment' / 'pm2.ecosystem.cjs',
+            'ecosystem': release / 'scripts' / 'deployment' / 'pm2.ecosystem.config.cjs',
         }
 
     def native_env(self, extra=None, release=None, values_override=None):
