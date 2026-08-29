@@ -909,6 +909,31 @@ www.softwaresolver.online {
             d.check_replace_failed()
             self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
 
+    def test_replacement_guard_allows_incomplete_activated_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            current_release = d.root / 'releases' / 'bbbbbbbbbbbb-22222222'
+            current_release.mkdir(parents=True)
+            (current_release / 'release.json').write_text(json.dumps({'commit': 'b' * 40}))
+            current_link = d.root / 'current'
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current_link:
+                    return current_release
+                return original_resolve(path_obj, strict=strict)
+
+            current_link.mkdir()
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}}])
+            d.database = Mock(return_value=result('0'))
+            with patch.object(Path, 'resolve', resolve_override):
+                d.check_replace_failed()
+            self.assertEqual(d.release.name, 'bbbbbbbbbbbb-22222222')
+
     def test_replacement_guard_rejects_applied_migrations(self):
         with tempfile.TemporaryDirectory() as temp:
             d = self.replacement_guard_fixture(temp)
@@ -949,6 +974,70 @@ www.softwaresolver.online {
             with self.assertRaises(m.DeployError):
                 d.deploy(True)
             d.check_replace_failed.assert_called_once()
+            self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'b' * 40)
+
+    def test_recover_install_replaces_from_active_release_when_current_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.args = m.arguments(['recover-install', '--yes', '--access-verified'])
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180, runtime='pm2')
+            d.envfile.write_text(m.env_text(d.env))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            (d.state / 'install.json').write_text(json.dumps({'commit': 'a' * 40, 'candidate': None}))
+            (d.state / 'deployment.json').write_text(json.dumps({'phase': 'MIGRATING'}))
+            current_release = root / 'releases' / 'aaaaaaaaaaaa-11111111'
+            next_release = root / 'releases' / 'bbbbbbbbbbbb-22222222'
+            current_release.mkdir(parents=True)
+            next_release.mkdir(parents=True)
+            (current_release / 'release.json').write_text(json.dumps({'commit': 'a' * 40}))
+            (next_release / 'release.json').write_text(json.dumps({'commit': 'b' * 40}))
+            for release in (current_release, next_release):
+                (release / 'database').mkdir()
+                (release / 'database' / '001_initial.sql').write_text('-- migration')
+            current_link = root / 'current'
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == current_link:
+                    return current_release
+                return original_resolve(path_obj, strict=strict)
+
+            current_link.mkdir()
+            d.load_environment = Mock()
+            d.source = Mock(return_value=(ROOT, 'b' * 40))
+            d.port = Mock(return_value=18180)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[{'Config': {'Labels': {
+                'com.docker.compose.project': m.PROJECT,
+                'com.docker.compose.service': 'db',
+            }}}])
+            d.database = Mock(return_value=result('0'))
+            d.prepare_release = Mock(return_value=next_release)
+            d.stop_runtime = Mock()
+            d.snapshot = Mock()
+            d.initialize_volumes = Mock()
+            d.compose = Mock(return_value=result())
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
+            d.verify_database_runtime = Mock()
+            d.run_native_migrate = Mock()
+            d.start = Mock()
+            d.activate = Mock(side_effect=lambda release: setattr(d, 'release', release))
+            d._sync_startup_units = Mock()
+            d.refresh_proxy = Mock()
+            d.event = Mock()
+            with patch.object(Path, 'resolve', resolve_override), patch.object(m, 'run', return_value=result()):
+                d.deploy(True)
+            self.assertEqual(d.stop_runtime.call_args_list, [unittest.mock.call('pm2'), unittest.mock.call('pm2')])
+            d.snapshot.assert_called_once()
+            self.assertEqual(d.compose.call_args_list[0], unittest.mock.call('rm', '-s', '-f', 'db'))
             self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'b' * 40)
 
     def test_recover_install_reuses_same_commit_candidate(self):

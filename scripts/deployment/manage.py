@@ -1045,6 +1045,14 @@ class Deployment:
         os.replace(temp, self.root / 'current')
         self.release = release
 
+    def active_release(self):
+        current_link = self.root / 'current'
+        if not current_link.exists():
+            return None
+        current = current_link.resolve(strict=True)
+        require(current.parent == self.root / 'releases' and current.is_dir(), 'Current release points outside the deployment')
+        return current
+
     def cleanup_plan(self):
         current = (self.root / 'current').resolve(strict=True)
         require(current.parent == self.root / 'releases' and current.is_dir(), 'Current release points outside the deployment')
@@ -1122,12 +1130,14 @@ class Deployment:
                                (self.args.recover_install and requested_commit != recovery.get('commit')))
             if replace_release:
                 self.check_replace_failed()
+                replacing_active_release = self.release is not None and self.active_release() == self.release
                 atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
                 # The guard proved this is the sole pre-migration DB container. Recreate it
                 # from the replacement release so it receives the private socket mount.
                 if self.release is not None:
                     self.compose('rm', '-s', '-f', 'db')
-                    self.release = None
+                    if not replacing_active_release:
+                        self.release = None
                 atomic(self.envfile, env_text(self.env))
                 recovery = {'commit': requested_commit, 'candidate': None}
                 atomic(journal, json.dumps(recovery))
@@ -1216,19 +1226,20 @@ class Deployment:
         print(f"Open {self.env['APP_ORIGIN']}{BASE_PATH}. Read the setup token privately from {self.envfile}; it is never printed here.")
 
     def check_replace_failed(self):
-        require(not (self.root / 'current').exists(), 'Cannot replace a release after activation')
         recovery = json.loads((self.state / 'install.json').read_text())
         require(not recovery.get('completed'), 'Installation already completed')
         state_file = self.state / 'deployment.json'
         if state_file.exists():
             require(json.loads(state_file.read_text()).get('phase') in ('BUILT', 'MIGRATING'), 'Replacement blocked after migrations or ambiguous recovery state')
+        self.release = self.active_release()
         volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
         owned = [c for c in self.inventory() if self.owned(c)]
         services = {c.get('Config', {}).get('Labels', {}).get('com.docker.compose.service') for c in owned}
         require(services <= {'db'}, 'Application or ambiguous AMT containers already exist; replacement refused')
         if f'{PROJECT}_database' in volumes or 'db' in services:
             require(services == {'db'}, 'Database storage exists without exactly one recognized database container')
-            self.release = self.recovery_release(recovery)
+            if self.release is None:
+                self.release = self.recovery_release(recovery)
             exists = self.database("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='migrations';", check=False)
             require(exists.returncode == 0 and decoded(exists) in ('0', '1'), 'Replacement refused because database state is ambiguous')
             if decoded(exists) == '1':
