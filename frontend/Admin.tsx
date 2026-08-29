@@ -110,6 +110,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   const [section, setSection] = useState("dashboard"),
     [result, setResult] = useState<AdminResult>(null),
     [error, setError] = useState(""),
+    [menuOpen, setMenuOpen] = useState(false),
     [query, setQuery] = useState(""),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
@@ -440,9 +441,23 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setEdit(full);
   };
   return (
-    <div className="admin-layout">
-      <aside className="admin-menu">
-        <div className="eyebrow">{t("ADMINISTRATION", "الإدارة")}</div>
+    <div className={`admin-layout ${menuOpen ? "menu-open" : "menu-collapsed"}`}>
+      <div
+        className={`admin-menu-backdrop ${menuOpen ? "open" : ""}`}
+        onClick={() => setMenuOpen(false)}
+      />
+      <aside className={`admin-menu ${menuOpen ? "open" : ""}`}>
+        <div className="admin-menu-top">
+          <div className="eyebrow">{t("ADMINISTRATION", "الإدارة")}</div>
+          <button
+            type="button"
+            className="admin-menu-close"
+            aria-label={t("Close admin menu", "إغلاق قائمة الإدارة")}
+            onClick={() => setMenuOpen(false)}
+          >
+            ×
+          </button>
+        </div>
         {sections
           .filter((s) => user.permissions.includes(s[3]))
           .map(([key, en, ar]) => (
@@ -455,6 +470,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 requestGeneration.current++;
                 currentSection.current = key;
                 setEdit(null);
+                setMenuOpen(false);
                 setSection(key);
               }}
             >
@@ -464,18 +480,33 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       </aside>
       <section className="card admin-content">
         <div className="section-title">
-          <h2>{t(heading[1], heading[2])}</h2>
-          {![
-            "imports",
-            "rules",
-            "quotation-settings",
-            "discount-requests",
-            "sales-price-check",
-          ].includes(section) && (
-            <button disabled={busy} onClick={() => void load()}>
-              {t("Refresh", "تحديث")}
+          <div className="admin-title-row">
+            <button
+              type="button"
+              className="admin-menu-toggle"
+              aria-label={t("Open admin menu", "فتح قائمة الإدارة")}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((value) => !value)}
+            >
+              <span />
+              <span />
+              <span />
             </button>
-          )}
+            <h2>{t(heading[1], heading[2])}</h2>
+          </div>
+          <div className="actions wrap">
+            {![
+              "imports",
+              "rules",
+              "quotation-settings",
+              "discount-requests",
+              "sales-price-check",
+            ].includes(section) && (
+              <button disabled={busy} onClick={() => void load()}>
+                {t("Refresh", "تحديث")}
+              </button>
+            )}
+          </div>
         </div>
         {error && (
           <div role="alert" className="notice error">

@@ -905,12 +905,18 @@ strong + small {
   overflow-x: auto;
   margin-top: 20px;
 }
+.sales-check-shell {
+  padding: 22px 22px 18px;
+}
 .sales-check-toolbar {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fafafd;
   margin: 12px 0;
+}
+.sales-check-upload-bar {
+  justify-content: space-between;
 }
 .sales-check-toolbar-ready {
   display: grid;
@@ -929,6 +935,7 @@ strong + small {
 }
 .sales-check-toolbar-exports {
   align-items: center;
+  justify-content: space-between;
 }
 .sales-check-field {
   min-width: 130px;
@@ -958,6 +965,79 @@ strong + small {
   font-size: 12px;
   color: #666670;
 }
+.sales-check-results-note {
+  color: #666670;
+  font-size: 12px;
+  margin-inline-end: auto;
+}
+.sales-check-report-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.sales-check-report-list button {
+  text-align: start;
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.sales-check-report-list button.processing {
+  border-color: #d8dce7;
+  background: linear-gradient(180deg, #fff 0%, #f7f8fc 100%);
+}
+.sales-check-report-list button.ready {
+  background: linear-gradient(180deg, #fff 0%, #fbfcff 100%);
+}
+.sales-check-report-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.sales-check-report-list-meta {
+  color: #6a6e7d;
+}
+.sales-check-report-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.sales-check-report-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sales-check-report-title-row h3 {
+  margin: 0;
+}
+.sales-check-report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 7px;
+  color: #727581;
+  font-size: 12px;
+}
+.sales-check-status-pill.working {
+  background: #eef2ff;
+  color: #3650b8;
+}
+.sales-check-status-pill.success {
+  background: #e8f7ee;
+  color: #176a43;
+}
+.sales-check-status-pill.danger {
+  background: #ffe9ec;
+  color: #9b2835;
+}
+.sales-check-status-pill.neutral {
+  background: #f3f4f7;
+  color: #525866;
+}
 .sales-check-progress {
   padding: 16px 18px;
   margin: 14px 0;
@@ -965,17 +1045,60 @@ strong + small {
   border-radius: 13px;
   background: linear-gradient(135deg, #fff 0%, #fafafd 100%);
 }
+.sales-check-progress-working {
+  border-color: #d9dce5;
+}
+.sales-check-progress-success {
+  border-color: #d4eadc;
+  background: linear-gradient(135deg, #fff 0%, #f7fcf8 100%);
+}
+.sales-check-progress-danger {
+  border-color: #f0c6cc;
+  background: linear-gradient(135deg, #fff 0%, #fff6f7 100%);
+}
 .sales-check-progress-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
 }
+.sales-check-progress-subtitle {
+  display: block;
+  margin-top: 4px;
+  color: #6f7481;
+}
 .sales-check-progress .admin-progress {
   margin: 12px 0 8px;
 }
+.sales-check-setup {
+  display: grid;
+  gap: 12px;
+}
+.sales-check-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.sales-check-summary-card {
+  border: 1px solid #e0e3eb;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, #fff 0%, #fcfcfe 100%);
+}
+.sales-check-summary-card span {
+  display: block;
+  color: #707483;
+  font-size: 11px;
+}
+.sales-check-summary-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #1f2430;
+  font-size: 24px;
+}
 .sales-check-table-wrap {
-  max-height: min(70vh, 760px);
+  max-height: min(74vh, 820px);
   margin-top: 16px;
   border: 1px solid #dfe1e8;
   border-radius: 16px;
@@ -983,8 +1106,8 @@ strong + small {
   box-shadow: inset 0 1px 0 #ffffffc7;
 }
 .sales-check-table {
-  min-width: 1320px;
-  font-size: 11px;
+  min-width: 1220px;
+  font-size: 10.5px;
   table-layout: fixed;
 }
 .sales-check-table thead {
@@ -993,60 +1116,69 @@ strong + small {
   z-index: 2;
 }
 .sales-check-table th {
-  padding: 11px 8px;
-  background: linear-gradient(180deg, #f4f5f8 0%, #eceef4 100%);
-  color: #4e4e58;
-  border-bottom: 1px solid #d7dae2;
+  padding: 11px 7px;
+  background: linear-gradient(180deg, #eef1f7 0%, #e5e9f2 100%);
+  color: #434755;
+  border-bottom: 1px solid #ced4e0;
+  font-size: 10px;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
 }
 .sales-check-table td {
-  padding: 8px 8px;
-  line-height: 1.2;
+  padding: 7px 7px;
+  line-height: 1.25;
   vertical-align: top;
+  border-bottom: 1px solid #eff1f6;
 }
 .sales-check-table tbody tr:nth-child(even) {
   background: #fbfbfd;
 }
 .sales-check-table tbody tr:hover {
-  background: #fff6f7;
+  background: #fff4f5;
 }
 .sales-check-table .row-number-cell {
-  width: 54px;
+  width: 48px;
   text-align: center;
   color: #62626c;
+  font-variant-numeric: tabular-nums;
 }
 .sales-check-table .part-cell {
-  width: 128px;
+  width: 150px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-weight: 800;
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sales-check-table .description-cell {
-  width: 245px;
+  width: 270px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sales-check-table .number-cell {
-  width: 92px;
+  width: 88px;
   text-align: end;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .sales-check-table .status-cell {
-  min-width: 220px;
+  width: 220px;
   white-space: normal;
+}
+.sales-check-status-stack {
+  display: grid;
+  gap: 5px;
 }
 .sales-check-error {
   display: block;
-  margin-top: 6px;
   color: #75535a;
   font-size: 10px;
-  line-height: 1.45;
+  line-height: 1.35;
   font-weight: 700 !important;
 }
 .sales-check-raw {
-  margin-top: 6px;
+  margin-top: 2px;
 }
 .sales-check-raw summary {
   font-size: 11px;
@@ -1068,6 +1200,21 @@ strong + small {
 .sales-check-badge.not-matched {
   color: #9b2835;
   background: #ffe9ec;
+}
+.sales-check-match-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f1f3f8;
+  color: #5b6070;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.sales-check-pagination {
+  justify-content: space-between;
+  margin-top: 14px;
 }
 table {
   border-collapse: collapse;
@@ -1373,24 +1520,68 @@ td button {
   vertical-align: middle;
 }
 .admin-layout {
-  display: grid;
-  grid-template-columns: 195px minmax(0, 1fr);
-  gap: 25px;
+  position: relative;
+}
+.admin-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(29, 33, 43, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+  z-index: 20;
+}
+.admin-menu-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
 }
 .admin-menu {
+  position: fixed;
+  top: 118px;
+  left: max(18px, calc((100vw - 1280px) / 2 + 18px));
+  width: min(280px, calc(100vw - 36px));
+  max-height: calc(100vh - 136px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding-top: 12px;
+  padding: 14px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 48px rgba(23, 29, 45, 0.12);
+  transform: translateX(-16px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
+  z-index: 21;
+}
+.admin-menu.open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.admin-menu-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.admin-menu-close {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
 }
 .admin-menu .eyebrow {
-  padding-inline-start: 14px;
+  padding-inline-start: 8px;
   font-size: 9px;
 }
 .admin-menu button {
   justify-content: flex-start;
   background: transparent;
-  border: 0;
   font-size: 13px;
   padding: 11px 14px;
   color: #797982;
@@ -1401,6 +1592,30 @@ td button {
 }
 .admin-content {
   min-width: 0;
+  width: 100%;
+}
+.admin-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.admin-title-row h2 {
+  min-width: 0;
+}
+.admin-menu-toggle {
+  display: inline-grid;
+  gap: 4px;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 10px;
+}
+.admin-menu-toggle span {
+  display: block;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
 }
 .dashboard-grid {
   display: grid;
@@ -1632,6 +1847,9 @@ fieldset label {
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+  .sales-check-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 @media (max-width: 700px) {
   .app-header {
@@ -1771,20 +1989,27 @@ fieldset label {
   .admin-layout {
     display: block;
   }
-  .admin-menu {
-    flex-direction: row;
-    overflow-x: auto;
-    margin-bottom: 15px;
-    padding: 0;
+  .admin-menu-backdrop {
+    z-index: 35;
   }
-  .admin-menu .eyebrow {
-    display: none;
+  .admin-menu {
+    top: 88px;
+    left: 12px;
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 104px);
+    padding: 12px 10px;
+    z-index: 36;
+  }
+  .admin-menu-top {
+    margin-bottom: 8px;
   }
   .admin-menu button {
-    white-space: nowrap;
     font-size: 11px;
-    min-height: 39px;
+    min-height: 40px;
     padding: 9px 12px;
+  }
+  .admin-title-row {
+    gap: 10px;
   }
   .stat {
     padding: 15px;
@@ -1944,6 +2169,15 @@ body :is(h1, h2, h3, strong, b) {
   .sales-check-progress-head {
     display: grid;
   }
+  .sales-check-report-head {
+    display: grid;
+  }
+  .sales-check-report-list {
+    grid-template-columns: 1fr;
+  }
+  .sales-check-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sales-check-toolbar-filters {
     border-bottom: 0;
     padding-bottom: 0;
@@ -1994,6 +2228,9 @@ body :is(h1, h2, h3, strong, b) {
     color: #777781;
     font-size: 10px;
     text-transform: uppercase;
+  }
+  .sales-check-status-stack {
+    gap: 7px;
   }
   .sales-check-table .description-cell {
     max-width: none;
