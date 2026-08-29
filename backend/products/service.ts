@@ -671,6 +671,7 @@ export async function search(
         pageSize?: number;
         selectionLimit?: number;
         selectionOffset?: number;
+        protectedOnly?: boolean;
       } = false,
 ) {
   const options =
@@ -684,12 +685,17 @@ export async function search(
   const pageSize = Math.min(Math.max(options.pageSize ?? 50, 1), 200);
   const page = Math.max(options.page ?? 0, 0);
   const offset = page * pageSize;
+  const protectedOnly = options.protectedOnly ?? false;
   const selectionLimit = Math.min(
     Math.max(options.selectionLimit ?? 5000, 1),
     5000,
   );
   const selectionOffset = Math.max(options.selectionOffset ?? 0, 0);
   const activeClause = admin ? "true" : "p.active";
+  const minimumClause = protectedOnly
+    ? "pp.minimum_enabled AND pp.minimum > 0"
+    : "true";
+  const productWhere = `${activeClause} AND ${minimumClause}`;
   const mapRows = (rows: Record<string, any>[]) =>
     rows.map((r) =>
       admin && has(actor, "COST_VIEW")
@@ -708,7 +714,10 @@ export async function search(
       (
         await one(
           db,
-          `SELECT count(*)::int AS n FROM products p WHERE ${activeClause}`,
+          `SELECT count(*)::int AS n
+           FROM products p
+           JOIN product_pricing pp ON pp.product_id = p.id
+           WHERE ${productWhere}`,
         )
       )!.n,
     );
@@ -717,12 +726,17 @@ export async function search(
     const safeOffset = safePage * pageSize;
     const rows = await db.query(
       productSelect +
-        ` WHERE true ORDER BY p.normalized_part LIMIT $1 OFFSET $2`,
+        ` WHERE ${productWhere} ORDER BY p.normalized_part LIMIT $1 OFFSET $2`,
       [pageSize, safeOffset],
     );
     const selectableItems = (
       await db.query(
-        `SELECT id,version FROM products p ORDER BY p.normalized_part LIMIT $1 OFFSET $2`,
+        `SELECT p.id,p.version
+         FROM products p
+         JOIN product_pricing pp ON pp.product_id = p.id
+         WHERE ${productWhere}
+         ORDER BY p.normalized_part
+         LIMIT $1 OFFSET $2`,
         [selectionLimit, selectionOffset],
       )
     ).rows;
@@ -733,6 +747,7 @@ export async function search(
       totalRows,
       totalPages,
       hasMore: safePage + 1 < totalPages,
+      protectedOnly,
       selectableItems,
       selectionLimitReached: totalRows > selectionLimit,
       selectionOffset,
@@ -761,18 +776,18 @@ export async function search(
     const rows = await hydrateLookupProductsByIds(db, rankedIds);
     return rows.map((row) => lookupProduct(row, actor, settings));
   }
-  const partTotal = await countRankedPartMatches(db, activeClause, q, escaped);
+  const partTotal = await countRankedPartMatches(db, productWhere, q, escaped);
   const needsFallback =
     partTotal < offset + pageSize || partTotal < selectionLimit;
   const partIdsForFallback = needsFallback
-    ? (await getRankedPartMatches(db, activeClause, q, escaped, partTotal)).map(
+    ? (await getRankedPartMatches(db, productWhere, q, escaped, partTotal)).map(
         (row) => row.id,
       )
     : [];
   const textTotal = needsFallback
     ? await countRankedTextMatches(
         db,
-        activeClause,
+        productWhere,
         "%" + escaped + "%",
         partIdsForFallback,
       )
@@ -785,7 +800,7 @@ export async function search(
     safeOffset < partTotal
       ? await getRankedPartMatches(
           db,
-          activeClause,
+          productWhere,
           q,
           escaped,
           pageSize,
@@ -798,7 +813,7 @@ export async function search(
     remainingPageSlots > 0 && needsFallback
       ? await getRankedTextMatches(
           db,
-          activeClause,
+          productWhere,
           "%" + escaped + "%",
           partIdsForFallback,
           remainingPageSlots,
@@ -813,7 +828,7 @@ export async function search(
     selectionOffset < partTotal
       ? await getRankedPartMatches(
           db,
-          activeClause,
+          productWhere,
           q,
           escaped,
           Math.min(selectionLimit, partTotal - selectionOffset),
@@ -830,7 +845,7 @@ export async function search(
       ...(
         await getRankedTextMatches(
           db,
-          activeClause,
+          productWhere,
           "%" + escaped + "%",
           partIdsForFallback,
           selectionLimit - selectableItems.length,
@@ -846,6 +861,7 @@ export async function search(
     totalRows,
     totalPages,
     hasMore: safePage + 1 < totalPages,
+    protectedOnly,
     selectableItems,
     selectionLimitReached: totalRows > selectionLimit,
     selectionOffset,

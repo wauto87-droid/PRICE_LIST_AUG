@@ -111,10 +111,13 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [result, setResult] = useState<AdminResult>(null),
     [error, setError] = useState(""),
     [menuOpen, setMenuOpen] = useState(false),
+    [dashboardMinimumProtectedPage, setDashboardMinimumProtectedPage] =
+      useState(0),
     [query, setQuery] = useState(""),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
     [productSelectionOffset, setProductSelectionOffset] = useState(0),
+    [productProtectedOnly, setProductProtectedOnly] = useState(false),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [actionState, setActionState] = useState<AdminActionState>({
@@ -158,6 +161,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     page?: number;
     query?: string;
     selectionOffset?: number;
+    protectedOnly?: boolean;
+    minimumProtectedPage?: number;
   }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
@@ -180,8 +185,17 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               "&page=" +
               String(overrides?.page ?? productPage) +
               "&pageSize=50&selectionOffset=" +
-              String(overrides?.selectionOffset ?? productSelectionOffset)
-          : "admin/" + section,
+              String(overrides?.selectionOffset ?? productSelectionOffset) +
+              "&protectedOnly=" +
+              String(overrides?.protectedOnly ?? productProtectedOnly)
+          : section === "dashboard"
+            ? "admin/dashboard?minimumProtectedPage=" +
+                String(
+                  overrides?.minimumProtectedPage ??
+                    dashboardMinimumProtectedPage,
+                ) +
+                "&minimumProtectedPageSize=50"
+            : "admin/" + section,
       );
       if (
         generation !== requestGeneration.current ||
@@ -193,8 +207,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         setProductSelectionOffset(
           overrides?.selectionOffset ?? payload.selectionOffset ?? 0,
         );
+        setProductProtectedOnly(
+          overrides?.protectedOnly ?? payload.protectedOnly ?? false,
+        );
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
+      if (section === "dashboard" && payload && !Array.isArray(payload))
+        setDashboardMinimumProtectedPage(
+          overrides?.minimumProtectedPage ?? payload.minimumProtectedPage ?? 0,
+        );
       setResult({ section, payload: validateAdminData(section, payload) });
     } catch (e) {
       if (
@@ -410,6 +431,37 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   const selectionBatchStart = matchedProductItems.length ? selectionOffset + 1 : 0;
   const selectionBatchEnd = selectionOffset + matchedProductItems.length;
   const bulkItems = buildBulkItems(selected);
+  const openAdminSection = (
+    nextSection: string,
+    options: {
+      minimumProtectedPage?: number;
+      protectedOnly?: boolean;
+      query?: string;
+    } = {},
+  ) => {
+    requestGeneration.current++;
+    currentSection.current = nextSection;
+    setEdit(null);
+    setMenuOpen(false);
+    if (nextSection === "dashboard")
+      setDashboardMinimumProtectedPage(options.minimumProtectedPage ?? 0);
+    if (nextSection === "products") {
+      setProductProtectedOnly(options.protectedOnly ?? false);
+      setQuery(options.query ?? "");
+      setProductQuery(options.query ?? "");
+      setProductPage(0);
+      setProductSelectionOffset(0);
+      setSelected({});
+      setPreview(null);
+    }
+    if (nextSection !== "products") {
+      setProductProtectedOnly(false);
+      setQuery("");
+      setProductQuery("");
+    }
+    if (nextSection !== "dashboard") setDashboardMinimumProtectedPage(0);
+    setSection(nextSection);
+  };
   const editField = (key: string, label: string, type = "text") => (
     <label key={key}>
       {label}
@@ -467,11 +519,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               key={key}
               onClick={() => {
                 if (key === section) return;
-                requestGeneration.current++;
-                currentSection.current = key;
-                setEdit(null);
-                setMenuOpen(false);
-                setSection(key);
+                openAdminSection(key);
               }}
             >
               {t(en, ar)}
@@ -544,21 +592,60 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 data={data}
                 onAction={runAction}
                 onReload={() => load()}
-                onOpenSection={(nextSection) => setSection(nextSection)}
+                onOpenSection={openAdminSection}
+                onMinimumProtectedPageChange={(nextPage) =>
+                  void load({ minimumProtectedPage: nextPage })
+                }
                 onEditProduct={editProductById}
               />
             )}
             {section === "products" && (
               <>
+                {productProtectedOnly && (
+                  <div className="notice">
+                    {t(
+                      "Protected-only cleanup is active. This view shows only products with a positive minimum protection rule.",
+                      "وضع تنظيف الأصناف المحمية نشط. يعرض هذا العرض فقط الأصناف التي لديها قاعدة حماية بحد أدنى موجب.",
+                    )}
+                    {" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProductProtectedOnly(false);
+                        setQuery("");
+                        setProductQuery("");
+                        setProductPage(0);
+                        setProductSelectionOffset(0);
+                        setSelected({});
+                        setPreview(null);
+                        void load({
+                          query: "",
+                          page: 0,
+                          selectionOffset: 0,
+                          protectedOnly: false,
+                        });
+                      }}
+                    >
+                      {t("Show all products", "عرض كل الأصناف")}
+                    </button>
+                  </div>
+                )}
                 <div className="actions wrap">
                   <div className="admin-product-search grow">
                     <input
                       ref={productSearchInput}
                       className="grow"
-                      placeholder={t(
-                        "Find a product or part number…",
-                        "ابحث عن صنف أو رقم جزء…",
-                      )}
+                      placeholder={
+                        productProtectedOnly
+                          ? t(
+                              "Find a protected product or part number…",
+                              "ابحث عن صنف محمي أو رقم جزء…",
+                            )
+                          : t(
+                              "Find a product or part number…",
+                              "ابحث عن صنف أو رقم جزء…",
+                            )
+                      }
                       value={query}
                       onFocus={() => setSearchFocused(true)}
                       onBlur={() => {
@@ -825,6 +912,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               )
                             : ""}
                         </span>
+                        {productProtectedOnly && (
+                          <span className="muted">
+                            {t(
+                              "Protected-only cleanup is active. Cleared products disappear after reload, then continue with the next batch.",
+                              "وضع تنظيف الأصناف المحمية نشط. تختفي الأصناف التي تم تنظيفها بعد إعادة التحميل، ثم تابع إلى الدفعة التالية.",
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}

@@ -20,6 +20,12 @@ export function validateAdminData(section: string, value: any) {
           "draftQuotations",
           "issuedTodayItems",
         ].every((key) => Array.isArray(value[key]))
+        &&
+        Number.isInteger(value.minimumProtectedPage) &&
+        Number.isInteger(value.minimumProtectedPageSize) &&
+        Number.isInteger(value.minimumProtectedTotalRows) &&
+        Number.isInteger(value.minimumProtectedTotalPages) &&
+        typeof value.minimumProtectedHasMore === "boolean"
       : section === "roles"
         ? object &&
           Array.isArray(value.roles) &&
@@ -33,6 +39,7 @@ export function validateAdminData(section: string, value: any) {
             Number.isInteger(value.totalRows) &&
             Number.isInteger(value.totalPages) &&
             typeof value.hasMore === "boolean" &&
+            typeof value.protectedOnly === "boolean" &&
             Number.isInteger(value.selectionOffset) &&
             typeof value.selectionHasMore === "boolean" &&
             typeof value.selectionLimitReached === "boolean"

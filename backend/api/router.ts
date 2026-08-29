@@ -273,6 +273,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .int()
                 .min(0)
                 .parse(url.searchParams.get("selectionOffset") ?? 0),
+              protectedOnly: ["1", "true", "yes", "on"].includes(
+                (url.searchParams.get("protectedOnly") ?? "").toLowerCase(),
+              ),
             },
           ),
         );
@@ -849,7 +852,21 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
       auth.requirePermission(actor, "ADMIN_VIEW");
       if (id === "dashboard" && method === "GET")
-        return response(await admin.dashboard(db));
+        return response(
+          await admin.dashboard(db, {
+            minimumProtectedPage: z.coerce
+              .number()
+              .int()
+              .min(0)
+              .parse(url.searchParams.get("minimumProtectedPage") ?? 0),
+            minimumProtectedPageSize: z.coerce
+              .number()
+              .int()
+              .min(1)
+              .max(200)
+              .parse(url.searchParams.get("minimumProtectedPageSize") ?? 50),
+          }),
+        );
       if (id === "settings") {
         auth.requirePermission(actor, "SETTINGS_MANAGE");
         return response(

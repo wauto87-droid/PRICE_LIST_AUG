@@ -877,6 +877,47 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.equal(nextBatch.selectionHasMore, false);
   });
   await t.test(
+    "Minimum-protected dashboard pages beyond 50 rows and products can filter protected-only",
+    async () => {
+      for (let i = 0; i < 55; i++)
+        await request("products", "POST", {
+          ...base,
+          partNumber: `MIN-PROTECT-${String(i).padStart(3, "0")}`,
+          description: `Protected minimum product ${i}`,
+          aliases: [],
+          minimumEnabled: true,
+          minimum: "90",
+        });
+      const dashboardPageOne = (
+        await request("admin/dashboard?minimumProtectedPage=0&minimumProtectedPageSize=50")
+      ).data;
+      const dashboardPageTwo = (
+        await request("admin/dashboard?minimumProtectedPage=1&minimumProtectedPageSize=50")
+      ).data;
+      assert.equal(dashboardPageOne.minimumProtectedPage, 0);
+      assert.equal(dashboardPageOne.minimumProtected.length, 50);
+      assert.equal(dashboardPageOne.minimumProtectedHasMore, true);
+      assert.equal(dashboardPageOne.minimumProtectedTotalRows >= 55, true);
+      assert.equal(dashboardPageTwo.minimumProtectedPage, 1);
+      assert.equal(dashboardPageTwo.minimumProtected.length >= 5, true);
+      assert.notEqual(
+        dashboardPageOne.minimumProtected[0]?.id,
+        dashboardPageTwo.minimumProtected[0]?.id,
+      );
+      const protectedOnly = (
+        await request("products?protectedOnly=true&page=0&pageSize=50")
+      ).data;
+      assert.equal(protectedOnly.protectedOnly, true);
+      assert.equal(protectedOnly.items.length, 50);
+      assert(
+        protectedOnly.items.every(
+          (item: any) =>
+            item.minimumEnabled === true && Number(item.minimum) > 0,
+        ),
+      );
+    },
+  );
+  await t.test(
     "Import mapping accepts integer-like versions and reports targeted validation details",
     async () => {
       const iid = randomUUID();

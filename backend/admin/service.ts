@@ -83,7 +83,37 @@ export async function saveSettings(db: DB, actor: Actor, input: unknown) {
     return data;
   });
 }
-export async function dashboard(db: DB) {
+export async function dashboard(
+  db: DB,
+  options: { minimumProtectedPage?: number; minimumProtectedPageSize?: number } = {},
+) {
+  const minimumProtectedPage = Math.max(options.minimumProtectedPage ?? 0, 0);
+  const minimumProtectedPageSize = Math.min(
+    Math.max(options.minimumProtectedPageSize ?? 50, 1),
+    200,
+  );
+  const minimumProtectedTotalRows = Number(
+    (
+      await one(
+        db,
+        `SELECT count(*)::int AS n
+         FROM products p
+         JOIN product_pricing pp ON pp.product_id = p.id
+         WHERE pp.minimum_enabled
+           AND pp.minimum > 0`,
+      )
+    )!.n,
+  );
+  const minimumProtectedTotalPages = Math.max(
+    1,
+    Math.ceil(minimumProtectedTotalRows / minimumProtectedPageSize),
+  );
+  const safeMinimumProtectedPage = Math.min(
+    minimumProtectedPage,
+    minimumProtectedTotalPages - 1,
+  );
+  const minimumProtectedOffset =
+    safeMinimumProtectedPage * minimumProtectedPageSize;
   return {
     products: await one(
       db,
@@ -164,9 +194,16 @@ export async function dashboard(db: DB) {
          WHERE pp.minimum_enabled
            AND pp.minimum > 0
          ORDER BY p.updated_at DESC, p.part_number
-         LIMIT 50`,
+         LIMIT $1 OFFSET $2`,
+        [minimumProtectedPageSize, minimumProtectedOffset],
       )
     ).rows,
+    minimumProtectedPage: safeMinimumProtectedPage,
+    minimumProtectedPageSize,
+    minimumProtectedTotalRows,
+    minimumProtectedTotalPages,
+    minimumProtectedHasMore:
+      safeMinimumProtectedPage + 1 < minimumProtectedTotalPages,
     updatedTodayItems: (
       await db.query(
         `SELECT

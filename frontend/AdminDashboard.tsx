@@ -43,13 +43,22 @@ export default function AdminDashboard({
   onAction,
   onReload,
   onOpenSection,
+  onMinimumProtectedPageChange,
   onEditProduct,
 }: {
   t: Translate;
   data: any;
   onAction: AdminActionRunner;
   onReload: () => Promise<void>;
-  onOpenSection: (section: string) => void;
+  onOpenSection: (
+    section: string,
+    options?: {
+      minimumProtectedPage?: number;
+      protectedOnly?: boolean;
+      query?: string;
+    },
+  ) => void;
+  onMinimumProtectedPageChange: (page: number) => void;
   onEditProduct: (id: string) => Promise<void>;
 }) {
   const [panel, setPanel] = useState<DashboardPanel>("pending-imports");
@@ -108,6 +117,12 @@ export default function AdminDashboard({
   const allMinimumVisible =
     !!data.minimumProtected.length &&
     data.minimumProtected.every((row: any) => row.id in selectedMinimums);
+  const minimumProtectedRangeStart = data.minimumProtectedTotalRows
+    ? data.minimumProtectedPage * data.minimumProtectedPageSize + 1
+    : 0;
+  const minimumProtectedRangeEnd = data.minimumProtectedTotalRows
+    ? minimumProtectedRangeStart + data.minimumProtected.length - 1
+    : 0;
 
   const selectedDuplicateCount = duplicateSelection.length;
   const selectedMinimumCount = minimumItems.length;
@@ -776,7 +791,9 @@ export default function AdminDashboard({
           >
             {t("Remove minimum", "إزالة الحد الأدنى")}
           </button>
-          <button onClick={() => onOpenSection("products")}>
+          <button
+            onClick={() => onOpenSection("products", { protectedOnly: true })}
+          >
             {t("Open Products", "فتح الأصناف")}
           </button>
         </div>
@@ -861,6 +878,30 @@ export default function AdminDashboard({
             )}
           </tbody>
         </table>
+      </div>
+      <div className="actions wrap">
+        <button
+          disabled={data.minimumProtectedPage === 0}
+          onClick={() =>
+            onMinimumProtectedPageChange(
+              Math.max(data.minimumProtectedPage - 1, 0),
+            )
+          }
+        >
+          {t("Previous", "السابق")}
+        </button>
+        <span className="muted">
+          {t("Showing", "إظهار")} {minimumProtectedRangeStart}-
+          {minimumProtectedRangeEnd} / {data.minimumProtectedTotalRows}
+        </span>
+        <button
+          disabled={!data.minimumProtectedHasMore}
+          onClick={() =>
+            onMinimumProtectedPageChange(data.minimumProtectedPage + 1)
+          }
+        >
+          {t("Next", "التالي")}
+        </button>
       </div>
     </div>
   );
