@@ -1604,15 +1604,38 @@ td button {
   min-width: 0;
 }
 .admin-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 118px;
+  min-height: 44px;
+  padding: 9px 14px;
+  border-color: var(--red);
+  background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+  color: white;
+  box-shadow: 0 10px 24px rgba(201, 0, 22, 0.18);
+}
+.admin-menu-toggle:hover {
+  background: linear-gradient(135deg, var(--red-dark) 0%, #8f0010 100%);
+}
+.admin-menu-toggle b {
+  font-size: 13px;
+  letter-spacing: 1.2px;
+}
+.admin-menu-toggle em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.admin-menu-toggle i {
   display: inline-grid;
-  gap: 4px;
-  width: 42px;
-  min-width: 42px;
-  min-height: 42px;
-  padding: 10px;
+  gap: 3px;
+  font-style: normal;
 }
 .admin-menu-toggle span {
   display: block;
+  width: 14px;
   height: 2px;
   border-radius: 999px;
   background: currentColor;

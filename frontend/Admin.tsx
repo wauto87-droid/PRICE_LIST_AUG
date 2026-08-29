@@ -488,9 +488,13 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((value) => !value)}
             >
-              <span />
-              <span />
-              <span />
+              <b>AMT</b>
+              <i>
+                <span />
+                <span />
+                <span />
+              </i>
+              <em>{t("Menu", "القائمة")}</em>
             </button>
             <h2>{t(heading[1], heading[2])}</h2>
           </div>
