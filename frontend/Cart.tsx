@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, type Translate } from "./api";
 import { totals } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
+import { wheelSafeNumberInputProps } from "./number-input";
 export default function Cart({
   t,
   cart,
@@ -242,6 +243,7 @@ export default function Cart({
                       type="number"
                       min="0.001"
                       step="any"
+                      {...wheelSafeNumberInputProps}
                       value={l.input.quantity}
                       onChange={(e) => change(i, "quantity", e.target.value)}
                     />
@@ -254,6 +256,7 @@ export default function Cart({
                       min="0"
                       max="100"
                       step="any"
+                      {...wheelSafeNumberInputProps}
                       value={l.input.discount}
                       onChange={(e) => change(i, "discount", e.target.value)}
                     />

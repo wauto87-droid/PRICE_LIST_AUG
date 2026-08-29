@@ -7,6 +7,7 @@ import {
   previewLookupPrice,
 } from "./lookup-pricing";
 import { levelLabel, visibleLevels } from "./levels";
+import { wheelSafeNumberInputProps } from "./number-input";
 import {
   activeSuggestionIndex,
   clampHighlightedIndex,
@@ -800,6 +801,7 @@ export default function Lookup({
                   min="0"
                   max="100"
                   step="0.01"
+                  {...wheelSafeNumberInputProps}
                   value={discount}
                   placeholder="0"
                   onChange={(e) => setDiscount(e.target.value)}
@@ -816,6 +818,7 @@ export default function Lookup({
                       ? Math.pow(10, -selected.quantityPrecision)
                       : 1
                   }
+                  {...wheelSafeNumberInputProps}
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
                   onKeyDown={(e) => {

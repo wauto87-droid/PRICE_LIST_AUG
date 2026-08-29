@@ -12,6 +12,7 @@ import {
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
 import { levelCodes, levelLabel } from "./levels";
+import { wheelSafeNumberInputProps } from "./number-input";
 
 export const blankProduct = {
   partNumber: "",
@@ -304,6 +305,7 @@ export default function ProductEditor({
                     type="number"
                     min="0"
                     step="any"
+                    {...wheelSafeNumberInputProps}
                     value={p.cost}
                     onChange={(e) => set("cost", e.target.value)}
                   />
@@ -314,6 +316,7 @@ export default function ProductEditor({
                     type="number"
                     min="0"
                     step="any"
+                    {...wheelSafeNumberInputProps}
                     value={basicPrice}
                     onChange={(e) =>
                       updateDefaultLevel({ markup: e.target.value })
@@ -329,6 +332,7 @@ export default function ProductEditor({
                     type="number"
                     min="0"
                     step="any"
+                    {...wheelSafeNumberInputProps}
                     value={basicPrice}
                     onChange={(e) =>
                       updateDefaultLevel({ listPrice: e.target.value })
@@ -341,6 +345,7 @@ export default function ProductEditor({
                     type="number"
                     min="0"
                     step="any"
+                    {...wheelSafeNumberInputProps}
                     value={basicDiscount}
                     onChange={(e) =>
                       updateDefaultLevel({ baseDiscount: e.target.value })
@@ -363,6 +368,7 @@ export default function ProductEditor({
                 type="number"
                 min="0"
                 step="any"
+                {...wheelSafeNumberInputProps}
                 value={p.minimum}
                 onChange={(e) => set("minimum", e.target.value)}
               />
@@ -487,6 +493,7 @@ export default function ProductEditor({
                             type="number"
                             min="0"
                             step="any"
+                            {...wheelSafeNumberInputProps}
                             value={level[key]}
                             onChange={(e) => edit(key, e.target.value)}
                           />

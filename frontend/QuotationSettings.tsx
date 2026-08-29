@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
+import { wheelSafeNumberInputProps } from "./number-input";
 export default function QuotationSettings({
   t,
   actionBusy,
@@ -127,6 +128,7 @@ export default function QuotationSettings({
             type="number"
             min="0"
             max="365"
+            {...wheelSafeNumberInputProps}
             value={q.validityDays}
             onChange={(e) => change("validityDays", Number(e.target.value))}
           />
@@ -207,6 +209,7 @@ export default function QuotationSettings({
               min={min}
               max={max}
               step={step}
+              {...wheelSafeNumberInputProps}
               value={w[key]}
               onChange={(e) => wm(key, Number(e.target.value))}
             />
@@ -243,6 +246,7 @@ export default function QuotationSettings({
             type="number"
             min="4"
             max="12"
+            {...wheelSafeNumberInputProps}
             value={q.padding}
             onChange={(e) => change("padding", Number(e.target.value))}
           />
