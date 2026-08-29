@@ -893,9 +893,31 @@ www.softwaresolver.online {
             d.inventory = Mock(return_value=[{'Config': {'Labels': {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'app',
-            }}}])
+            }}, 'State': {'Running': True}}])
             with self.assertRaisesRegex(m.DeployError, 'containers'):
                 d.check_replace_failed()
+
+    def test_replacement_guard_ignores_stopped_application_containers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[
+                {'Config': {'Labels': {
+                    'com.docker.compose.project': m.PROJECT,
+                    'com.docker.compose.service': 'db',
+                }}, 'State': {'Running': True}},
+                {'Config': {'Labels': {
+                    'com.docker.compose.project': m.PROJECT,
+                    'com.docker.compose.service': 'app',
+                }}, 'State': {'Running': False}},
+                {'Config': {'Labels': {
+                    'com.docker.compose.project': m.PROJECT,
+                    'com.docker.compose.service': 'worker',
+                }}, 'State': {'Running': False}},
+            ])
+            d.database = Mock(return_value=result('0'))
+            d.check_replace_failed()
+            self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
 
     def test_replacement_guard_allows_empty_initialized_database(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -904,7 +926,7 @@ www.softwaresolver.online {
             d.inventory = Mock(return_value=[{'Config': {'Labels': {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'db',
-            }}}])
+            }}, 'State': {'Running': True}}])
             d.database = Mock(return_value=result('0'))
             d.check_replace_failed()
             self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
@@ -928,7 +950,7 @@ www.softwaresolver.online {
             d.inventory = Mock(return_value=[{'Config': {'Labels': {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'db',
-            }}}])
+            }}, 'State': {'Running': True}}])
             d.database = Mock(return_value=result('0'))
             with patch.object(Path, 'resolve', resolve_override):
                 d.check_replace_failed()
@@ -941,7 +963,7 @@ www.softwaresolver.online {
             d.inventory = Mock(return_value=[{'Config': {'Labels': {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'db',
-            }}}])
+            }}, 'State': {'Running': True}}])
             d.database = Mock(side_effect=[result('1'), result('4')])
             with self.assertRaisesRegex(m.DeployError, 'migrations exist'):
                 d.check_replace_failed()
@@ -1017,7 +1039,7 @@ www.softwaresolver.online {
             d.inventory = Mock(return_value=[{'Config': {'Labels': {
                 'com.docker.compose.project': m.PROJECT,
                 'com.docker.compose.service': 'db',
-            }}}])
+            }}, 'State': {'Running': True}}])
             d.database = Mock(return_value=result('0'))
             d.prepare_release = Mock(return_value=next_release)
             d.stop_runtime = Mock()

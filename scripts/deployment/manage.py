@@ -1235,9 +1235,15 @@ class Deployment:
         volumes = decoded(self.engine('volume', 'ls', '--format', '{{.Name}}')).splitlines()
         owned = [c for c in self.inventory() if self.owned(c)]
         services = {c.get('Config', {}).get('Labels', {}).get('com.docker.compose.service') for c in owned}
-        require(services <= {'db'}, 'Application or ambiguous AMT containers already exist; replacement refused')
+        running_services = {
+            c.get('Config', {}).get('Labels', {}).get('com.docker.compose.service')
+            for c in owned
+            if c.get('State', {}).get('Running')
+        }
+        require(running_services <= {'db'}, 'Application or ambiguous AMT containers already exist; replacement refused')
         if f'{PROJECT}_database' in volumes or 'db' in services:
-            require(services == {'db'}, 'Database storage exists without exactly one recognized database container')
+            require('db' in services, 'Database storage exists without exactly one recognized database container')
+            require(running_services == {'db'}, 'Database storage exists without exactly one recognized database container')
             if self.release is None:
                 self.release = self.recovery_release(recovery)
             exists = self.database("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='migrations';", check=False)
