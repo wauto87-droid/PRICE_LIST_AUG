@@ -482,11 +482,13 @@ class Deployment:
             'ecosystem': release / 'scripts' / 'deployment' / 'pm2.ecosystem.cjs',
         }
 
-    def native_env(self, extra=None, release=None):
+    def native_env(self, extra=None, release=None, values_override=None):
         require(self.env is not None, 'Environment not loaded')
         paths = self.native_paths(release)
         env = dict(os.environ)
         values = dict(self.env, APP_RUNTIME='pm2')
+        if values_override:
+            values.update(values_override)
         env.update(values)
         env['DATABASE_URL'] = database_url(values)
         env['PLAYWRIGHT_BROWSERS_PATH'] = str(paths['browsers'])
@@ -495,6 +497,22 @@ class Deployment:
         if extra:
             env.update(extra)
         return env
+
+    def native_runtime_env(self, extra=None, release=None):
+        require(self.env is not None, 'Environment not loaded')
+        values = dict(self.env)
+        host = values.get('DB_HOST', '127.0.0.1')
+        port = int(values.get('DB_PORT', DEFAULT_DB_PORT))
+        if host in ('127.0.0.1', 'localhost') and not self.host_port_ready(host, port):
+            values['DB_HOST'] = self.db_private_ipv4()
+        return self.native_env(extra=extra, release=release, values_override={'DB_HOST': values['DB_HOST']})
+
+    def host_port_ready(self, host, port, timeout=1.5):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
 
     def compose(self, *args, release=None, **kwargs):
         release = release or self.release
@@ -647,16 +665,9 @@ class Deployment:
         require(len(ids) == 1, 'Expected exactly one dedicated database container')
         return ids[0]
 
-    def app_id(self):
-        ids = decoded(self.compose('ps', '-q', 'app')).split()
-        require(len(ids) == 1, 'Expected exactly one app container')
-        return ids[0]
-
-    def app_metadata(self):
-        return json.loads(decoded(self.engine('inspect', self.app_id())))[0]
-
-    def app_private_ipv4(self):
-        networks = self.app_metadata().get('NetworkSettings', {}).get('Networks') or {}
+    def container_private_ipv4(self, container_id, label):
+        metadata = json.loads(decoded(self.engine('inspect', container_id)))[0]
+        networks = metadata.get('NetworkSettings', {}).get('Networks') or {}
         for network in networks.values():
             address = network.get('IPAddress') or ''
             if not address:
@@ -667,7 +678,21 @@ class Deployment:
                 continue
             if isinstance(parsed, ipaddress.IPv4Address):
                 return str(parsed)
-        raise DeployError('App container does not expose a private IPv4 address for proxy fallback')
+        raise DeployError(f'{label} container does not expose a private IPv4 address')
+
+    def db_private_ipv4(self):
+        return self.container_private_ipv4(self.db_id(), 'Database')
+
+    def app_id(self):
+        ids = decoded(self.compose('ps', '-q', 'app')).split()
+        require(len(ids) == 1, 'Expected exactly one app container')
+        return ids[0]
+
+    def app_metadata(self):
+        return json.loads(decoded(self.engine('inspect', self.app_id())))[0]
+
+    def app_private_ipv4(self):
+        return self.container_private_ipv4(self.app_id(), 'App')
 
     def app_health_urls(self):
         health_path = f'{BASE_PATH}/api/v1/health'
@@ -698,7 +723,7 @@ class Deployment:
                            data=(env['POSTGRES_PASSWORD'] + '\n' + sql + '\n').encode(), check=check)
 
     def pm2_running(self):
-        result = run(['pm2', 'jlist'], check=False, env=self.native_env())
+        result = run(['pm2', 'jlist'], check=False, env=self.native_runtime_env())
         if result.returncode != 0:
             return {}
         items = json.loads(decoded(result) or '[]')
@@ -746,9 +771,10 @@ class Deployment:
         self.ownership()
         self.port(int(self.env['APP_PORT']))  # Immediate fail-closed recheck; never kill a listener.
         if self.native_runtime():
-            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_env())
+            env = self.native_runtime_env()
+            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=env)
             run(['pm2', 'start', self.native_paths()['ecosystem'], '--only', ','.join(PM2_PROCESSES), '--update-env'],
-                timeout=300, live=True, env=self.native_env())
+                timeout=300, live=True, env=env)
         else:
             self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
             try:
@@ -773,7 +799,7 @@ class Deployment:
     def stop_runtime(self, runtime):
         if self.is_native_runtime(runtime):
             run(['systemctl', 'stop', self.backup_timer_name(), self.backup_service_name()], check=False)
-            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_env())
+            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_runtime_env())
         else:
             self.compose('stop', '-t', '60', *SERVICES)
 
@@ -957,12 +983,12 @@ class Deployment:
     def run_native_migrate(self):
         self.stage('Run database migrations')
         run(['node', 'node_modules/tsx/dist/cli.mjs', 'scripts/migrate.ts'], timeout=600, live=True,
-            env=self.native_env(), cwd=self.release)
+            env=self.native_runtime_env(), cwd=self.release)
 
     def run_backup_job(self):
         self.stage('Run scheduled backup job')
         run(['node', 'node_modules/tsx/dist/cli.mjs', 'scripts/backup-service.ts', '--once'], timeout=900, live=True,
-            env=self.native_env(), cwd=self.release)
+            env=self.native_runtime_env(), cwd=self.release)
 
     @staticmethod
     def migration_files(release):
@@ -1180,7 +1206,7 @@ class Deployment:
                   "const p=good.connectionParameters; const bad=new Client({...shared,host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); "
                   "try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))")
         if self.native_runtime():
-            result = run(['node', '-e', script], check=False, timeout=60, env=self.native_env(), cwd=self.release)
+            result = run(['node', '-e', script], check=False, timeout=60, env=self.native_runtime_env(), cwd=self.release)
             if result.returncode == 20:
                 raise DeployError('Local PM2 database connection failed before migrations')
         else:
@@ -1419,7 +1445,7 @@ class Deployment:
             print(f'Runtime: {self.runtime()}')
             print(decoded(self.compose('ps', 'db')))
             if self.native_runtime():
-                print(decoded(run(['pm2', 'status'], check=False, env=self.native_env())))
+                print(decoded(run(['pm2', 'status'], check=False, env=self.native_runtime_env())))
                 timer_enabled = decoded(run(['systemctl', 'is-enabled', self.backup_timer_name()], check=False)) or 'unknown'
                 timer_active = decoded(run(['systemctl', 'is-active', self.backup_timer_name()], check=False)) or 'unknown'
                 print(f'Backup timer: {timer_enabled} / {timer_active}.')
