@@ -803,7 +803,8 @@ www.softwaresolver.online {
         d.db_private_ipv4 = Mock(return_value='10.89.4.200')
         env = d.native_runtime_env()
         self.assertEqual(env['DB_HOST'], '10.89.4.200')
-        self.assertIn('@10.89.4.200:15432/', env['DATABASE_URL'])
+        self.assertEqual(env['DB_PORT'], '5432')
+        self.assertIn('@10.89.4.200:5432/', env['DATABASE_URL'])
 
     def test_native_runtime_env_keeps_loopback_when_host_port_is_reachable(self):
         d = self.deployment()

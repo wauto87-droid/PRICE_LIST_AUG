@@ -505,7 +505,12 @@ class Deployment:
         port = int(values.get('DB_PORT', DEFAULT_DB_PORT))
         if host in ('127.0.0.1', 'localhost') and not self.host_port_ready(host, port):
             values['DB_HOST'] = self.db_private_ipv4()
-        return self.native_env(extra=extra, release=release, values_override={'DB_HOST': values['DB_HOST']})
+            values['DB_PORT'] = '5432'
+        return self.native_env(
+            extra=extra,
+            release=release,
+            values_override={'DB_HOST': values['DB_HOST'], 'DB_PORT': values['DB_PORT']},
+        )
 
     def host_port_ready(self, host, port, timeout=1.5):
         try:
