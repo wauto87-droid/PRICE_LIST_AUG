@@ -40,6 +40,15 @@ class SafetyTests(unittest.TestCase):
     def test_own_running_port_allowed(self):
         self.assertEqual(m.choose_port({18188: ['127.0.0.1:18188']}, {}, {18188: False}, 18188, True), 18188)
 
+    def test_pm2_state_parser_ignores_invalid_json_and_extracts_status(self):
+        self.assertEqual(m.pm2_process_states('not-json'), {})
+        parsed = m.pm2_process_states(json.dumps([
+            {'name': 'amt-pricelist-app', 'pm2_env': {'status': 'online'}},
+            {'name': 'other', 'pm2_env': {'status': 'stopped'}},
+        ]))
+        self.assertEqual(parsed['amt-pricelist-app'], 'online')
+        self.assertEqual(parsed['other'], 'stopped')
+
     def test_foreign_or_unclear_listener_refused(self):
         for tcp, udp, reserved, running in [
             ({18188: ['127.0.0.1:18188']}, {}, {}, False),
@@ -298,6 +307,18 @@ class SafetyTests(unittest.TestCase):
         with self.assertRaises(m.DeployError):
             d.start()
         d.compose.assert_not_called()
+
+    def test_port_accepts_saved_port_held_by_amt_pm2_app(self):
+        d = self.deployment()
+        d.inventory = Mock(return_value=[])
+        with patch.object(m, 'run', side_effect=[
+            result('LISTEN 0 128 127.0.0.1:18188 0.0.0.0:*'),
+            result('UNCONN 0 0 127.0.0.1:9999 0.0.0.0:*'),
+            subprocess.CompletedProcess([], 0, json.dumps([
+                {'name': 'amt-pricelist-app', 'pm2_env': {'status': 'online'}}
+            ]).encode(), b''),
+        ]):
+            self.assertEqual(d.port(18188), 18188)
 
     def test_dry_run_no_fetch_or_deployment(self):
         d = self.deployment()

@@ -437,6 +437,18 @@ def choose_port(tcp, udp, reserved, existing=None, own_running=False):
             return port
     raise DeployError('No unused port in 18180–18199; no existing service will be stopped')
 
+
+def pm2_process_states(text):
+    try:
+        items = json.loads(text or '[]')
+    except json.JSONDecodeError:
+        return {}
+    return {
+        item.get('name'): item.get('pm2_env', {}).get('status')
+        for item in items
+        if item.get('name')
+    }
+
 class Deployment:
     def __init__(self, args):
         self.args = args
@@ -589,6 +601,11 @@ class Deployment:
                     reserved[port] = reserved.get(port, False) or not own
                     if port == existing and own and item.get('State', {}).get('Running'):
                         own_running = True
+        if existing is not None and not own_running:
+            result = run(['pm2', 'jlist'], check=False)
+            if result.returncode == 0:
+                states = pm2_process_states(decoded(result))
+                own_running = states.get('amt-pricelist-app') == 'online'
         return choose_port(tcp, udp, reserved, existing, own_running)
 
     def preflight(self):
@@ -752,12 +769,8 @@ class Deployment:
         result = run(['pm2', 'jlist'], check=False, env=self.native_runtime_env())
         if result.returncode != 0:
             return {}
-        items = json.loads(decoded(result) or '[]')
-        return {
-            item.get('name'): item.get('pm2_env', {}).get('status')
-            for item in items
-            if item.get('name') in PM2_PROCESSES
-        }
+        states = pm2_process_states(decoded(result))
+        return {name: states.get(name) for name in PM2_PROCESSES if name in states}
 
     def backup_timer_name(self):
         return 'amt-pricelist-backup.timer'
