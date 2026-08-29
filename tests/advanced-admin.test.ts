@@ -409,6 +409,52 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
       },
     );
     await t.test(
+      "Guided public-price discount import leaves minimum protection off when minimum discount is zero",
+      async () => {
+        const id = await stage(
+          [
+            {
+              part: "DISC-NO-MIN",
+              description: "No minimum",
+              Activity: "GENERAL",
+              "Public Pricelist": "100",
+            },
+          ],
+          "CREATE_UPDATE",
+        );
+        await mapRows(db, actor, id, {
+          mapping: {
+            partNumber: "part",
+            description: "description",
+            listPrice: "Public Pricelist",
+          },
+          defaults: {
+            vat: "15",
+            guidedImport: {
+              mode: "PUBLIC_PRICE_DISCOUNT",
+              groupColumn: "Activity",
+              defaultPreset: {
+                finalDiscount: "20",
+                wholesaleDiscount: "15",
+                minimumDiscount: "0",
+              },
+              groupPresets: {},
+            },
+          },
+          version: 1,
+          mode: "CREATE_UPDATE",
+        });
+        const row = await one(
+          db,
+          "SELECT proposed,errors FROM import_rows WHERE job_id=$1",
+          [id],
+        );
+        assert.deepEqual(row!.errors, []);
+        assert.equal(row!.proposed.minimumEnabled, false);
+        assert.equal(row!.proposed.minimum, "0");
+      },
+    );
+    await t.test(
       "Supplier-style headers auto-map through guided create-and-update staging",
       async () => {
         const id = await stage([

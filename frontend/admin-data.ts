@@ -10,7 +10,16 @@ export function validateAdminData(section: string, value: any) {
       ? object &&
         ["products", "quotes", "imports"].every(
           (key) => value[key] && typeof value[key] === "object",
-        )
+        ) &&
+        [
+          "recentImports",
+          "importErrors",
+          "duplicateRows",
+          "minimumProtected",
+          "updatedTodayItems",
+          "draftQuotations",
+          "issuedTodayItems",
+        ].every((key) => Array.isArray(value[key]))
       : section === "roles"
         ? object &&
           Array.isArray(value.roles) &&

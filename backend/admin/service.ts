@@ -101,6 +101,104 @@ export async function dashboard(db: DB) {
       db,
       `SELECT count(*) AS count FROM import_rows r JOIN import_jobs j ON j.id=r.job_id WHERE r.duplicate_id IS NOT NULL AND j.status='AWAITING_REVIEW'`,
     ))!.count,
+    recentImports: (
+      await db.query(
+        `SELECT id,filename,kind,status,summary,error,version,created_at,updated_at
+         FROM import_jobs
+         WHERE status <> 'FAILED'
+         ORDER BY updated_at DESC
+         LIMIT 20`,
+      )
+    ).rows,
+    importErrors: (
+      await db.query(
+        `SELECT id,filename,kind,status,error,version,created_at,updated_at
+         FROM import_jobs
+         WHERE status = 'FAILED'
+         ORDER BY updated_at DESC
+         LIMIT 20`,
+      )
+    ).rows,
+    duplicateRows: (
+      await db.query(
+        `SELECT
+           r.id,
+           r.job_id,
+           r.row_number,
+           r.errors,
+           r.decision,
+           r.verified,
+           r.confidence,
+           r.proposed,
+           r.raw,
+           r.duplicate_id,
+           r.expected_version,
+           j.filename,
+           j.version AS job_version,
+           j.status AS job_status,
+           p.part_number AS matched_part,
+           p.description AS matched_description
+         FROM import_rows r
+         JOIN import_jobs j ON j.id = r.job_id
+         LEFT JOIN products p ON p.id = r.duplicate_id
+         WHERE r.duplicate_id IS NOT NULL
+           AND j.status = 'AWAITING_REVIEW'
+         ORDER BY j.updated_at DESC, j.filename, r.row_number
+         LIMIT 50`,
+      )
+    ).rows,
+    minimumProtected: (
+      await db.query(
+        `SELECT
+           p.id,
+           p.part_number AS "partNumber",
+           p.description,
+           p.active,
+           p.version,
+           p.updated_at AS "updatedAt",
+           pp.minimum::text AS minimum,
+           pp.default_level AS "defaultLevel",
+           pp.master_excl::text AS "masterExcl"
+         FROM products p
+         JOIN product_pricing pp ON pp.product_id = p.id
+         WHERE pp.minimum_enabled
+         ORDER BY p.updated_at DESC, p.part_number
+         LIMIT 50`,
+      )
+    ).rows,
+    updatedTodayItems: (
+      await db.query(
+        `SELECT
+           p.id,
+           p.part_number AS "partNumber",
+           p.description,
+           p.active,
+           p.version,
+           p.updated_at AS "updatedAt"
+         FROM products p
+         WHERE p.updated_at::date = current_date
+         ORDER BY p.updated_at DESC, p.part_number
+         LIMIT 25`,
+      )
+    ).rows,
+    draftQuotations: (
+      await db.query(
+        `SELECT id,number,customer,totals,created_at,updated_at
+         FROM quotations
+         WHERE status='DRAFT'
+         ORDER BY updated_at DESC
+         LIMIT 25`,
+      )
+    ).rows,
+    issuedTodayItems: (
+      await db.query(
+        `SELECT id,number,customer,totals,issued_at,updated_at
+         FROM quotations
+         WHERE status='ISSUED' AND issued_at::date=current_date
+         ORDER BY issued_at DESC
+         LIMIT 25`,
+      )
+    ).rows,
   };
 }
 const userSchema = z

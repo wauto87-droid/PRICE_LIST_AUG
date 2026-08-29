@@ -274,14 +274,16 @@ function applyGuidedDiscountDefaults(
   if (minimumDecimal.gt(maxAllowedMinimum)) {
     minimumDecimal = maxAllowedMinimum;
   }
+  const minimumDiscount = new Decimal(preset.minimumDiscount);
   const minimum = minimumDecimal.toDecimalPlaces(2).toFixed(2);
+  const minimumEnabled = minimumDiscount.gt(0);
 
   const result: Record<string, unknown> = {
     method: "LIST_DISCOUNT",
     listPrice: listPrice.toString(),
     baseDiscount: preset.finalDiscount,
-    minimumEnabled: true,
-    minimum,
+    minimumEnabled,
+    minimum: minimumEnabled ? minimum : "0",
     "WHOLESALE.active": true,
     "WHOLESALE.method": "LIST_DISCOUNT",
     "WHOLESALE.listPrice": listPrice.toString(),

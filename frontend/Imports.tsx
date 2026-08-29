@@ -195,7 +195,7 @@ export default function Imports({
         return {
           finalDiscount: value,
           wholesaleDiscount: value,
-          minimumDiscount: value,
+          minimumDiscount: prev.minimumDiscount,
         };
       }
       return {
@@ -212,7 +212,7 @@ export default function Imports({
         ? {
             finalDiscount: value,
             wholesaleDiscount: value,
-            minimumDiscount: value,
+            minimumDiscount: preset.minimumDiscount,
           }
         : {
             ...preset,
@@ -231,7 +231,7 @@ export default function Imports({
       setGuidedDefaultPreset((prev) => ({
         finalDiscount: prev.finalDiscount,
         wholesaleDiscount: prev.finalDiscount,
-        minimumDiscount: prev.finalDiscount,
+        minimumDiscount: prev.minimumDiscount,
       }));
       setGuidedGroupPresets((prev) =>
         Object.fromEntries(
@@ -240,7 +240,7 @@ export default function Imports({
             {
               finalDiscount: val.finalDiscount,
               wholesaleDiscount: val.finalDiscount,
-              minimumDiscount: val.finalDiscount,
+              minimumDiscount: val.minimumDiscount,
             },
           ]),
         ),
@@ -265,7 +265,7 @@ export default function Imports({
     setDefaults((current: any) => ({
       ...current,
       method: "LIST_DISCOUNT",
-      minimumEnabled: true,
+      minimumEnabled: false,
     }));
   }, [guidedMode]);
   useEffect(() => {
@@ -752,7 +752,7 @@ export default function Imports({
                             checked={linkDiscounts}
                             onChange={(e) => handleToggleLinkDiscounts(e.target.checked)}
                           />
-                          {t("Link discounts (set same wholesale & minimum floor)", "ربط الخصومات (تطبيق نفس الخصم للجملة والحد الأدنى)")}
+                        {t("Link final + wholesale discounts", "ربط الخصم النهائي مع خصم الجملة")}
                         </label>
                         <button
                           type="button"

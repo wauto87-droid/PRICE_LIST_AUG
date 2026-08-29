@@ -358,7 +358,11 @@ export default function ProductEditor({
               <input
                 type="checkbox"
                 checked={p.minimumEnabled}
-                onChange={(e) => set("minimumEnabled", e.target.checked)}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  set("minimumEnabled", enabled);
+                  if (!enabled) set("minimum", "0");
+                }}
               />
               {t("Minimum selling price protection", "حماية أقل سعر بيع")}
             </label>
@@ -368,8 +372,9 @@ export default function ProductEditor({
                 type="number"
                 min="0"
                 step="any"
+                disabled={!p.minimumEnabled}
                 {...wheelSafeNumberInputProps}
-                value={p.minimum}
+                value={p.minimumEnabled ? p.minimum : "0"}
                 onChange={(e) => set("minimum", e.target.value)}
               />
             </label>

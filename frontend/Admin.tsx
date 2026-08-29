@@ -22,6 +22,7 @@ import BulkRules from "./BulkRules";
 import QuotationSettings from "./QuotationSettings";
 import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
 import SalesPriceCheck from "./SalesPriceCheck";
+import AdminDashboard from "./AdminDashboard";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
@@ -416,6 +417,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     triggerProductSearch(item.partNumber);
     productSearchInput.current?.focus();
   };
+  const editProductById = async (id: string) => {
+    const full = await api("products/" + id);
+    setEdit(full);
+  };
   return (
     <div className="admin-layout">
       <aside className="admin-menu">
@@ -481,34 +486,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         ) : (
           <>
             {section === "dashboard" && (
-              <div className="stat-grid">
-                {[
-                  ["Total products", "إجمالي الأصناف", data.products.total],
-                  ["Active products", "أصناف نشطة", data.products.active],
-                  ["Cost + markup", "التكلفة + الزيادة", data.products.markup],
-                  [
-                    "List − discount",
-                    "القائمة − الخصم",
-                    data.products.discount,
-                  ],
-                  [
-                    "Minimum protected",
-                    "محمية بالحد الأدنى",
-                    data.products.protected,
-                  ],
-                  ["Updated today", "محدثة اليوم", data.products.updated],
-                  ["Draft quotations", "مسودات", data.quotes.drafts],
-                  ["Issued today", "صادرة اليوم", data.quotes.today],
-                  ["Pending imports", "استيراد معلق", data.imports.pending],
-                  ["Import errors", "أخطاء الاستيراد", data.imports.errors],
-                  ["Duplicate rows", "صفوف مكررة", data.duplicates],
-                ].map(([en, ar, n]) => (
-                  <div className="stat" key={en}>
-                    <span>{t(en, ar)}</span>
-                    <strong>{n}</strong>
-                  </div>
-                ))}
-              </div>
+              <AdminDashboard
+                t={t}
+                data={data}
+                onAction={runAction}
+                onReload={() => load()}
+                onOpenSection={(nextSection) => setSection(nextSection)}
+                onEditProduct={editProductById}
+              />
             )}
             {section === "products" && (
               <>
@@ -1447,7 +1432,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             )}
           </>
         )}
-        {edit && section === "products" && (
+        {edit && ["products", "dashboard"].includes(section) && (
           <ProductEditor
             t={t}
             initial={edit}

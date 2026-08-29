@@ -4,7 +4,18 @@ import { sectionData, validateAdminData } from "../frontend/admin-data";
 test("Admin never renders dashboard or stale responses as a brands array", () => {
   const dashboard = {
     section: "dashboard",
-    payload: { products: {}, quotes: {}, imports: {} },
+    payload: {
+      products: {},
+      quotes: {},
+      imports: {},
+      recentImports: [],
+      importErrors: [],
+      duplicateRows: [],
+      minimumProtected: [],
+      updatedTodayItems: [],
+      draftQuotations: [],
+      issuedTodayItems: [],
+    },
   };
   for (const section of [
     "brands",
@@ -59,6 +70,32 @@ test("Admin validates each endpoint shape before map or nested property access",
     assert.throws(() => validateAdminData("products", wrong), /Unexpected/);
   assert.throws(() => validateAdminData("dashboard", []));
   assert.throws(() => validateAdminData("dashboard", {}));
+  assert.deepEqual(
+    validateAdminData("dashboard", {
+      products: {},
+      quotes: {},
+      imports: {},
+      recentImports: [],
+      importErrors: [],
+      duplicateRows: [],
+      minimumProtected: [],
+      updatedTodayItems: [],
+      draftQuotations: [],
+      issuedTodayItems: [],
+    }),
+    {
+      products: {},
+      quotes: {},
+      imports: {},
+      recentImports: [],
+      importErrors: [],
+      duplicateRows: [],
+      minimumProtected: [],
+      updatedTodayItems: [],
+      draftQuotations: [],
+      issuedTodayItems: [],
+    },
+  );
   assert.throws(() => validateAdminData("roles", { roles: [] }));
   assert.deepEqual(validateAdminData("roles", { roles: [], permissions: [] }), {
     roles: [],
