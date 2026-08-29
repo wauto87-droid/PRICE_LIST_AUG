@@ -788,6 +788,10 @@ www.softwaresolver.online {
             d.verify_database_runtime()
         self.assertEqual(run.call_args.kwargs['cwd'], ROOT)
         self.assertEqual(run.call_args.args[0][:2], ['node', '-e'])
+        script = run.call_args.args[0][2]
+        self.assertIn('connectionTimeoutMillis:5000', script)
+        self.assertIn('query_timeout:5000', script)
+        self.assertIn('statement_timeout:5000', script)
 
     def replacement_guard_fixture(self, temp):
         d = self.deployment()

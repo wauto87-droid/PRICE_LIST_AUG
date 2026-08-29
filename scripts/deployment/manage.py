@@ -1174,9 +1174,10 @@ class Deployment:
         return release
 
     def verify_database_runtime(self):
-        script = ("const {Client}=require('pg'); async function main(){const good=new Client({connectionString:process.env.DATABASE_URL}); "
+        script = ("const {Client}=require('pg'); const shared={connectionTimeoutMillis:5000,query_timeout:5000,statement_timeout:5000}; "
+                  "async function main(){const good=new Client({...shared,connectionString:process.env.DATABASE_URL}); "
                   "try{await good.connect(); await good.query('SELECT 1')}catch{return 20}finally{await good.end().catch(()=>{})} "
-                  "const p=good.connectionParameters; const bad=new Client({host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); "
+                  "const p=good.connectionParameters; const bad=new Client({...shared,host:p.host,port:p.port,database:p.database,user:p.user,password:'deliberately-invalid',ssl:false}); "
                   "try{await bad.connect(); await bad.end(); return 21}catch(error){return error.code==='28P01'?0:22}} main().then(code=>process.exit(code)).catch(()=>process.exit(23))")
         if self.native_runtime():
             result = run(['node', '-e', script], check=False, timeout=60, env=self.native_env(), cwd=self.release)
