@@ -90,6 +90,9 @@ const previewInput = z
     acknowledgeVerification: z.boolean().default(false),
   })
   .strict();
+const decisionValue = z.enum(["KEEP", "UPDATE", "SKIP", "REVIEW"]);
+const verifiedValue = z.enum(["true", "false"]);
+
 function permitted(actor: Actor, scope: string) {
   requirePermission(actor, "COST_VIEW");
   requirePermission(
@@ -297,6 +300,7 @@ export async function preview(db: DB, actor: Actor, input: unknown) {
       tx,
       "SELECT version FROM settings WHERE id=1",
     ))!.version;
+    const selectedIds = data.selectedIds ? new Set(data.selectedIds) : null;
     let rows: any[], job: any;
     if (data.scope === "IMPORT") {
       assert(data.importId, 400, "Choose an import");
@@ -315,6 +319,24 @@ export async function preview(db: DB, actor: Actor, input: unknown) {
         )
       ).rows;
     } else rows = (await tx.query(productSelect + " ORDER BY p.id")).rows;
+    const currentProducts = new Map<string, ProductInput>();
+    if (job) {
+      const duplicateIds = [
+        ...new Set(
+          rows
+            .map((row) => row.duplicate_id)
+            .filter((value): value is string => typeof value === "string"),
+        ),
+      ];
+      if (duplicateIds.length) {
+        const existing = await tx.query(
+          productSelect + " WHERE p.id = ANY($1::uuid[])",
+          [duplicateIds],
+        );
+        for (const product of existing.rows)
+          currentProducts.set(product.id, toInput(product));
+      }
+    }
     const duplicateCounts = new Map<string, number>();
     if (job)
       for (const row of rows) {
@@ -322,11 +344,14 @@ export async function preview(db: DB, actor: Actor, input: unknown) {
         duplicateCounts.set(part, (duplicateCounts.get(part) ?? 0) + 1);
       }
     const items: any[] = [];
+    const actionsChangeValues = data.definition.actions.some(
+      (a) => !["decision", "verified"].includes(a.field),
+    );
     for (const row of rows) {
-      if (data.selectedIds && !data.selectedIds.includes(row.id)) continue;
+      if (selectedIds && !selectedIds.has(row.id)) continue;
       const before = job
           ? row.duplicate_id
-            ? toInput(await getProduct(tx, row.duplicate_id))
+            ? currentProducts.get(row.duplicate_id)
             : undefined
           : toInput(row),
         p = job ? row.proposed : before;
@@ -356,42 +381,28 @@ export async function preview(db: DB, actor: Actor, input: unknown) {
       }
       let decision = row.decision,
         verified = row.verified;
-      if (
-        job &&
-        data.definition.actions.some(
-          (a) => !["decision", "verified"].includes(a.field),
-        )
-      )
-        verified = false;
+      if (job && actionsChangeValues) verified = false;
       for (const a of data.definition.actions) {
-        if (a.field === "decision")
-          decision = z
-            .enum(["KEEP", "UPDATE", "SKIP", "REVIEW"])
-            .parse(a.value);
+        if (a.field === "decision") decision = decisionValue.parse(a.value);
         if (a.field === "verified")
-          verified = z.enum(["true", "false"]).parse(a.value) === "true";
+          verified = verifiedValue.parse(a.value) === "true";
       }
-      const valuesChanged = data.definition.actions.some(
-        (a) => !["decision", "verified"].includes(a.field),
-      );
       if (
         job &&
         row.confidence === "LOW" &&
         verified &&
-        (!row.verified || valuesChanged)
+        (!row.verified || actionsChangeValues)
       )
         error =
           "Low-confidence extraction requires individual source verification";
-      if (job && !before && verified && (!row.verified || valuesChanged))
+      if (job && !before && verified && (!row.verified || actionsChangeValues))
         error = "New items require individual source verification";
       if (job && job.mode === "UPDATE_ONLY" && !before && decision === "UPDATE")
         error = "Unknown item is blocked in Update Existing Only mode";
       const skipped =
         job &&
         ["KEEP", "SKIP", "REVIEW"].includes(decision) &&
-        !data.definition.actions.some(
-          (a) => !["decision", "verified"].includes(a.field),
-        );
+        !actionsChangeValues;
       if (skipped) {
         error = "";
         verified = false;
@@ -503,29 +514,75 @@ export async function apply(db: DB, actor: Actor, id: string) {
       409,
       "Settings changed. Preview again",
     );
-    for (const item of [...p.items].sort((a: any, b: any) =>
+    const sortedItems = [...p.items].sort((a: any, b: any) =>
       String(a.productId).localeCompare(String(b.productId)),
-    )) {
-      if (item.productId)
-        assert(
-          (await getProduct(tx, item.productId, true)).version === item.version,
-          409,
-          "Product changed. Preview again",
+    );
+    if (p.import_id) {
+      const productIds = [
+        ...new Set(
+          sortedItems
+            .map((item: any) => item.productId)
+            .filter((value: unknown): value is string => typeof value === "string"),
+        ),
+      ];
+      if (productIds.length) {
+        const versions = await tx.query(
+          "SELECT id, version FROM products WHERE id = ANY($1::uuid[]) FOR UPDATE",
+          [productIds],
         );
-      if (p.import_id)
+        const productVersions = new Map(
+          versions.rows.map((row) => [row.id, row.version]),
+        );
+        for (const item of sortedItems)
+          if (item.productId)
+            assert(
+              productVersions.get(item.productId) === item.version,
+              409,
+              "Product changed. Preview again",
+            );
+      }
+      const metadata = json({ previewId: id, ruleId: p.rule_id, actor: actor.id });
+      const chunkSize = 250;
+      for (let index = 0; index < sortedItems.length; index += chunkSize) {
+        const chunk = sortedItems.slice(index, index + chunkSize);
         await tx.query(
-          "UPDATE import_rows SET proposed=$2,decision=$3,verified=$4,errors=$7,rule_metadata=$5 WHERE id=$1 AND job_id=$6",
+          `UPDATE import_rows AS r
+           SET proposed = v.proposed,
+               decision = v.decision,
+               verified = v.verified,
+               errors = v.errors,
+               rule_metadata = $3::jsonb
+           FROM jsonb_to_recordset($1::jsonb) AS v(
+             id uuid,
+             proposed jsonb,
+             decision text,
+             verified boolean,
+             errors jsonb
+           )
+           WHERE r.id = v.id AND r.job_id = $2`,
           [
-            item.id,
-            json(item.after),
-            item.decision,
-            item.verified,
-            json({ previewId: id, ruleId: p.rule_id, actor: actor.id }),
+            json(
+              chunk.map((item: any) => ({
+                id: item.id,
+                proposed: item.after,
+                decision: item.decision,
+                verified: item.verified,
+                errors: item.retainedErrors ?? [],
+              })),
+            ),
             p.import_id,
-            json(item.retainedErrors ?? []),
+            metadata,
           ],
         );
-      else
+      }
+    } else {
+      for (const item of sortedItems) {
+        if (item.productId)
+          assert(
+            (await getProduct(tx, item.productId, true)).version === item.version,
+            409,
+            "Product changed. Preview again",
+          );
         await saveProduct(
           tx,
           actor,
@@ -534,6 +591,7 @@ export async function apply(db: DB, actor: Actor, id: string) {
           item.version,
           "RULE",
         );
+      }
     }
     if (p.import_id)
       await tx.query("UPDATE import_jobs SET version=version+1 WHERE id=$1", [

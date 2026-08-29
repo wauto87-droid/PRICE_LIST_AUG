@@ -226,6 +226,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       phase: "saving",
       title: messages.saving,
       message: messages.savingDetail,
+      startedAt: Date.now(),
+      progress: null,
+      remainingSeconds: null,
     });
     try {
       const value = await action();
@@ -282,7 +285,18 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   ) {
     const chunks = chunkBulkItems(items);
     const results: T[] = [];
+    const startedAt = Date.now();
     for (let index = 0; index < chunks.length; index++) {
+      const completed = index;
+      const elapsedMs = Date.now() - startedAt;
+      const averageMs = completed > 0 ? elapsedMs / completed : 0;
+      const remainingSeconds =
+        completed > 0
+          ? Math.max(
+              1,
+              Math.round((averageMs * (chunks.length - completed)) / 1000),
+            )
+          : null;
       setActionState({
         phase: "saving",
         title: messages.title,
@@ -290,9 +304,21 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           chunks.length > 1
             ? `${messages.detail} ${messages.progress(index + 1, chunks.length)}`
             : messages.detail,
+        startedAt,
+        progress:
+          chunks.length > 1 ? Math.round((index / chunks.length) * 100) : null,
+        remainingSeconds,
       });
       results.push(await requestForChunk(chunks[index], index, chunks.length));
     }
+    setActionState({
+      phase: "saving",
+      title: messages.title,
+      message: messages.detail,
+      startedAt,
+      progress: 100,
+      remainingSeconds: 0,
+    });
     return results;
   }
   const heading = sections.find((s) => s[0] === section)!;

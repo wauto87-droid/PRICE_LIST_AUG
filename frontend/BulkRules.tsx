@@ -122,10 +122,15 @@ export default function BulkRules({
   return (
     <section className="review-panel bulk-rules">
       <h3>
-        {t(
-          "Select by rule · preview · apply",
-          "تحديد بالقاعدة · معاينة · تطبيق",
-        )}
+        {importId
+          ? t(
+              "Advanced bulk tools",
+              "أدوات التعديل الجماعي المتقدمة",
+            )
+          : t(
+              "Select by rule · preview · apply",
+              "تحديد بالقاعدة · معاينة · تطبيق",
+            )}
       </h3>
       {error && (
         <div role="alert" className="notice error">
@@ -138,10 +143,15 @@ export default function BulkRules({
         </div>
       )}
       <p>
-        {t(
-          "Rules search the entire dataset, not just the visible page. Import rules only stage changes; confirm the import separately.",
-          "تبحث القواعد في كامل البيانات. تغييرات الاستيراد مرحلية وتتطلب التأكيد لاحقاً.",
-        )}
+        {importId
+          ? t(
+              "Use this only for large staged changes. It searches the full import, not just the rows on screen, and it is separate from the normal repair flow.",
+              "استخدم هذا فقط للتغييرات المرحلية الكبيرة. يبحث في كامل الاستيراد وليس الصفوف الظاهرة فقط، وهو منفصل عن مسار الإصلاح العادي.",
+            )
+          : t(
+              "Rules search the entire dataset, not just the visible page. Import rules only stage changes; confirm the import separately.",
+              "تبحث القواعد في كامل البيانات. تغييرات الاستيراد مرحلية وتتطلب التأكيد لاحقاً.",
+            )}
       </p>
       <div className="form-grid three">
         <label>
@@ -315,7 +325,7 @@ export default function BulkRules({
                     })
                   }
                 >
-                  Select {state}
+                  {importId ? `Filter ${state}` : `Select ${state}`}
                 </button>
               ),
             )}
@@ -335,7 +345,9 @@ export default function BulkRules({
       )}
       <div className="actions wrap">
         <button disabled={busy} onClick={() => run(view)}>
-          Preview all matches / معاينة المطابقات
+          {importId
+            ? "Preview staged matches / معاينة المطابقات المرحلية"
+            : "Preview all matches / معاينة المطابقات"}
         </button>
         <button
           disabled={busy || actionBusy || !name.trim()}

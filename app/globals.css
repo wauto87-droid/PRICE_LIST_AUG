@@ -994,6 +994,42 @@ td button {
   margin: 12px 0 0;
   color: var(--muted);
 }
+.admin-progress {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  margin: 18px 0 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f0f0f3;
+}
+.admin-progress span {
+  display: block;
+  height: 100%;
+  width: 35%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--red) 0%, #ef6b7a 100%);
+  transition: width 0.25s ease;
+}
+.admin-progress.indeterminate span {
+  width: 38%;
+  animation: admin-progress-slide 1.15s ease-in-out infinite;
+}
+.admin-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #666670;
+}
+@keyframes admin-progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
 .admin-action-badge {
   width: 58px;
   height: 58px;
@@ -1044,6 +1080,94 @@ td button {
   border-radius: 12px;
   padding: 20px;
   margin: 20px 0;
+}
+.import-review-shell {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+.import-review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.import-review-copy {
+  margin-top: 10px;
+  max-width: 700px;
+}
+.import-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.import-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.import-summary-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, #fff 0%, #fcfcfd 100%);
+}
+.import-summary-card span {
+  display: block;
+  color: #70707a;
+  font-size: 12px;
+}
+.import-summary-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 32px;
+  color: var(--ink);
+}
+.import-summary-card.success {
+  border-color: #cfe8db;
+  background: #f4fbf7;
+}
+.import-summary-card.success strong {
+  color: var(--green);
+}
+.import-summary-card.warning {
+  border-color: #f0deaf;
+  background: #fff8e8;
+}
+.import-summary-card.warning strong {
+  color: #8a6400;
+}
+.import-summary-note {
+  margin-top: 0;
+}
+.import-summary-panel {
+  margin-top: 0;
+}
+.import-action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.import-advanced-tools {
+  margin: 18px 0;
+  border: 1px solid #ecd9dc;
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: #fffdfd;
+}
+.import-advanced-tools > summary {
+  font-size: 14px;
+  font-weight: 700;
+}
+.import-review-list .section-title {
+  align-items: end;
+}
+.import-review-table td {
+  vertical-align: top;
+}
+.import-review-table td:last-child {
+  vertical-align: middle;
 }
 .admin-layout {
   display: grid;
@@ -1465,6 +1589,14 @@ fieldset label {
   .footer-actions {
     flex-wrap: wrap;
   }
+  .admin-progress-meta,
+  .import-review-header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .import-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .hint-chips {
     gap: 6px;
   }
@@ -1554,6 +1686,46 @@ body :is(h1, h2, h3, strong, b) {
   border-radius: 12px;
   margin: 16px 0;
   padding: 16px;
+}
+@media (max-width: 820px) {
+  .import-review-table thead {
+    display: none;
+  }
+  .import-review-table,
+  .import-review-table tbody,
+  .import-review-table tr,
+  .import-review-table td {
+    display: block;
+    width: 100%;
+  }
+  .import-review-table tr {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px;
+    margin-bottom: 14px;
+    background: #fff;
+  }
+  .import-review-table td {
+    border-bottom: 0;
+    padding: 8px 0;
+  }
+  .import-review-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: #7a7a83;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+}
+@media (max-width: 520px) {
+  .import-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .import-action-strip > * {
+    width: 100%;
+  }
 }
 .basic-pricing-panel {
   margin: 24px 0;

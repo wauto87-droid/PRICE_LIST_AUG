@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type AdminActionMessages = {
   saving: string;
@@ -15,6 +15,9 @@ export type AdminActionState =
       phase: "saving" | "success" | "error";
       title: string;
       message?: string;
+      startedAt?: number;
+      progress?: number | null;
+      remainingSeconds?: number | null;
     };
 
 export type AdminActionRunner = <T>(
@@ -33,6 +36,7 @@ export function AdminActionModal({
 }) {
   const panel = useRef<HTMLElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
     if (state.phase === "idle") {
@@ -44,8 +48,37 @@ export function AdminActionModal({
       previousFocus.current = document.activeElement;
     panel.current?.focus();
   }, [state.phase]);
+  useEffect(() => {
+    if (state.phase !== "saving" || !state.startedAt) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const tick = () =>
+      setElapsedSeconds(
+        Math.max(0, Math.round((Date.now() - state.startedAt!) / 1000)),
+      );
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [state]);
 
   if (state.phase === "idle") return null;
+  const progressValue =
+    state.phase === "saving" && typeof state.progress === "number"
+      ? Math.max(0, Math.min(100, state.progress))
+      : null;
+  const remainingLabel =
+    state.phase !== "saving"
+      ? ""
+      : state.remainingSeconds && state.remainingSeconds > 0
+        ? t(
+            `About ${state.remainingSeconds}s remaining`,
+            `متبقي تقريباً ${state.remainingSeconds} ثانية`,
+          )
+        : t(
+            "Estimating remaining time…",
+            "جارٍ تقدير الوقت المتبقي…",
+          );
 
   return (
     <div className="modal-backdrop admin-action-backdrop" role="presentation">
@@ -63,12 +96,32 @@ export function AdminActionModal({
         <h2 id="admin-action-title">{state.title}</h2>
         {state.message && <p>{state.message}</p>}
         {state.phase === "saving" ? (
-          <p className="muted">
-            {t(
-              "Please wait while AMT finishes this step.",
-              "يرجى الانتظار حتى ينهي AMT هذه الخطوة.",
-            )}
-          </p>
+          <>
+            <div
+              className={`admin-progress ${progressValue === null ? "indeterminate" : ""}`}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressValue ?? undefined}
+            >
+              <span style={progressValue === null ? undefined : { width: `${progressValue}%` }} />
+            </div>
+            <div className="admin-progress-meta">
+              <span>{remainingLabel}</span>
+              <span>
+                {t(
+                  `Elapsed ${elapsedSeconds}s`,
+                  `المنقضي ${elapsedSeconds} ثانية`,
+                )}
+              </span>
+            </div>
+            <p className="muted">
+              {t(
+                "Please wait while AMT finishes this step.",
+                "يرجى الانتظار حتى ينهي AMT هذه الخطوة.",
+              )}
+            </p>
+          </>
         ) : state.phase === "error" ? (
           <div className="actions footer-actions">
             <button className="primary" type="button" onClick={dismiss} autoFocus>

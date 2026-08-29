@@ -58,6 +58,7 @@ type ImportProfile =
   | "STANDARD"
   | "PUBLIC_PRICE_DISCOUNT"
   | "SUPPLIER_SIMPLE";
+type ReviewSection = "summary" | "all" | "repair";
 type DiscountPreset = {
   finalDiscount: string;
   wholesaleDiscount: string;
@@ -136,6 +137,13 @@ const mappingLabel = (field: string, profile: ImportProfile) => {
       return field;
   }
 };
+const decisionLabel = (decision: string, t: Translate) => {
+  if (decision === "REVIEW") return t("Needs review", "بحاجة لمراجعة");
+  if (decision === "KEEP") return t("Keep existing", "إبقاء الحالي");
+  if (decision === "UPDATE") return t("Import changes", "استيراد التغييرات");
+  if (decision === "SKIP") return t("Ignore / Skip", "تجاهل / تخطي");
+  return decision;
+};
 export default function Imports({
   t,
   actionBusy,
@@ -149,6 +157,7 @@ export default function Imports({
     [mode, setMode] = useState("UPDATE_ONLY"),
     [page, setPage] = useState(0),
     [rowView, setRowView] = useState<"all" | "repair">("all"),
+    [reviewSection, setReviewSection] = useState<ReviewSection>("summary"),
     [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
     [groupValues, setGroupValues] = useState<string[]>([]),
@@ -332,6 +341,17 @@ export default function Imports({
     await loadJobPage(job.id, nextPage, guidedGroupColumn, rowView);
     if (confirmation) await loadConfirmation(job.id, nextPage);
   }
+  async function openReviewSection(nextSection: ReviewSection, nextJob = job) {
+    setConfirmation(null);
+    setReviewSection(nextSection);
+    if (!nextJob || nextSection === "summary") return;
+    await loadJobPage(
+      nextJob.id,
+      0,
+      guidedGroupColumn,
+      nextSection === "repair" ? "repair" : "all",
+    );
+  }
   async function open(id: string) {
     const emptyDrafts: Record<string, { decision?: string; verified?: boolean }> =
       {};
@@ -345,6 +365,7 @@ export default function Imports({
     setConfirmation(null);
     setPage(j.page || 0);
     setRowView("all");
+    setReviewSection("summary");
     setQuickActionMessage("");
     setGroupValues(j.groupValues || []);
     setDefaults(
@@ -415,6 +436,16 @@ export default function Imports({
   const reviewHeading = quickImportMode
     ? t("2. Quick summary & optional repair", "٢. ملخص سريع وإصلاح اختياري")
     : t("2. Review every row", "٢. مراجعة كل صف");
+  const readyRows = job?.reviewStats?.readyRows ?? 0;
+  const problemRows =
+    job?.rowViewCounts?.repairRows ?? job?.reviewStats?.problemRows ?? 0;
+  const skippedRows = job?.quickStats?.skippedRows ?? 0;
+  const totalRows = job?.totalRows ?? job?.rows?.length ?? 0;
+  const visibleRowHeading =
+    reviewSection === "repair"
+      ? t("Repair items", "عناصر الإصلاح")
+      : t("All rows", "كل الصفوف");
+  const showRowList = !!job && reviewSection !== "summary";
   return (
     <>
       <div className="actions wrap">
@@ -928,64 +959,219 @@ export default function Imports({
                     ? t("Prepare quick import", "تجهيز الاستيراد السريع")
                     : t("Apply mapping & validate", "تطبيق الربط والتحقق")}
                 </button>
-                <h3>{reviewHeading}</h3>
-                <p className="muted">
-                  {t(
-                    quickImportMode
-                      ? "Quick mode prepares the full file at once. Valid rows can be imported together, and invalid rows stay listed here for repair after import."
-                      : supplierSimpleMode
-                        ? "Simple supplier imports are set to Create & Update so missing part numbers can be created. Every row still requires review and verification before anything goes live."
-                        : "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
-                    quickImportMode
-                      ? "الوضع السريع يجهز الملف بالكامل دفعة واحدة. يمكن استيراد الصفوف الصالحة معاً، وتبقى الصفوف غير الصالحة معروضة هنا لإصلاحها بعد الاستيراد."
-                      : supplierSimpleMode
-                        ? "استيراد المورد البسيط مضبوط على إنشاء وتحديث حتى يمكن إنشاء الأصناف غير الموجودة. ومع ذلك كل صف يحتاج مراجعة وتحقق قبل النشر."
-                        : "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
+                <div className="import-review-shell">
+                  <div className="import-review-header">
+                    <div>
+                      <h3>{reviewHeading}</h3>
+                      <p className="muted import-review-copy">
+                        {t(
+                          quickImportMode
+                            ? "Start from the summary. Import-ready rows move together, and problem rows stay available in Repair items."
+                            : supplierSimpleMode
+                              ? "Start from the summary, then open All rows or Repair items to check details before publishing."
+                              : "Start from the summary, then review all rows or only problem rows before publishing.",
+                          quickImportMode
+                            ? "ابدأ من الملخص. يتم استيراد الصفوف الجاهزة معاً وتبقى الصفوف التي بها مشكلات متاحة في عناصر الإصلاح."
+                            : supplierSimpleMode
+                              ? "ابدأ من الملخص ثم افتح كل الصفوف أو عناصر الإصلاح لفحص التفاصيل قبل النشر."
+                              : "ابدأ من الملخص ثم راجع كل الصفوف أو صفوف المشكلات فقط قبل النشر.",
+                        )}
+                      </p>
+                    </div>
+                    <div className="import-segmented">
+                      <button
+                        type="button"
+                        className={reviewSection === "summary" ? "primary" : ""}
+                        disabled={busy || actionBusy}
+                        onClick={() => void openReviewSection("summary")}
+                      >
+                        {t("Summary", "الملخص")}
+                      </button>
+                      <button
+                        type="button"
+                        className={reviewSection === "all" ? "primary" : ""}
+                        disabled={busy || actionBusy}
+                        onClick={() => void run(async () => await openReviewSection("all"))}
+                      >
+                        {t("All rows", "كل الصفوف")} ({job.rowViewCounts?.allRows ?? job.totalRows})
+                      </button>
+                      <button
+                        type="button"
+                        className={reviewSection === "repair" ? "primary" : ""}
+                        disabled={busy || actionBusy || !(job.rowViewCounts?.repairRows ?? 0)}
+                        onClick={() => void run(async () => await openReviewSection("repair"))}
+                      >
+                        {t("Repair items", "عناصر الإصلاح")} ({job.rowViewCounts?.repairRows ?? 0})
+                      </button>
+                    </div>
+                  </div>
+                  <div className="import-summary-grid">
+                    <div className="import-summary-card">
+                      <span>{t("Total rows", "إجمالي الصفوف")}</span>
+                      <strong>{totalRows}</strong>
+                    </div>
+                    <div className="import-summary-card success">
+                      <span>{t("Ready to import", "جاهزة للاستيراد")}</span>
+                      <strong>{readyRows}</strong>
+                    </div>
+                    <div className="import-summary-card warning">
+                      <span>{t("Needs repair", "تحتاج إصلاح")}</span>
+                      <strong>{problemRows}</strong>
+                    </div>
+                    <div className="import-summary-card">
+                      <span>{t("Skipped", "المتخطاة")}</span>
+                      <strong>{skippedRows}</strong>
+                    </div>
+                  </div>
+                  {quickImportMode && job.quickStats && (
+                    <div className="notice import-summary-note">
+                      {t("Valid rows", "الصفوف الصالحة")}: {job.quickStats.validRows} ·{" "}
+                      {t("Invalid rows", "الصفوف غير الصالحة")}: {job.quickStats.invalidRows} ·{" "}
+                      {t("Selected", "المحددة")}: {job.quickStats.selectedRows} ·{" "}
+                      {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows}
+                    </div>
                   )}
-                </p>
-                {quickImportMode && job.quickStats && (
-                  <div className="notice">
-                    {t("Total rows", "إجمالي الصفوف")}: {job.totalRows} ·{" "}
-                    {t("Valid rows", "الصفوف الصالحة")}: {job.quickStats.validRows} ·{" "}
-                    {t("Invalid rows", "الصفوف غير الصالحة")}: {job.quickStats.invalidRows} ·{" "}
-                    {t("Selected", "المحددة")}: {job.quickStats.selectedRows} ·{" "}
-                    {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows} ·{" "}
-                    {t("Ready to import", "جاهزة للاستيراد")}: {job.reviewStats?.readyRows ?? 0}
-                  </div>
-                )}
-                {quickImportMode && (
-                  <div className="actions wrap">
-                    <button
-                      type="button"
-                      className={rowView === "all" ? "primary" : ""}
-                      disabled={busy || actionBusy}
-                      onClick={() =>
-                        run(async () => {
-                          setConfirmation(null);
-                          await loadJobPage(job.id, 0, guidedGroupColumn, "all");
-                        })
-                      }
-                    >
-                      {t("All rows", "كل الصفوف")} ({job.rowViewCounts?.allRows ?? job.totalRows})
-                    </button>
-                    <button
-                      type="button"
-                      className={rowView === "repair" ? "primary" : ""}
-                      disabled={busy || actionBusy || !(job.rowViewCounts?.repairRows ?? 0)}
-                      onClick={() =>
-                        run(async () => {
-                          setConfirmation(null);
-                          await loadJobPage(job.id, 0, guidedGroupColumn, "repair");
-                        })
-                      }
-                    >
-                      {t("Repair items", "عناصر الإصلاح")} ({job.rowViewCounts?.repairRows ?? 0})
-                    </button>
-                  </div>
-                )}
+                  {reviewSection === "summary" && (
+                    <div className="review-panel import-summary-panel">
+                      <div className="import-action-strip">
+                        <button
+                          className="primary"
+                          style={{ backgroundColor: "#2e7d32", color: "#fff", borderColor: "#2e7d32" }}
+                          disabled={busy || actionBusy}
+                          onClick={async () => {
+                            if (
+                              await showConfirm(
+                                quickImportMode
+                                  ? t(
+                                      "Import all valid rows now and keep invalid rows available for repair afterward?",
+                                      "استيراد كل الصفوف الصالحة الآن مع إبقاء الصفوف غير الصالحة متاحة للإصلاح بعد ذلك؟",
+                                    )
+                                  : t(
+                                      "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
+                                      "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
+                                    )
+                              )
+                            ) {
+                              onAction(
+                                {
+                                  saving: t("Importing ready rows…", "جارٍ استيراد الصفوف الجاهزة…"),
+                                  success: quickImportMode
+                                    ? t("Quick import completed", "اكتمل الاستيراد السريع")
+                                    : t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
+                                  successDetail: quickImportMode
+                                    ? t(
+                                        "Valid rows were imported and invalid rows stayed available for repair.",
+                                        "تم استيراد الصفوف الصالحة وبقيت الصفوف غير الصالحة متاحة للإصلاح.",
+                                      )
+                                    : t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
+                                  error: quickImportMode
+                                    ? t("Quick import failed", "فشل الاستيراد السريع")
+                                    : t("Auto-import failed", "فشل الاستيراد التلقائي"),
+                                },
+                                async () => {
+                                  await api("imports/" + job.id + "/auto-confirm", "POST", {
+                                    version: job.version,
+                                  });
+                                  await open(job.id);
+                                  await load();
+                                }
+                              );
+                            }
+                          }}
+                        >
+                          {t("Import ready rows", "استيراد الصفوف الجاهزة")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || actionBusy || !problemRows}
+                          onClick={() =>
+                            run(async () => {
+                              await openReviewSection("repair");
+                            })
+                          }
+                        >
+                          {t("Open repair items", "فتح عناصر الإصلاح")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || actionBusy}
+                          onClick={() =>
+                            onAction(
+                              {
+                                saving: t("Marking valid rows ready…", "جارٍ تجهيز الصفوف الصالحة…"),
+                                success: t("Valid rows prepared", "تم تجهيز الصفوف الصالحة"),
+                                successDetail: t(
+                                  "Valid rows were marked ready across the full file.",
+                                  "تم تجهيز الصفوف الصالحة عبر الملف بالكامل.",
+                                ),
+                                error: t("Could not prepare valid rows", "تعذر تجهيز الصفوف الصالحة"),
+                              },
+                              async () => {
+                                await api("imports/" + job.id + "/bulk-review", "POST", {
+                                  version: job.version,
+                                  action: "SELECT_ALL",
+                                });
+                                const opened = await loadJobPage(job.id, 0, guidedGroupColumn, rowView);
+                                setQuickActionMessage(
+                                  t(
+                                    `${opened.quickStats?.selectedRows ?? 0} rows are ready to import`,
+                                    `أصبح ${opened.quickStats?.selectedRows ?? 0} صفوف جاهزة للاستيراد`,
+                                  ),
+                                );
+                                await load();
+                              },
+                            )
+                          }
+                        >
+                          {t("Mark valid rows ready", "تجهيز الصفوف الصالحة")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || actionBusy}
+                          onClick={() =>
+                            onAction(
+                              {
+                                saving: t("Skipping problem rows…", "جارٍ تخطي صفوف المشكلات…"),
+                                success: t("Problem rows skipped", "تم تخطي صفوف المشكلات"),
+                                successDetail: t(
+                                  "Problem rows were skipped across the full file.",
+                                  "تم تخطي الصفوف التي بها مشكلات عبر الملف بالكامل.",
+                                ),
+                                error: t("Could not skip problem rows", "تعذر تخطي صفوف المشكلات"),
+                              },
+                              async () => {
+                                await api("imports/" + job.id + "/bulk-review", "POST", {
+                                  version: job.version,
+                                  action: "SKIP_INVALID",
+                                });
+                                const opened = await loadJobPage(job.id, 0, guidedGroupColumn, rowView);
+                                setQuickActionMessage(
+                                  t(
+                                    `${opened.quickStats?.skippedRows ?? 0} rows marked to skip. ${opened.reviewStats?.readyRows ?? 0} valid rows remain ready.`,
+                                    `تم وضع ${opened.quickStats?.skippedRows ?? 0} صفوف للتخطي. ما زال ${opened.reviewStats?.readyRows ?? 0} صفوف صالحة جاهزة.`,
+                                  ),
+                                );
+                                await load();
+                              },
+                            )
+                          }
+                        >
+                          {t("Skip problem rows", "تخطي صفوف المشكلات")}
+                        </button>
+                      </div>
+                      <p className="muted">
+                        {t(
+                          "Use Repair items only for rows with problems. Open Advanced bulk tools only when you want to automate a large review change.",
+                          "استخدم عناصر الإصلاح فقط للصفوف التي بها مشكلات. افتح أدوات التعديل الجماعي المتقدمة فقط عند الحاجة لأتمتة تغيير مراجعة كبير.",
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
                 {quickImportMode && quickActionMessage && (
                   <div className="notice warning">{quickActionMessage}</div>
                 )}
+                {reviewSection !== "summary" && (
                 <div className="actions wrap">
                   {quickImportMode ? (
                     <>
@@ -1024,7 +1210,7 @@ export default function Imports({
                           )
                         }
                       >
-                        {t("Select all rows", "تحديد كل الصفوف")}
+                        {t("Mark valid rows ready", "تجهيز الصفوف الصالحة")}
                       </button>
                       <button
                         disabled={busy || actionBusy}
@@ -1061,7 +1247,7 @@ export default function Imports({
                           )
                         }
                       >
-                        {t("Skip all invalid rows", "تخطي كل الصفوف غير الصالحة")}
+                        {t("Skip problem rows", "تخطي صفوف المشكلات")}
                       </button>
                     </>
                   ) : (
@@ -1119,31 +1305,58 @@ export default function Imports({
                     </>
                   )}
                 </div>
-                <BulkRules
-                  t={t}
-                  importId={job.id}
-                  actionBusy={actionBusy}
-                  onAction={onAction}
-                  onApplied={() => loadJobPage(job.id, page, guidedGroupColumn)}
-                />
+                )}
+                <details className="import-advanced-tools">
+                  <summary>
+                    {t("Advanced bulk tools", "أدوات التعديل الجماعي المتقدمة")}
+                  </summary>
+                  <p className="muted">
+                    {t(
+                      "Optional automation for large staged changes. Normal repair work should stay in Summary or Repair items.",
+                      "أتمتة اختيارية للتغييرات المرحلية الكبيرة. أعمال الإصلاح العادية يجب أن تبقى في الملخص أو عناصر الإصلاح.",
+                    )}
+                  </p>
+                  <BulkRules
+                    t={t}
+                    importId={job.id}
+                    actionBusy={actionBusy}
+                    onAction={onAction}
+                    onApplied={() => loadJobPage(job.id, page, guidedGroupColumn)}
+                  />
+                </details>
               </>
             )}
-            <div className="table-scroll">
-              <table>
+            {showRowList && (
+            <div className="table-scroll import-review-list">
+              <div className="section-title">
+                <h3>{visibleRowHeading}</h3>
+                <span className="muted">
+                  {reviewSection === "repair"
+                    ? t(
+                        "Only rows with problems are shown here.",
+                        "هنا يتم عرض الصفوف التي بها مشكلات فقط.",
+                      )
+                    : t(
+                        "Use this view when you want to inspect the full file row by row.",
+                        "استخدم هذا العرض عند الحاجة لفحص الملف صفاً صفاً.",
+                      )}
+                </span>
+              </div>
+              <table className="import-review-table">
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>{t("Incoming / current", "وارد / حالي")}</th>
-                    <th>{t("Validation", "التحقق")}</th>
-                    <th>{t("Decision", "القرار")}</th>
+                    <th>{t("Incoming row", "الصف الوارد")}</th>
+                    <th>{t("Status / problem", "الحالة / المشكلة")}</th>
+                    <th>{t("Next action", "الإجراء التالي")}</th>
                     <th>{t("Verified", "تم التحقق")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {job.rows.map((r: any) => (
                     <tr key={r.id}>
-                      <td>{r.row_number}</td>
-                      <td>
+                      <td data-label="#">{r.row_number}</td>
+                      <td data-label={t("Incoming row", "الصف الوارد")}>
                         <strong>
                           {r.proposed?.partNumber ||
                             t("Not mapped", "غير مربوط")}
@@ -1210,7 +1423,7 @@ export default function Imports({
                           </button>
                         )}
                       </td>
-                      <td>
+                      <td data-label={t("Status / problem", "الحالة / المشكلة")}>
                         {!r.duplicate_id && r.proposed?.partNumber && (
                           <span className="pill warning">
                             {t("New Product (Will be created)", "منتج جديد (سيتم إنشاؤه)")}
@@ -1233,7 +1446,7 @@ export default function Imports({
                           {r.errors.join("; ")}
                         </small>
                       </td>
-                      <td>
+                      <td data-label={t("Next action", "الإجراء التالي")}>
                         <select
                           disabled={job.status !== "AWAITING_REVIEW"}
                           value={r.decision}
@@ -1251,19 +1464,15 @@ export default function Imports({
                             });
                           }}
                         >
-                          {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => {
-                            let label = d;
-                            if (d === "REVIEW") label = t("Needs review", "بحاجة لمراجعة");
-                            if (d === "KEEP") label = t("Keep existing", "إبقاء الحالي");
-                            if (d === "UPDATE") label = t("Import changes", "استيراد التغييرات");
-                            if (d === "SKIP") label = t("Ignore / Skip", "تجاهل / تخطي");
-                            return (
-                              <option key={d} value={d}>{label}</option>
-                            );
-                          })}
+                          {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => (
+                            <option key={d} value={d}>
+                              {decisionLabel(d, t)}
+                            </option>
+                          ))}
                         </select>
+                        <small>{decisionLabel(r.decision, t)}</small>
                       </td>
-                      <td>
+                      <td data-label={t("Verified", "تم التحقق")}>
                         <input
                           type="checkbox"
                           disabled={job.status !== "AWAITING_REVIEW"}
@@ -1304,6 +1513,7 @@ export default function Imports({
                 </tbody>
               </table>
             </div>
+            )}
             {job.totalPages > 1 && (
               <div className="actions footer-actions">
                 <button
@@ -1430,8 +1640,8 @@ export default function Imports({
                   }}
                 >
                   {quickImportMode
-                    ? t("Quick import valid rows", "استيراد سريع للصفوف الصالحة")
-                    : t("⚡ Auto-Approve & Import", "⚡ الموافقة التلقائية والاستيراد")}
+                    ? t("Import ready rows", "استيراد الصفوف الجاهزة")
+                    : t("Import ready rows", "استيراد الصفوف الجاهزة")}
                 </button>
                 <button
                   className="primary"
@@ -1568,7 +1778,7 @@ export default function Imports({
                       disabled={busy || actionBusy}
                       onClick={() =>
                         run(async () => {
-                          await loadJobPage(job.id, 0, guidedGroupColumn, "repair");
+                          await openReviewSection("repair");
                         })
                       }
                     >
