@@ -50,6 +50,13 @@ const importMappingRequestSchema = z
     defaults: importDefaultsSchema,
     version: importVersionSchema,
     mode: z.enum(["UPDATE_ONLY", "CREATE_UPDATE"]).optional(),
+    quickImport: z.boolean().optional(),
+  })
+  .strict();
+const bulkReviewRequestSchema = z
+  .object({
+    version: importVersionSchema,
+    action: z.enum(["SELECT_ALL", "SKIP_INVALID"]),
   })
   .strict();
 
@@ -59,8 +66,122 @@ const normalizeImportColumn = (value: string) =>
 const inferGroupColumn = (columns: string[]) =>
   columns.find((column) => normalizeImportColumn(column) === "activity") ?? null;
 
+const quickImportEnabled = (defaults: Record<string, unknown> | null | undefined) =>
+  defaults?.quickImport === true;
+
+const nonEmptyCell = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim() !== "";
+
+const trimMappedValue = (value: unknown) =>
+  nonEmptyCell(value) ? String(value).trim() : undefined;
+
+function extractMappedValues(
+  raw: Record<string, unknown>,
+  mapping: Record<string, string>,
+) {
+  const proposed: Record<string, any> = {};
+  for (const [field, column] of Object.entries(mapping))
+    if (nonEmptyCell(raw[column])) proposed[field] = String(raw[column]).trim();
+  if (typeof proposed.minimumEnabled === "string")
+    proposed.minimumEnabled = ["true", "1", "yes", "on"].includes(
+      proposed.minimumEnabled.toLowerCase(),
+    );
+  if (typeof proposed.quantityPrecision === "string")
+    proposed.quantityPrecision = Number(proposed.quantityPrecision);
+  if (typeof proposed.aliases === "string")
+    proposed.aliases = proposed.aliases.split("|").filter(Boolean);
+  return proposed;
+}
+
+function hasQuickPrice(mapped: Record<string, unknown>) {
+  const priceFields = [
+    "cost",
+    "listPrice",
+    "END_CUSTOMER.sellingPrice",
+    "WHOLESALE.sellingPrice",
+    "RETAIL.sellingPrice",
+    "END_CUSTOMER.listPrice",
+    "WHOLESALE.listPrice",
+    "RETAIL.listPrice",
+  ];
+  return priceFields.some((field) => nonEmptyCell(mapped[field]));
+}
+
+async function stageImportRow(
+  tx: DB,
+  row: any,
+  mapping: Record<string, string>,
+  productDefaults: Record<string, unknown>,
+  guidedImport: z.infer<typeof guidedImportSchema> | null,
+  mode: "UPDATE_ONLY" | "CREATE_UPDATE",
+  quickImport: boolean,
+) {
+  let proposed = extractMappedValues(row.raw, mapping);
+  const errors: string[] = [];
+  const duplicate = proposed.partNumber
+    ? await one(
+        tx,
+        "SELECT id,version FROM products WHERE normalized_part=$1",
+        [normalizePart(proposed.partNumber)],
+      )
+    : null;
+  const current = duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined;
+  try {
+    if (guidedImport)
+      proposed = {
+        ...proposed,
+        ...applyGuidedDiscountDefaults(
+          row.raw,
+          proposed,
+          current,
+          guidedImport,
+        ),
+      };
+    if (quickImport) {
+      const partNumber = trimMappedValue(proposed.partNumber);
+      if (!partNumber) errors.push("Part number is required for quick import");
+      if (!hasQuickPrice(proposed))
+        errors.push("Price is required for quick import");
+      if (partNumber && !duplicate && mode === "UPDATE_ONLY")
+        errors.push(
+          "Unknown part number: Update Existing Only does not create products",
+        );
+      if (partNumber && !trimMappedValue(proposed.description))
+        proposed.description = current?.description || partNumber;
+    }
+    proposed = importCandidate(
+      proposed,
+      productDefaults,
+      current,
+    );
+    const parsed = validateProduct(productInput.parse(proposed));
+    if (!quickImport && !duplicate && mode === "UPDATE_ONLY")
+      errors.push(
+        "Unknown part number: Update Existing Only does not create products",
+      );
+    return {
+      proposed: parsed,
+      errors,
+      duplicateId: duplicate?.id ?? null,
+      expectedVersion: duplicate?.version ?? null,
+    };
+  } catch (e) {
+    errors.push(
+      e instanceof z.ZodError
+        ? e.issues.map((i) => i.path.join(".") + ": " + i.message).join(";")
+        : (e as Error).message,
+    );
+    return {
+      proposed,
+      errors,
+      duplicateId: duplicate?.id ?? null,
+      expectedVersion: duplicate?.version ?? null,
+    };
+  }
+}
+
 function splitImportDefaults(defaults: Record<string, unknown>) {
-  const { guidedImport, ...productDefaults } = defaults;
+  const { guidedImport, quickImport, ...productDefaults } = defaults;
   return {
     productDefaults,
     guidedImport:
@@ -217,6 +338,9 @@ export async function getImportPage(
         count(*)::int AS total_rows,
         count(*) FILTER (WHERE NOT verified)::int AS unverified_rows,
         count(*) FILTER (WHERE coalesce(jsonb_array_length(errors), 0) > 0)::int AS problem_rows,
+        count(*) FILTER (WHERE coalesce(jsonb_array_length(errors), 0) = 0)::int AS valid_rows,
+        count(*) FILTER (WHERE decision='UPDATE')::int AS selected_rows,
+        count(*) FILTER (WHERE decision='SKIP')::int AS skipped_rows,
         count(*) FILTER (
           WHERE verified AND decision='UPDATE' AND coalesce(jsonb_array_length(errors), 0) = 0
         )::int AS ready_rows
@@ -276,6 +400,14 @@ export async function getImportPage(
       problemRows: totals?.problem_rows ?? 0,
       readyRows: totals?.ready_rows ?? 0,
     },
+    quickStats: quickImportEnabled(job.defaults)
+      ? {
+          validRows: totals?.valid_rows ?? 0,
+          invalidRows: totals?.problem_rows ?? 0,
+          selectedRows: totals?.selected_rows ?? 0,
+          skippedRows: totals?.skipped_rows ?? 0,
+        }
+      : null,
   };
 }
 
@@ -374,6 +506,7 @@ export async function mapRows(
     );
     assert(job.version === data.version, 409, "Import changed. Reload");
     const mode = data.mode ?? job.mode;
+    const quickImport = data.quickImport ?? quickImportEnabled(job.defaults);
     if (mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
     const { productDefaults, guidedImport } = splitImportDefaults(
       data.defaults,
@@ -385,74 +518,83 @@ export async function mapRows(
       )
     ).rows;
     for (const row of rows) {
-      let proposed: Record<string, any> = {};
-      for (const [field, column] of Object.entries(data.mapping))
-        if (
-          row.raw[column] !== undefined &&
-          row.raw[column] !== null &&
-          String(row.raw[column]).trim() !== ""
-        )
-          proposed[field] = String(row.raw[column]).trim();
-      if (typeof proposed.minimumEnabled === "string")
-        proposed.minimumEnabled = ["true", "1", "yes", "on"].includes(
-          proposed.minimumEnabled.toLowerCase(),
-        );
-      if (typeof proposed.quantityPrecision === "string")
-        proposed.quantityPrecision = Number(proposed.quantityPrecision);
-      if (typeof proposed.aliases === "string")
-        proposed.aliases = proposed.aliases.split("|").filter(Boolean);
-      let parsed: any = null;
-      const errors: string[] = [];
-      const duplicate = proposed.partNumber
-        ? await one(
-            tx,
-            "SELECT id,version FROM products WHERE normalized_part=$1",
-            [normalizePart(proposed.partNumber)],
-          )
-        : null;
-      const current = duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined;
-      try {
-        if (guidedImport)
-          proposed = {
-            ...proposed,
-            ...applyGuidedDiscountDefaults(
-              row.raw,
-              proposed,
-              current,
-              guidedImport,
-            ),
-          };
-        proposed = importCandidate(
-          proposed,
-          productDefaults,
-          current,
-        );
-        parsed = validateProduct(productInput.parse(proposed));
-        if (!duplicate && mode === "UPDATE_ONLY")
-          errors.push(
-            "Unknown part number: Update Existing Only does not create products",
-          );
-      } catch (e) {
-        errors.push(
-          e instanceof z.ZodError
-            ? e.issues.map((i) => i.path.join(".") + ": " + i.message).join(";")
-            : (e as Error).message,
-        );
-      }
+      const staged = await stageImportRow(
+        tx,
+        row,
+        data.mapping,
+        productDefaults,
+        guidedImport,
+        mode,
+        quickImport,
+      );
       await tx.query(
         "UPDATE import_rows SET proposed=$2,errors=$3,duplicate_id=$4,expected_version=$5,decision='REVIEW',verified=false WHERE id=$1",
         [
           row.id,
-          json(parsed ?? proposed),
-          json(errors),
-          duplicate?.id ?? null,
-          duplicate?.version ?? null,
+          json(staged.proposed),
+          json(staged.errors),
+          staged.duplicateId,
+          staged.expectedVersion,
         ],
       );
     }
     await tx.query(
       "UPDATE import_jobs SET mapping=$2,defaults=$3,mode=$4,version=version+1,updated_at=now() WHERE id=$1",
-      [id, json(data.mapping), json(data.defaults), mode],
+      [
+        id,
+        json(data.mapping),
+        json({ ...data.defaults, quickImport }),
+        mode,
+      ],
+    );
+    return { ok: true };
+  });
+}
+export async function bulkReview(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  requirePermission(actor, "IMPORT_CONFIRM");
+  const data = bulkReviewRequestSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const job = await one(
+      tx,
+      "SELECT * FROM import_jobs WHERE id=$1 FOR UPDATE",
+      [id],
+    );
+    assert(
+      job && job.status === "AWAITING_REVIEW",
+      409,
+      "Import is not awaiting review",
+    );
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    if (data.action === "SELECT_ALL") {
+      await tx.query(
+        `UPDATE import_rows
+         SET decision = CASE
+               WHEN coalesce(jsonb_array_length(errors), 0) = 0 THEN 'UPDATE'
+               ELSE 'SKIP'
+             END,
+             verified = CASE
+               WHEN coalesce(jsonb_array_length(errors), 0) = 0 THEN true
+               ELSE false
+             END
+         WHERE job_id = $1`,
+        [id],
+      );
+    } else if (data.action === "SKIP_INVALID") {
+      await tx.query(
+        `UPDATE import_rows
+         SET decision = 'SKIP', verified = false
+         WHERE job_id = $1 AND coalesce(jsonb_array_length(errors), 0) > 0`,
+        [id],
+      );
+    }
+    await tx.query(
+      "UPDATE import_jobs SET version=version+1,updated_at=now() WHERE id=$1",
+      [id],
     );
     return { ok: true };
   });
@@ -670,6 +812,7 @@ export async function autoVerifyAndConfirmImport(
       "Import changed or is not awaiting review",
     );
     if (job.mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
+    const quickImport = quickImportEnabled(job.defaults);
 
     await tx.query(
       `UPDATE import_rows 
@@ -688,7 +831,7 @@ export async function autoVerifyAndConfirmImport(
       "UPDATE import_jobs SET version = version + 1 WHERE id = $1",
       [id],
     );
-
+    if (quickImport) return confirmImport(tx, actor, id, version + 1);
     return confirmImport(tx, actor, id, version + 1);
   });
 }

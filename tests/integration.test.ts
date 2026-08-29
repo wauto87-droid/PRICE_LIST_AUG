@@ -852,6 +852,119 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test(
+    "Quick import summary accepts part number plus price, imports EZ9F56116, and keeps invalid rows visible",
+    async () => {
+      const iid = randomUUID();
+      await db.query(
+        "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id,mode) VALUES($1,'supplier-quick.xlsx','/none','EXCEL','AWAITING_REVIEW',$2,'CREATE_UPDATE')",
+        [iid, adminId],
+      );
+      const rows = [
+        {
+          "Part Reference": "EZ9F56116",
+          "Local Description": "EASY9 MCB 1P 16A C 6000A 230V MINIATURE",
+          Activity: "PPCFD",
+          "Public Pricelist": "26.70",
+        },
+        {
+          "Part Reference": "QUICK-NO-DESC",
+          "Local Description": "",
+          Activity: "PPCFD",
+          "Public Pricelist": "88.00",
+        },
+        {
+          "Part Reference": "QUICK-NO-PRICE",
+          "Local Description": "Missing price",
+          Activity: "PPCFD",
+          "Public Pricelist": "",
+        },
+        {
+          "Part Reference": "",
+          "Local Description": "Missing part",
+          Activity: "PPCFD",
+          "Public Pricelist": "15.00",
+        },
+      ];
+      for (let i = 0; i < rows.length; i++)
+        await db.query(
+          "INSERT INTO import_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)",
+          [randomUUID(), iid, i + 1, json(rows[i])],
+        );
+      await request("imports/" + iid + "/mapping", "POST", {
+        mapping: {
+          partNumber: "Part Reference",
+          description: "Local Description",
+          listPrice: "Public Pricelist",
+        },
+        defaults: {
+          method: "LIST_DISCOUNT",
+          baseDiscount: "0",
+          vat: "15",
+        },
+        version: 1,
+        mode: "CREATE_UPDATE",
+        quickImport: true,
+      });
+      const staged = (await request("imports/" + iid)).data;
+      assert.equal(staged.quickStats.validRows, 2);
+      assert.equal(staged.quickStats.invalidRows, 2);
+      assert.equal(staged.rows[0].proposed.partNumber, "EZ9F56116");
+      assert.equal(staged.rows[1].proposed.description, "QUICK-NO-DESC");
+      await request("imports/" + iid + "/auto-confirm", "POST", {
+        version: 2,
+      });
+      const imported = (await request("imports/" + iid)).data;
+      assert.equal(imported.status, "IMPORTED");
+      assert.equal(imported.quickStats.invalidRows, 2);
+      assert.equal(imported.rows[2].decision, "SKIP");
+      assert.equal(imported.rows[3].decision, "SKIP");
+      assert.equal((await request("products?q=EZ9F56116")).data.items.length, 1);
+      const noDesc = (await request("products?q=QUICK-NO-DESC")).data.items;
+      assert.equal(noDesc.length, 1);
+      assert.equal(noDesc[0].description, "QUICK-NO-DESC");
+      assert.equal((await request("products?q=QUICK-NO-PRICE")).data.items.length, 0);
+    },
+  );
+  await t.test(
+    "Bulk review select-all applies across all import pages",
+    async () => {
+      const iid = randomUUID();
+      await db.query(
+        "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id,mode,summary) VALUES($1,'bulk-review.csv','/none','EXCEL','AWAITING_REVIEW',$2,'CREATE_UPDATE',$3)",
+        [iid, adminId, json({ rows: 120, columns: ["CODE"] })],
+      );
+      for (let i = 0; i < 120; i++)
+        await db.query(
+          "INSERT INTO import_rows(id,job_id,row_number,raw,proposed,errors,decision,verified) VALUES($1,$2,$3,$4,$5,$6,'REVIEW',false)",
+          [
+            randomUUID(),
+            iid,
+            i + 1,
+            json({ CODE: `BULK-${i + 1}` }),
+            json({
+              ...base,
+              partNumber: `BULK-${i + 1}`,
+              description: `Bulk row ${i + 1}`,
+              aliases: [],
+            }),
+            json(i % 3 === 0 ? ["Bad row"] : []),
+          ],
+        );
+      await request("imports/" + iid + "/bulk-review", "POST", {
+        version: 1,
+        action: "SELECT_ALL",
+      });
+      const paged = (await request("imports/" + iid + "?page=2&pageSize=50")).data;
+      assert.equal(paged.page, 2);
+      assert.equal(paged.rows[0].row_number, 101);
+      assert.equal(paged.rows[0].decision, "UPDATE");
+      assert.equal(paged.rows[0].verified, true);
+      assert.equal(paged.rows[2].row_number, 103);
+      assert.equal(paged.rows[2].decision, "SKIP");
+      assert.equal(paged.rows[2].verified, false);
+    },
+  );
+  await t.test(
     "Import detects duplicates within the file atomically",
     async () => {
       const iid = randomUUID();

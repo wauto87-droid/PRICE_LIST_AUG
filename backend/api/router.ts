@@ -522,6 +522,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await imports.reviewRows(db, actor, id, await body(req)),
           );
+        if (action === "bulk-review" && method === "POST")
+          return response(
+            await imports.bulkReview(db, actor, id, await body(req)),
+          );
         if (action === "confirm" && method === "POST") {
           const input = z
             .object({

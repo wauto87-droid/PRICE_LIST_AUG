@@ -168,6 +168,7 @@ export default function Imports({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [linkDiscounts, setLinkDiscounts] = useState(true),
+    [quickImportMode, setQuickImportMode] = useState(false),
     [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false);
 
   const updateDefaultPreset = (field: keyof DiscountPreset, value: string) => {
@@ -310,13 +311,18 @@ export default function Imports({
       ),
     );
   }
+  async function changePage(nextPage: number) {
+    if (!job) return;
+    await loadJobPage(job.id, nextPage, guidedGroupColumn);
+    if (confirmation) await loadConfirmation(job.id, nextPage);
+  }
   async function open(id: string) {
     const emptyDrafts: Record<string, { decision?: string; verified?: boolean }> =
       {};
     const j = await fetchJobPage(id, 0, undefined, emptyDrafts);
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
-    const { guidedImport, ...productDefaults } = savedDefaults;
+    const { guidedImport, quickImport, ...productDefaults } = savedDefaults;
     const columns = j.summary.columns || [];
     setReviewDrafts(emptyDrafts);
     setJob(j);
@@ -359,6 +365,7 @@ export default function Imports({
     }
     setMapping(nextMapping);
     const isSimple = isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns);
+    setQuickImportMode(Boolean(quickImport ?? isSimple));
     setImportProfile(
       isSimple
         ? "SUPPLIER_SIMPLE"
@@ -373,6 +380,7 @@ export default function Imports({
   const saveDefaults = guidedMode
     ? {
         ...defaults,
+        quickImport: quickImportMode,
         guidedImport: {
           mode: "PUBLIC_PRICE_DISCOUNT",
           groupColumn: guidedGroupColumn || undefined,
@@ -385,7 +393,10 @@ export default function Imports({
           ),
         },
       }
-    : defaults;
+    : { ...defaults, quickImport: quickImportMode };
+  const reviewHeading = quickImportMode
+    ? t("2. Quick summary & optional repair", "٢. ملخص سريع وإصلاح اختياري")
+    : t("2. Review every row", "٢. مراجعة كل صف");
   return (
     <>
       <div className="actions wrap">
@@ -413,8 +424,12 @@ export default function Imports({
           <h2>{t("Safe supplier imports", "استيراد آمن من الموردين")}</h2>
           <p className="muted">
             {t(
-              "Upload → map → review → verify → confirm. Nothing publishes automatically.",
-              "رفع ← ربط ← مراجعة ← تحقق ← تأكيد. لا يتم النشر تلقائياً.",
+              quickImportMode
+                ? "Upload → map → summary → import. Valid rows import together, and skipped rows stay available for repair."
+                : "Upload → map → review → verify → confirm. Nothing publishes automatically.",
+              quickImportMode
+                ? "رفع ← ربط ← ملخص ← استيراد. يتم استيراد الصفوف الصالحة معاً وتبقى الصفوف المتخطاة متاحة للإصلاح."
+                : "رفع ← ربط ← مراجعة ← تحقق ← تأكيد. لا يتم النشر تلقائياً.",
             )}
           </p>
         </div>
@@ -582,6 +597,20 @@ export default function Imports({
                           "Simple supplier pricelist",
                           "قائمة مورد بسيطة",
                         )}
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    {t("Admin workflow", "مسار المدير")}
+                    <select
+                      value={quickImportMode ? "QUICK" : "STRICT"}
+                      onChange={(e) => setQuickImportMode(e.target.value === "QUICK")}
+                    >
+                      <option value="QUICK">
+                        {t("Quick summary + import", "ملخص سريع + استيراد")}
+                      </option>
+                      <option value="STRICT">
+                        {t("Strict row review", "مراجعة صارمة للصفوف")}
                       </option>
                     </select>
                   </label>
@@ -849,8 +878,12 @@ export default function Imports({
                           "تم حفظ ربط الاستيراد",
                         ),
                         successDetail: t(
-                          "The file was validated with the new mapping.",
-                          "تم التحقق من الملف باستخدام الربط الجديد.",
+                          quickImportMode
+                            ? "The file was prepared for quick import."
+                            : "The file was validated with the new mapping.",
+                          quickImportMode
+                            ? "تم تجهيز الملف للاستيراد السريع."
+                            : "تم التحقق من الملف باستخدام الربط الجديد.",
                         ),
                         error: t(
                           "Import mapping could not be saved",
@@ -865,6 +898,7 @@ export default function Imports({
                           defaults: saveDefaults,
                           version: job.version,
                           mode,
+                          quickImport: quickImportMode,
                         });
                         await open(job.id);
                         await load();
@@ -872,70 +906,144 @@ export default function Imports({
                     )
                   }
                 >
-                  {t("Apply mapping & validate", "تطبيق الربط والتحقق")}
+                  {quickImportMode
+                    ? t("Prepare quick import", "تجهيز الاستيراد السريع")
+                    : t("Apply mapping & validate", "تطبيق الربط والتحقق")}
                 </button>
-                <h3>{t("2. Review every row", "٢. مراجعة كل صف")}</h3>
+                <h3>{reviewHeading}</h3>
                 <p className="muted">
                   {t(
-                    supplierSimpleMode
-                      ? "Simple supplier imports are set to Create & Update so missing part numbers can be created. Every row still requires review and verification before anything goes live."
-                      : "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
-                    supplierSimpleMode
-                      ? "استيراد المورد البسيط مضبوط على إنشاء وتحديث حتى يمكن إنشاء الأصناف غير الموجودة. ومع ذلك كل صف يحتاج مراجعة وتحقق قبل النشر."
-                      : "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
+                    quickImportMode
+                      ? "Quick mode prepares the full file at once. Valid rows can be imported together, and invalid rows stay listed here for repair after import."
+                      : supplierSimpleMode
+                        ? "Simple supplier imports are set to Create & Update so missing part numbers can be created. Every row still requires review and verification before anything goes live."
+                        : "UPDATE changes matched products. New items require Create & Update mode and individual verification. KEEP/SKIP leaves live data unchanged. Save decisions before previewing prices.",
+                    quickImportMode
+                      ? "الوضع السريع يجهز الملف بالكامل دفعة واحدة. يمكن استيراد الصفوف الصالحة معاً، وتبقى الصفوف غير الصالحة معروضة هنا لإصلاحها بعد الاستيراد."
+                      : supplierSimpleMode
+                        ? "استيراد المورد البسيط مضبوط على إنشاء وتحديث حتى يمكن إنشاء الأصناف غير الموجودة. ومع ذلك كل صف يحتاج مراجعة وتحقق قبل النشر."
+                        : "تحديث يغيّر الأصناف المطابقة. الأصناف الجديدة تتطلب وضع إنشاء وتحديث والتحقق الفردي. إبقاء/تخطي لا يغيّر البيانات. احفظ القرارات قبل معاينة الأسعار.",
                   )}
                 </p>
+                {quickImportMode && job.quickStats && (
+                  <div className="notice">
+                    {t("Total rows", "إجمالي الصفوف")}: {job.totalRows} ·{" "}
+                    {t("Valid rows", "الصفوف الصالحة")}: {job.quickStats.validRows} ·{" "}
+                    {t("Invalid rows", "الصفوف غير الصالحة")}: {job.quickStats.invalidRows} ·{" "}
+                    {t("Selected", "المحددة")}: {job.quickStats.selectedRows} ·{" "}
+                    {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows}
+                  </div>
+                )}
                 <div className="actions wrap">
-                  <button
-                    onClick={() => {
-                      setReviewDrafts((current) => ({
-                        ...current,
-                        ...Object.fromEntries(
-                          job.rows.map((r: any) => [
-                            r.id,
-                            { ...current[r.id], decision: "SKIP" },
-                          ]),
-                        ),
-                      }));
-                      setJob({
-                        ...job,
-                        rows: job.rows.map((r: any) => ({
-                          ...r,
-                          decision: "SKIP",
-                        })),
-                      });
-                    }}
-                  >
-                    {t("Skip visible rows", "تخطي الصفوف الظاهرة")}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setReviewDrafts((current) => ({
-                        ...current,
-                        ...Object.fromEntries(
-                          job.rows.map((r: any) => [
-                            r.id,
+                  {quickImportMode ? (
+                    <>
+                      <button
+                        disabled={busy || actionBusy}
+                        onClick={() =>
+                          onAction(
                             {
-                              ...current[r.id],
-                              decision: r.errors.length ? "SKIP" : "UPDATE",
+                              saving: t("Selecting all rows…", "جارٍ تحديد كل الصفوف…"),
+                              success: t("All rows selected", "تم تحديد كل الصفوف"),
+                              successDetail: t(
+                                "Valid rows were selected across the full file.",
+                                "تم تحديد الصفوف الصالحة عبر الملف بالكامل.",
+                              ),
+                              error: t("Could not select all rows", "تعذر تحديد كل الصفوف"),
                             },
-                          ]),
-                        ),
-                      }));
-                      setJob({
-                        ...job,
-                        rows: job.rows.map((r: any) => ({
-                          ...r,
-                          decision: r.errors.length ? "SKIP" : "UPDATE",
-                        })),
-                      });
-                    }}
-                  >
-                    {t(
-                      "Select valid visible rows",
-                      "تحديد الصفوف الصالحة الظاهرة",
-                    )}
-                  </button>
+                            async () => {
+                              await api("imports/" + job.id + "/bulk-review", "POST", {
+                                version: job.version,
+                                action: "SELECT_ALL",
+                              });
+                              await open(job.id);
+                              await load();
+                            },
+                          )
+                        }
+                      >
+                        {t("Select all rows", "تحديد كل الصفوف")}
+                      </button>
+                      <button
+                        disabled={busy || actionBusy}
+                        onClick={() =>
+                          onAction(
+                            {
+                              saving: t("Skipping invalid rows…", "جارٍ تخطي الصفوف غير الصالحة…"),
+                              success: t("Invalid rows skipped", "تم تخطي الصفوف غير الصالحة"),
+                              successDetail: t(
+                                "Problem rows were skipped across the full file.",
+                                "تم تخطي الصفوف التي بها مشكلات عبر الملف بالكامل.",
+                              ),
+                              error: t("Could not skip invalid rows", "تعذر تخطي الصفوف غير الصالحة"),
+                            },
+                            async () => {
+                              await api("imports/" + job.id + "/bulk-review", "POST", {
+                                version: job.version,
+                                action: "SKIP_INVALID",
+                              });
+                              await open(job.id);
+                              await load();
+                            },
+                          )
+                        }
+                      >
+                        {t("Skip all invalid rows", "تخطي كل الصفوف غير الصالحة")}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          setReviewDrafts((current) => ({
+                            ...current,
+                            ...Object.fromEntries(
+                              job.rows.map((r: any) => [
+                                r.id,
+                                { ...current[r.id], decision: "SKIP" },
+                              ]),
+                            ),
+                          }));
+                          setJob({
+                            ...job,
+                            rows: job.rows.map((r: any) => ({
+                              ...r,
+                              decision: "SKIP",
+                            })),
+                          });
+                        }}
+                      >
+                        {t("Skip visible rows", "تخطي الصفوف الظاهرة")}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setReviewDrafts((current) => ({
+                            ...current,
+                            ...Object.fromEntries(
+                              job.rows.map((r: any) => [
+                                r.id,
+                                {
+                                  ...current[r.id],
+                                  decision: r.errors.length ? "SKIP" : "UPDATE",
+                                },
+                              ]),
+                            ),
+                          }));
+                          setJob({
+                            ...job,
+                            rows: job.rows.map((r: any) => ({
+                              ...r,
+                              decision: r.errors.length ? "SKIP" : "UPDATE",
+                            })),
+                          });
+                        }}
+                      >
+                        {t(
+                          "Select valid visible rows",
+                          "تحديد الصفوف الصالحة الظاهرة",
+                        )}
+                      </button>
+                    </>
+                  )}
                 </div>
                 <BulkRules
                   t={t}
@@ -1107,14 +1215,13 @@ export default function Imports({
                 </tbody>
               </table>
             </div>
-            {job.status === "AWAITING_REVIEW" && (
+            {job.totalPages > 1 && (
               <div className="actions footer-actions">
                 <button
-                  disabled={page === 0 || busy || actionBusy}
+                  disabled={(job.page ?? page) === 0 || busy || actionBusy}
                   onClick={() =>
                     run(async () => {
-                      await loadJobPage(job.id, page - 1, guidedGroupColumn);
-                      if (confirmation) await loadConfirmation(job.id, page - 1);
+                      await changePage((job.page ?? page) - 1);
                     })
                   }
                 >
@@ -1127,13 +1234,16 @@ export default function Imports({
                   disabled={!job.hasMore || busy || actionBusy}
                   onClick={() =>
                     run(async () => {
-                      await loadJobPage(job.id, page + 1, guidedGroupColumn);
-                      if (confirmation) await loadConfirmation(job.id, page + 1);
+                      await changePage((job.page ?? page) + 1);
                     })
                   }
                 >
                   Next
                 </button>
+              </div>
+            )}
+            {job.status === "AWAITING_REVIEW" && (
+              <div className="actions footer-actions">
                 <button
                   disabled={busy || actionBusy}
                   onClick={() =>
@@ -1187,18 +1297,34 @@ export default function Imports({
                   onClick={async () => {
                     if (
                       await showConfirm(
-                        t(
-                          "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
-                          "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
-                        )
+                        quickImportMode
+                          ? t(
+                              "Import all valid rows now and keep invalid rows available for repair afterward?",
+                              "استيراد كل الصفوف الصالحة الآن مع إبقاء الصفوف غير الصالحة متاحة للإصلاح بعد ذلك؟",
+                            )
+                          : t(
+                              "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
+                              "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
+                            )
                       )
                     ) {
                       onAction(
                         {
-                          saving: t("Auto-importing valid rows…", "جارٍ الاستيراد التلقائي للصفوف الصالحة…"),
-                          success: t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
-                          successDetail: t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
-                          error: t("Auto-import failed", "فشل الاستيراد التلقائي"),
+                          saving: quickImportMode
+                            ? t("Importing valid rows…", "جارٍ استيراد الصفوف الصالحة…")
+                            : t("Auto-importing valid rows…", "جارٍ الاستيراد التلقائي للصفوف الصالحة…"),
+                          success: quickImportMode
+                            ? t("Quick import completed", "اكتمل الاستيراد السريع")
+                            : t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
+                          successDetail: quickImportMode
+                            ? t(
+                                "Valid rows were imported and invalid rows stayed available for repair.",
+                                "تم استيراد الصفوف الصالحة وبقيت الصفوف غير الصالحة متاحة للإصلاح.",
+                              )
+                            : t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
+                          error: quickImportMode
+                            ? t("Quick import failed", "فشل الاستيراد السريع")
+                            : t("Auto-import failed", "فشل الاستيراد التلقائي"),
                         },
                         async () => {
                           await api("imports/" + job.id + "/auto-confirm", "POST", {
@@ -1211,7 +1337,9 @@ export default function Imports({
                     }
                   }}
                 >
-                  {t("⚡ Auto-Approve & Import", "⚡ الموافقة التلقائية والاستيراد")}
+                  {quickImportMode
+                    ? t("Quick import valid rows", "استيراد سريع للصفوف الصالحة")
+                    : t("⚡ Auto-Approve & Import", "⚡ الموافقة التلقائية والاستيراد")}
                 </button>
                 <button
                   className="primary"
@@ -1333,47 +1461,57 @@ export default function Imports({
               </div>
             )}
             {job.status === "IMPORTED" && (
-              <button
-                className="danger"
-                disabled={busy || actionBusy}
-                onClick={async () => {
-                  if (
-                    await showConfirm(
-                      t(
-                        "Roll back this import? Later product edits will block rollback.",
-                        "التراجع عن الاستيراد؟ التعديلات اللاحقة ستمنع التراجع.",
-                      ),
+              <>
+                {quickImportMode && job.quickStats?.invalidRows > 0 && (
+                  <div className="notice warning">
+                    {t(
+                      `This import finished with ${job.quickStats.invalidRows} skipped rows. They remain available in these pages for repair.`,
+                      `اكتمل هذا الاستيراد مع ${job.quickStats.invalidRows} صفوف متخطاة. ما زالت متاحة في هذه الصفحات للإصلاح.`,
+                    )}
+                  </div>
+                )}
+                <button
+                  className="danger"
+                  disabled={busy || actionBusy}
+                  onClick={async () => {
+                    if (
+                      await showConfirm(
+                        t(
+                          "Roll back this import? Later product edits will block rollback.",
+                          "التراجع عن الاستيراد؟ التعديلات اللاحقة ستمنع التراجع.",
+                        ),
+                      )
                     )
-                  )
-                    onAction(
-                      {
-                        saving: t(
-                          "Rolling back import…",
-                          "جارٍ التراجع عن الاستيراد…",
-                        ),
-                        success: t(
-                          "Import rolled back",
-                          "تم التراجع عن الاستيراد",
-                        ),
-                        successDetail: t(
-                          "The imported changes were rolled back.",
-                          "تم التراجع عن التغييرات المستوردة.",
-                        ),
-                        error: t(
-                          "Import could not be rolled back",
-                          "تعذر التراجع عن الاستيراد",
-                        ),
-                      },
-                      async () => {
-                        await api("imports/" + job.id + "/rollback", "POST", {});
-                        await open(job.id);
-                        await load();
-                      },
-                    );
-                }}
-              >
-                {t("Roll back import", "التراجع عن الاستيراد")}
-              </button>
+                      onAction(
+                        {
+                          saving: t(
+                            "Rolling back import…",
+                            "جارٍ التراجع عن الاستيراد…",
+                          ),
+                          success: t(
+                            "Import rolled back",
+                            "تم التراجع عن الاستيراد",
+                          ),
+                          successDetail: t(
+                            "The imported changes were rolled back.",
+                            "تم التراجع عن التغييرات المستوردة.",
+                          ),
+                          error: t(
+                            "Import could not be rolled back",
+                            "تعذر التراجع عن الاستيراد",
+                          ),
+                        },
+                        async () => {
+                          await api("imports/" + job.id + "/rollback", "POST", {});
+                          await open(job.id);
+                          await load();
+                        },
+                      );
+                  }}
+                >
+                  {t("Roll back import", "التراجع عن الاستيراد")}
+                </button>
+              </>
             )}
             {error && <div className="notice error">{error}</div>}
           </section>
