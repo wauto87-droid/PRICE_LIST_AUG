@@ -1116,7 +1116,7 @@ www.softwaresolver.online {
                 d.deploy(True)
             self.assertEqual(d.stop_runtime.call_args_list, [unittest.mock.call('pm2'), unittest.mock.call('pm2')])
             d.snapshot.assert_called_once()
-            self.assertEqual(d.compose.call_args_list[0], unittest.mock.call('rm', '-s', '-f', 'db'))
+            self.assertEqual(d.compose.call_args_list[0], unittest.mock.call('up', '-d', '--no-deps', '--no-build', 'db'))
             self.assertEqual(json.loads((d.state / 'install.json').read_text())['commit'], 'b' * 40)
 
     def test_recover_install_reuses_same_commit_candidate(self):

@@ -1142,10 +1142,9 @@ class Deployment:
                 atomic(self.state / ('install-replaced-' + secrets.token_hex(6) + '.json'), journal.read_bytes())
                 # The guard proved this is the sole pre-migration DB container. Recreate it
                 # from the replacement release so it receives the private socket mount.
-                if self.release is not None:
+                if self.release is not None and not replacing_active_release:
                     self.compose('rm', '-s', '-f', 'db')
-                    if not replacing_active_release:
-                        self.release = None
+                    self.release = None
                 atomic(self.envfile, env_text(self.env))
                 recovery = {'commit': requested_commit, 'candidate': None}
                 atomic(journal, json.dumps(recovery))
