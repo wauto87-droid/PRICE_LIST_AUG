@@ -787,7 +787,7 @@ www.softwaresolver.online {
         d = self.deployment()
         d.env = m.new_env(18180, runtime='pm2')
         d.release = ROOT
-        d.host_port_ready = Mock(return_value=True)
+        d.db_socket_host_path = Mock(return_value='/podman/volumes/database_socket')
         with patch.object(m, 'run', return_value=result()) as run:
             d.verify_database_runtime()
         self.assertEqual(run.call_args.kwargs['cwd'], ROOT)
@@ -796,12 +796,12 @@ www.softwaresolver.online {
         self.assertIn('connectionTimeoutMillis:5000', script)
         self.assertIn('query_timeout:5000', script)
         self.assertIn('statement_timeout:5000', script)
+        self.assertEqual(run.call_args.kwargs['env']['DB_HOST'], '/podman/volumes/database_socket')
 
-    def test_native_runtime_env_prefers_database_socket_when_loopback_port_is_unreachable(self):
+    def test_native_runtime_env_prefers_database_socket_when_available(self):
         d = self.deployment()
         d.env = m.new_env(18180, runtime='pm2')
         d.release = ROOT
-        d.host_port_ready = Mock(return_value=False)
         d.db_socket_host_path = Mock(return_value='/podman/volumes/database_socket')
         d.db_private_ipv4 = Mock()
         env = d.native_runtime_env()
@@ -826,12 +826,12 @@ www.softwaresolver.online {
         d.env = m.new_env(18180, runtime='pm2')
         d.release = ROOT
         d.host_port_ready = Mock(return_value=True)
-        d.db_socket_host_path = Mock()
+        d.db_socket_host_path = Mock(return_value=None)
         d.db_private_ipv4 = Mock()
         env = d.native_runtime_env()
         self.assertEqual(env['DB_HOST'], '127.0.0.1')
         self.assertIn('@127.0.0.1:15432/', env['DATABASE_URL'])
-        d.db_socket_host_path.assert_not_called()
+        d.db_socket_host_path.assert_called_once()
         d.db_private_ipv4.assert_not_called()
 
     def replacement_guard_fixture(self, temp):

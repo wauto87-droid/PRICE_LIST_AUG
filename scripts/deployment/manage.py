@@ -504,13 +504,13 @@ class Deployment:
     def native_runtime_env(self, extra=None, release=None):
         require(self.env is not None, 'Environment not loaded')
         values = dict(self.env)
-        host = values.get('DB_HOST', '127.0.0.1')
-        port = int(values.get('DB_PORT', DEFAULT_DB_PORT))
-        if host in ('127.0.0.1', 'localhost') and not self.host_port_ready(host, port):
-            socket_dir = self.db_socket_host_path()
-            if socket_dir is not None:
-                values['DB_HOST'] = socket_dir
-            else:
+        socket_dir = self.db_socket_host_path()
+        if socket_dir is not None:
+            values['DB_HOST'] = socket_dir
+        else:
+            host = values.get('DB_HOST', '127.0.0.1')
+            port = int(values.get('DB_PORT', DEFAULT_DB_PORT))
+            if host in ('127.0.0.1', 'localhost') and not self.host_port_ready(host, port):
                 values['DB_HOST'] = self.db_private_ipv4()
                 values['DB_PORT'] = '5432'
         return self.native_env(
