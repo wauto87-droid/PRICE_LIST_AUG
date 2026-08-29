@@ -1254,10 +1254,9 @@ class Deployment:
         }
         require(running_services <= {'db'}, 'Application or ambiguous AMT containers already exist; replacement refused')
         if f'{PROJECT}_database' in volumes or 'db' in services:
-            require('db' in services, 'Database storage exists without exactly one recognized database container')
-            require(len(db_owned) == 1, 'Database storage exists without exactly one recognized database container')
             if self.release is None:
                 self.release = self.recovery_release(recovery)
+            require(len(db_owned) <= 1, 'Database storage exists without exactly one recognized database container')
             if 'db' not in running_services:
                 self.compose('up', '-d', '--no-deps', '--no-build', 'db')
                 self.verify_limits('db')

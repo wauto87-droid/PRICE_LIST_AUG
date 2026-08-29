@@ -951,6 +951,21 @@ www.softwaresolver.online {
             d.wait_db.assert_called_once()
             self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
 
+    def test_replacement_guard_recreates_database_from_volume_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = self.replacement_guard_fixture(temp)
+            d.engine = Mock(return_value=result('amt-pricelist_database'))
+            d.inventory = Mock(return_value=[])
+            d.compose = Mock(return_value=result())
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
+            d.database = Mock(return_value=result('0'))
+            d.check_replace_failed()
+            d.compose.assert_called_once_with('up', '-d', '--no-deps', '--no-build', 'db')
+            d.verify_limits.assert_called_once_with('db')
+            d.wait_db.assert_called_once()
+            self.assertEqual(d.release.name, 'aaaaaaaaaaaa-12345678')
+
     def test_replacement_guard_allows_empty_initialized_database(self):
         with tempfile.TemporaryDirectory() as temp:
             d = self.replacement_guard_fixture(temp)
