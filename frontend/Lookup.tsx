@@ -2,10 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
-import {
-  buildLookupLineRequest,
-  previewLookupPrice,
-} from "./lookup-pricing";
+import { buildLookupLineRequest, previewLookupPrice } from "./lookup-pricing";
 import { levelLabel, visibleLevels } from "./levels";
 import { wheelSafeNumberInputProps } from "./number-input";
 import {
@@ -60,7 +57,9 @@ export default function Lookup({
     [requestFeedback, setRequestFeedback] = useState("");
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
-    comboboxId = useRef(`lookup-combobox-${Math.random().toString(36).slice(2)}`),
+    comboboxId = useRef(
+      `lookup-combobox-${Math.random().toString(36).slice(2)}`,
+    ),
     pricingGeneration = useRef(0),
     searchGeneration = useRef(0);
   useEffect(() => {
@@ -150,7 +149,8 @@ export default function Lookup({
         if (current === searchGeneration.current) {
           setResults(rows);
           setSuggestionsOpen(
-            rows.length > 0 && !isSelectedLookupQuery(trimmedQuery, selected?.partNumber),
+            rows.length > 0 &&
+              !isSelectedLookupQuery(trimmedQuery, selected?.partNumber),
           );
         }
       } catch (e) {
@@ -161,7 +161,13 @@ export default function Lookup({
       }
     }, 90);
     return () => clearTimeout(timer);
-  }, [query, online, selected?.partNumber, settings.allowOfflineCache, user.id]);
+  }, [
+    query,
+    online,
+    selected?.partNumber,
+    settings.allowOfflineCache,
+    user.id,
+  ]);
   useEffect(() => {
     if (!selected) return;
     setError("");
@@ -240,7 +246,12 @@ export default function Lookup({
     if (!online && !settings.allowOfflineCache) return;
     let input;
     try {
-      input = buildLookupLineRequest(selected.id, sellingLevel as any, quantity, discount);
+      input = buildLookupLineRequest(
+        selected.id,
+        sellingLevel as any,
+        quantity,
+        discount,
+      );
     } catch (e) {
       setError((e as Error).message);
       return;
@@ -317,7 +328,12 @@ export default function Lookup({
     if (!selected) return;
     let input;
     try {
-      input = buildLookupLineRequest(selected.id, sellingLevel as any, quantity, discount);
+      input = buildLookupLineRequest(
+        selected.id,
+        sellingLevel as any,
+        quantity,
+        discount,
+      );
     } catch (e) {
       setError((e as Error).message);
       return;
@@ -414,9 +430,9 @@ export default function Lookup({
     ? new Decimal(selectedPrice.masterExcl)
         .mul(
           new Decimal(1).sub(
-            new Decimal(/^\d+(\.\d*)?$/.test(discount) ? discount || "0" : "0").div(
-              100,
-            ),
+            new Decimal(
+              /^\d+(\.\d*)?$/.test(discount) ? discount || "0" : "0",
+            ).div(100),
           ),
         )
         .toFixed(2)
@@ -428,7 +444,9 @@ export default function Lookup({
           <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
           <div className="lookup-title-row">
             <div>
-              <h2>{t("Find the right part fast", "اعثر على الصنف الصحيح بسرعة")}</h2>
+              <h2>
+                {t("Find the right part fast", "اعثر على الصنف الصحيح بسرعة")}
+              </h2>
               <p>
                 {t(
                   "Search by part number, old reference, description, brand, or category.",
@@ -455,11 +473,16 @@ export default function Lookup({
                 autoFocus
                 role="combobox"
                 aria-autocomplete="list"
-                aria-expanded={suggestionsOpen && filteredSuggestions.length > 0}
+                aria-expanded={
+                  suggestionsOpen && filteredSuggestions.length > 0
+                }
                 aria-controls={comboboxId.current}
                 aria-activedescendant={
                   suggestionsOpen && resolvedHighlightedIndex >= 0
-                    ? suggestionOptionId(comboboxId.current, resolvedHighlightedIndex)
+                    ? suggestionOptionId(
+                        comboboxId.current,
+                        resolvedHighlightedIndex,
+                      )
                     : undefined
                 }
                 aria-label={t(
@@ -478,7 +501,10 @@ export default function Lookup({
                   ) {
                     setSuggestionsOpen(true);
                     setHighlightedIndex((current) =>
-                      activeSuggestionIndex(current, filteredSuggestions.length),
+                      activeSuggestionIndex(
+                        current,
+                        filteredSuggestions.length,
+                      ),
                     );
                   }
                 }}
@@ -503,7 +529,10 @@ export default function Lookup({
                     setSuggestionsOpen(filteredSuggestions.length > 0);
                     setHighlightedIndex((current) =>
                       moveHighlightedIndex(
-                        activeSuggestionIndex(current, filteredSuggestions.length),
+                        activeSuggestionIndex(
+                          current,
+                          filteredSuggestions.length,
+                        ),
                         "next",
                         filteredSuggestions.length,
                       ),
@@ -515,7 +544,10 @@ export default function Lookup({
                     setSuggestionsOpen(filteredSuggestions.length > 0);
                     setHighlightedIndex((current) =>
                       moveHighlightedIndex(
-                        activeSuggestionIndex(current, filteredSuggestions.length),
+                        activeSuggestionIndex(
+                          current,
+                          filteredSuggestions.length,
+                        ),
                         "previous",
                         filteredSuggestions.length,
                       ),
@@ -570,7 +602,10 @@ export default function Lookup({
                 id={comboboxId.current}
                 className="lookup-suggestions"
                 role="listbox"
-                aria-label={t("Suggested matching products", "اقتراحات الأصناف المطابقة")}
+                aria-label={t(
+                  "Suggested matching products",
+                  "اقتراحات الأصناف المطابقة",
+                )}
               >
                 {filteredSuggestions.map((p, index) => (
                   <button
@@ -601,7 +636,8 @@ export default function Lookup({
                       {(() => {
                         const level =
                           visibleLevels(p).find(
-                            (l) => l.code === (p.defaultLevel ?? "END_CUSTOMER"),
+                            (l) =>
+                              l.code === (p.defaultLevel ?? "END_CUSTOMER"),
                           ) || visibleLevels(p)[0];
                         return level ? (
                           <>
@@ -635,9 +671,7 @@ export default function Lookup({
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
               >
-                <option value="">
-                  {t("All categories", "كل الفئات")}
-                </option>
+                <option value="">{t("All categories", "كل الفئات")}</option>
                 {resultCategories.map((category) => (
                   <option key={category} value={category}>
                     {category}
@@ -657,7 +691,9 @@ export default function Lookup({
           <div className="search-results lookup-results-panel">
             <div className="lookup-results-header">
               <div>
-                <div className="eyebrow">{t("MATCHING PARTS", "الأصناف المطابقة")}</div>
+                <div className="eyebrow">
+                  {t("MATCHING PARTS", "الأصناف المطابقة")}
+                </div>
                 <h3>
                   {selected
                     ? t("Related matches", "نتائج ذات صلة")
@@ -667,14 +703,13 @@ export default function Lookup({
             </div>
             <div className="result-head tier-result-head">
               <span>{t("Part / description", "الصنف / الوصف")}</span>
-              <span>
-                {t("Main selling price", "سعر البيع الرئيسي")}
-              </span>
+              <span>{t("Main selling price", "سعر البيع الرئيسي")}</span>
             </div>
             {visibleResults.map((p) => (
               <button
                 className={
-                  "result tier-result" + (selected?.id === p.id ? " selected-result" : "")
+                  "result tier-result" +
+                  (selected?.id === p.id ? " selected-result" : "")
                 }
                 key={p.id}
                 onClick={() => choose(p)}
@@ -845,12 +880,18 @@ export default function Lookup({
                       "تقدير دون اتصال — غير معتمد",
                     )}
               </div>
-              {displayPrice?.maxDiscount !== undefined && (
+              {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
                 <p className="muted">
-                  {t("Salesman limit", "حد المندوب")}:{" "}
-                  {displayPrice.maxDiscount}%
+                  No minimum-price restriction; discount up to 100%
                 </p>
               )}
+              {displayPrice?.maxDiscount !== undefined &&
+                displayPrice.discountLimitSource !== "ZERO_FLOOR" && (
+                  <p className="muted">
+                    {t("Salesman limit", "حد المندوب")}:{" "}
+                    {displayPrice.maxDiscount}%
+                  </p>
+                )}
               {displayPrice ? (
                 <>
                   <div className="price-pair counter-prices">
@@ -901,7 +942,8 @@ export default function Lookup({
                       <b>SAR {displayPrice.subtotal}</b>
                     </span>
                     <span>
-                      VAT {displayPrice.vatRate}% <b>{displayPrice.vatAmount}</b>
+                      VAT {displayPrice.vatRate}%{" "}
+                      <b>{displayPrice.vatAmount}</b>
                     </span>
                     <span>
                       {t("TOTAL INCL. VAT", "الإجمالي شامل الضريبة")}{" "}
@@ -923,7 +965,7 @@ export default function Lookup({
                     : t(
                         `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
                         `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
-                  )}
+                      )}
                 </p>
               )}
             </div>
@@ -959,7 +1001,12 @@ export default function Lookup({
           <div className="eyebrow">
             {t("BUILT FOR YOUR COUNTER", "مصمم لخدمة العملاء")}
           </div>
-          <h2>{t("Stay in one flow from search to draft.", "ابق في مسار واحد من البحث إلى المسودة.")}</h2>
+          <h2>
+            {t(
+              "Stay in one flow from search to draft.",
+              "ابق في مسار واحد من البحث إلى المسودة.",
+            )}
+          </h2>
           <p>
             {t(
               "Pick a product on the left, then review customer details and quotation lines on the right without losing your place.",
@@ -973,7 +1020,9 @@ export default function Lookup({
                 "ابحث برقم الصنف أو الرمز القديم أو الوصف",
               )}
             </li>
-            <li>{t("Choose the right selling level", "اختر مستوى البيع المناسب")}</li>
+            <li>
+              {t("Choose the right selling level", "اختر مستوى البيع المناسب")}
+            </li>
             <li>{t("Save the draft with confidence", "احفظ المسودة بثقة")}</li>
           </ol>
           <div className="aside-note">

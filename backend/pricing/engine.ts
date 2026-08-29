@@ -162,7 +162,11 @@ export function calculate(
   const requested = new Decimal(input.discount);
   if (requested.lt(0) || requested.gt(100))
     throw new Error("Discount must be between 0 and 100");
-  const allowed = Decimal.min(requested, policy.maxDiscount);
+  const unrestricted = !p.minimumEnabled || new Decimal(p.minimum).isZero();
+  const effectiveLimit = unrestricted
+    ? new Decimal(100)
+    : new Decimal(policy.maxDiscount);
+  const allowed = Decimal.min(requested, effectiveLimit);
   const level = selectedLevel(p, input.sellingLevel);
   const master = levelPrice(p, level);
   let final = new Decimal(
@@ -200,11 +204,16 @@ export function calculate(
     quantity: qty.toString(),
     minimumReached: below && !overridden,
     discountLimited: allowed.lt(requested),
+    discountLimitSource: unrestricted
+      ? ("ZERO_FLOOR" as const)
+      : ("ROLE_LIMIT" as const),
     overridden,
     maxDiscount: master.isZero()
-      ? "0"
+      ? unrestricted
+        ? "100"
+        : "0"
       : Decimal.min(
-          policy.maxDiscount,
+          effectiveLimit,
           p.minimumEnabled && !policy.canOverride
             ? master.sub(p.minimum).div(master).mul(100)
             : 100,

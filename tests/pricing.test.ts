@@ -8,6 +8,7 @@ import {
   validateProduct,
   totals,
 } from "../backend/pricing/engine";
+import { normalizeImportedDecimal } from "../backend/pricing/normalize";
 const product = productInput.parse({
   partNumber: "LC1D09M7",
   description: "Contactor",
@@ -175,4 +176,41 @@ test("Half-cent master rounding is deterministic", () => {
     masterPrice({ ...product, cost: "1.005", markup: "0" }).toFixed(2),
     "1.01",
   );
+});
+test("Spreadsheet floating-point noise is normalized without hiding real precision", () => {
+  assert.equal(
+    normalizeImportedDecimal("listPrice", "95.19999999999999").value,
+    "95.2",
+  );
+  assert.equal(
+    normalizeImportedDecimal("listPrice", "63.300000000000004").value,
+    "63.3",
+  );
+  assert.equal(
+    normalizeImportedDecimal("minimum", "80.89999999999999").value,
+    "80.90",
+  );
+  assert.equal(
+    normalizeImportedDecimal("listPrice", "1.1234567").value,
+    "1.1234567",
+  );
+  assert.equal(normalizeImportedDecimal("listPrice", "1,200").value, "1,200");
+});
+test("Zero or disabled minimum allows discounts through 100 percent", () => {
+  for (const p of [
+    { ...product, minimumEnabled: false, minimum: "0" },
+    { ...product, minimumEnabled: true, minimum: "0" },
+  ]) {
+    const result = calculate(
+      p,
+      { maxDiscount: "5", canOverride: false },
+      {
+        ...input,
+        discount: "100",
+      },
+    );
+    assert.equal(result.allowedDiscount, "100");
+    assert.equal(result.finalExcl, "0.00");
+    assert.equal(result.discountLimitSource, "ZERO_FLOOR");
+  }
 });

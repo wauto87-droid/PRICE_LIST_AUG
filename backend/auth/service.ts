@@ -169,7 +169,7 @@ export async function login(db: DB, input: unknown) {
   const token = randomBytes(32).toString("hex");
   const csrf = randomBytes(32).toString("hex");
   await db.query(
-    "INSERT INTO sessions VALUES($1,$2,$3,now()+interval '12 hours')",
+    "INSERT INTO sessions VALUES($1,$2,$3,now()+interval '400 days')",
     [digest(token), user!.id, csrf],
   );
   await audit(db, user!.id, "LOGIN", "users", user!.id);
@@ -189,6 +189,10 @@ export async function authenticate(db: DB, request: Request): Promise<Actor> {
     [digest(token)],
   );
   assert(row, 401, "Session expired. Please sign in");
+  await db.query(
+    "UPDATE sessions SET expires_at=now()+interval '400 days' WHERE token_hash=$1",
+    [digest(token)],
+  );
   return {
     id: row.id,
     username: row.username,
@@ -225,4 +229,12 @@ export async function logout(db: DB, request: Request) {
     await db.query("DELETE FROM sessions WHERE token_hash=$1", [digest(token)]);
 }
 export const sessionCookie = (token: string) =>
-  `amt_session=${token}; HttpOnly; SameSite=Strict; Path=/amt_price_list/; Max-Age=${token ? 43200 : 0}${process.env.COOKIE_SECURE === "true" ? "; Secure" : ""}`;
+  `amt_session=${token}; HttpOnly; SameSite=Strict; Path=/amt_price_list/; Max-Age=${token ? 34560000 : 0}${process.env.COOKIE_SECURE === "true" ? "; Secure" : ""}`;
+
+export const requestSessionToken = (request: Request) =>
+  request.headers
+    .get("cookie")
+    ?.split(";")
+    .map((s) => s.trim())
+    .find((s) => s.startsWith("amt_session="))
+    ?.slice(12) ?? "";

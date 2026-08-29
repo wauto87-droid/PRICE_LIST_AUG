@@ -170,18 +170,22 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(await bulkRules.apply(db, actor, uuid(id)));
     }
     if (root === "auth" && id === "me")
-      return response({
-        release,
-        user: actor,
-        settings: {
-          companyName: settings.companyName,
-          currency: settings.currency,
-          vat: settings.vat,
-          minimumVisible: settings.minimumVisible,
-          showMaxDiscount: settings.showMaxDiscount,
-          allowOfflineCache: settings.allowOfflineCache,
+      return response(
+        {
+          release,
+          user: actor,
+          settings: {
+            companyName: settings.companyName,
+            currency: settings.currency,
+            vat: settings.vat,
+            minimumVisible: settings.minimumVisible,
+            showMaxDiscount: settings.showMaxDiscount,
+            allowOfflineCache: settings.allowOfflineCache,
+          },
         },
-      });
+        200,
+        { "Set-Cookie": auth.sessionCookie(auth.requestSessionToken(req)) },
+      );
     if (root === "auth" && id === "logout" && method === "POST") {
       await auth.logout(db, req);
       return response({ ok: true }, 200, {
@@ -220,14 +224,26 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if (!id && method === "GET")
         return response(await discountRequests.listRequests(db, actor));
       if (id && method === "GET")
-        return response(await discountRequests.getRequestDetail(db, actor, uuid(id)));
+        return response(
+          await discountRequests.getRequestDetail(db, actor, uuid(id)),
+        );
       if (id && action === "approve" && method === "POST")
         return response(
-          await discountRequests.approveRequest(db, actor, uuid(id), await body(req)),
+          await discountRequests.approveRequest(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
         );
       if (id && action === "reject" && method === "POST")
         return response(
-          await discountRequests.rejectRequest(db, actor, uuid(id), await body(req)),
+          await discountRequests.rejectRequest(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
         );
     }
     if (root === "products") {
@@ -528,10 +544,21 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               db,
               actor,
               id,
-              z.coerce.number().int().min(0).parse(url.searchParams.get("page") ?? 0),
-              z.coerce.number().int().min(1).max(200).parse(url.searchParams.get("pageSize") ?? 50),
+              z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
               url.searchParams.get("groupColumn"),
-              z.enum(["all", "repair"]).parse(url.searchParams.get("rowView") ?? "all"),
+              z
+                .enum(["all", "repair"])
+                .parse(url.searchParams.get("rowView") ?? "all"),
             ),
           );
         if (action === "mapping" && method === "POST")
@@ -585,8 +612,17 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               actor,
               id,
               String(Date.now()),
-              z.coerce.number().int().min(0).parse(url.searchParams.get("page") ?? 0),
-              z.coerce.number().int().min(1).max(200).parse(url.searchParams.get("pageSize") ?? 50),
+              z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
             ),
           );
         if (action === "rollback" && method === "POST")

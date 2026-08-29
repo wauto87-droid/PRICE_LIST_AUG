@@ -19,6 +19,43 @@ import { saveProduct, getProduct, toInput } from "../products/service";
 import { importCandidate } from "../pricing/transfer";
 import { levelDifferences } from "../bulk/service";
 import { lockActor } from "../auth/service";
+import { normalizeImportedDecimal } from "../pricing/normalize";
+
+const importFieldLabel = (path: PropertyKey[]) => {
+  const field = String(path.at(-1) ?? "value");
+  return (
+    (
+      {
+        listPrice: "Public/list price",
+        fixedPrice: "Fixed selling price",
+        sellingPrice: "Selling price",
+        minimum: "Minimum price",
+        baseDiscount: "Discount",
+        vat: "VAT",
+        cost: "Cost",
+        markup: "Markup",
+      } as Record<string, string>
+    )[field] ?? field
+  );
+};
+
+function importValidationMessage(
+  error: z.ZodError,
+  proposed: Record<string, any>,
+) {
+  return error.issues
+    .map((issue) => {
+      const field = String(issue.path.at(-1) ?? "");
+      const value = proposed[issue.path.join(".")] ?? proposed[field];
+      const label = importFieldLabel(issue.path);
+      if (typeof value === "string" && value.startsWith("-"))
+        return `${label} ${value} is negative; enter zero or a positive amount`;
+      if (["baseDiscount", "vat"].includes(field) && Number(value) > 100)
+        return `${label} ${value} exceeds the allowed range of 0–100`;
+      return `${label}: ${issue.message}${value === undefined ? "" : ` (received ${value})`}`;
+    })
+    .join("; ");
+}
 
 const guidedDiscountPresetSchema = z
   .object({
@@ -64,10 +101,12 @@ const normalizeImportColumn = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const inferGroupColumn = (columns: string[]) =>
-  columns.find((column) => normalizeImportColumn(column) === "activity") ?? null;
+  columns.find((column) => normalizeImportColumn(column) === "activity") ??
+  null;
 
-const quickImportEnabled = (defaults: Record<string, unknown> | null | undefined) =>
-  defaults?.quickImport === true;
+const quickImportEnabled = (
+  defaults: Record<string, unknown> | null | undefined,
+) => defaults?.quickImport === true;
 
 const nonEmptyCell = (value: unknown) =>
   value !== undefined && value !== null && String(value).trim() !== "";
@@ -81,7 +120,8 @@ function extractMappedValues(
 ) {
   const proposed: Record<string, any> = {};
   for (const [field, column] of Object.entries(mapping))
-    if (nonEmptyCell(raw[column])) proposed[field] = String(raw[column]).trim();
+    if (nonEmptyCell(raw[column]))
+      proposed[field] = normalizeImportedDecimal(field, raw[column]).value;
   if (typeof proposed.minimumEnabled === "string")
     proposed.minimumEnabled = ["true", "1", "yes", "on"].includes(
       proposed.minimumEnabled.toLowerCase(),
@@ -125,7 +165,9 @@ async function stageImportRow(
         [normalizePart(proposed.partNumber)],
       )
     : null;
-  const current = duplicate ? toInput(await getProduct(tx, duplicate.id)) : undefined;
+  const current = duplicate
+    ? toInput(await getProduct(tx, duplicate.id))
+    : undefined;
   try {
     if (guidedImport)
       proposed = {
@@ -149,11 +191,7 @@ async function stageImportRow(
       if (partNumber && !trimMappedValue(proposed.description))
         proposed.description = current?.description || partNumber;
     }
-    proposed = importCandidate(
-      proposed,
-      productDefaults,
-      current,
-    );
+    proposed = importCandidate(proposed, productDefaults, current);
     const parsed = validateProduct(productInput.parse(proposed));
     if (!quickImport && !duplicate && mode === "UPDATE_ONLY")
       errors.push(
@@ -168,7 +206,7 @@ async function stageImportRow(
   } catch (e) {
     errors.push(
       e instanceof z.ZodError
-        ? e.issues.map((i) => i.path.join(".") + ": " + i.message).join(";")
+        ? importValidationMessage(e, proposed)
         : (e as Error).message,
     );
     return {
@@ -222,11 +260,17 @@ function applyGuidedDiscountDefaults(
     (groupValue && guidedImport.groupPresets[groupValue]) ||
     guidedImport.defaultPreset;
 
-  const finalPrice = listPrice.mul(new Decimal(1).sub(new Decimal(preset.finalDiscount).div(100)));
-  const wholesalePrice = listPrice.mul(new Decimal(1).sub(new Decimal(preset.wholesaleDiscount).div(100)));
+  const finalPrice = listPrice.mul(
+    new Decimal(1).sub(new Decimal(preset.finalDiscount).div(100)),
+  );
+  const wholesalePrice = listPrice.mul(
+    new Decimal(1).sub(new Decimal(preset.wholesaleDiscount).div(100)),
+  );
   const maxAllowedMinimum = Decimal.min(finalPrice, wholesalePrice);
 
-  let minimumDecimal = listPrice.mul(new Decimal(1).sub(new Decimal(preset.minimumDiscount).div(100)));
+  let minimumDecimal = listPrice.mul(
+    new Decimal(1).sub(new Decimal(preset.minimumDiscount).div(100)),
+  );
   if (minimumDecimal.gt(maxAllowedMinimum)) {
     minimumDecimal = maxAllowedMinimum;
   }
@@ -351,11 +395,8 @@ export async function getImportPage(
   );
   const totalRows = totals?.total_rows ?? 0;
   const filteredRows =
-    rowView === "repair" ? totals?.problem_rows ?? 0 : totalRows;
-  const safePageSize = Math.min(
-    Math.max(pageSize, 1),
-    IMPORT_PAGE_SIZE_MAX,
-  );
+    rowView === "repair" ? (totals?.problem_rows ?? 0) : totalRows;
+  const safePageSize = Math.min(Math.max(pageSize, 1), IMPORT_PAGE_SIZE_MAX);
   const totalPages = Math.max(1, Math.ceil(filteredRows / safePageSize));
   const safePage = Math.min(Math.max(page, 0), totalPages - 1);
   const offset = safePage * safePageSize;
@@ -375,13 +416,18 @@ export async function getImportPage(
   for (const row of rows)
     if (row.duplicate_id)
       row.current = toInput(await getProduct(db, row.duplicate_id));
-  const columns = Array.isArray(job.summary?.columns) ? job.summary.columns : [];
+  const columns = Array.isArray(job.summary?.columns)
+    ? job.summary.columns
+    : [];
   const storedGroupColumn =
     typeof job.defaults?.guidedImport?.groupColumn === "string"
       ? job.defaults.guidedImport.groupColumn.trim()
       : "";
   const resolvedGroupColumn =
-    (groupColumn ?? "").trim() || storedGroupColumn || inferGroupColumn(columns) || "";
+    (groupColumn ?? "").trim() ||
+    storedGroupColumn ||
+    inferGroupColumn(columns) ||
+    "";
   let groupValues: string[] = [];
   if (resolvedGroupColumn) {
     groupValues = (
@@ -503,8 +549,16 @@ export async function mapRows(
         : [];
     }),
   );
-  assert(Object.keys(mapping).length > 0, 400, "Map at least one column before validating");
-  assert(mapping.partNumber, 400, "Map the part number column before validating the import");
+  assert(
+    Object.keys(mapping).length > 0,
+    400,
+    "Map at least one column before validating",
+  );
+  assert(
+    mapping.partNumber,
+    400,
+    "Map the part number column before validating the import",
+  );
   const data = {
     ...parsed,
     mapping,
@@ -556,12 +610,7 @@ export async function mapRows(
     }
     await tx.query(
       "UPDATE import_jobs SET mapping=$2,defaults=$3,mode=$4,version=version+1,updated_at=now() WHERE id=$1",
-      [
-        id,
-        json(data.mapping),
-        json({ ...data.defaults, quickImport }),
-        mode,
-      ],
+      [id, json(data.mapping), json({ ...data.defaults, quickImport }), mode],
     );
     return { ok: true };
   });
@@ -827,7 +876,8 @@ export async function autoVerifyAndConfirmImport(
       409,
       "Import changed or is not awaiting review",
     );
-    if (job.mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
+    if (job.mode === "CREATE_UPDATE")
+      requirePermission(actor, "PRODUCT_CREATE");
     const quickImport = quickImportEnabled(job.defaults);
 
     await tx.query(

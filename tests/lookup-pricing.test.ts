@@ -52,13 +52,17 @@ test("Local lookup preview matches fixed-price discount math immediately", () =>
 });
 
 test("Lookup preview respects the current max allowed discount", () => {
-  const preview = previewLookupPrice(product, user, {
-    sellingLevel: "END_CUSTOMER",
-    quantity: "1",
-    discount: "20",
-    override: false,
-    reason: "",
-  });
+  const preview = previewLookupPrice(
+    { ...product, minimumEnabled: true, minimum: "90.00" },
+    user,
+    {
+      sellingLevel: "END_CUSTOMER",
+      quantity: "1",
+      discount: "20",
+      override: false,
+      reason: "",
+    },
+  );
   assert.equal(preview.allowedDiscount, "10");
   assert.equal(preview.finalExcl, "90.00");
   assert.equal(preview.discountLimited, true);

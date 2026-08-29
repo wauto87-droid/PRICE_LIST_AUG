@@ -63,7 +63,8 @@ export async function snapshot(
       internalPricing: {
         minimumEnabled: p.minimumEnabled,
         minimum: p.minimum,
-        discountLimit: actor.maxDiscount,
+        discountLimit: calculation.maxDiscount,
+        discountLimitSource: calculation.discountLimitSource,
       },
       timestamp: new Date().toISOString(),
     });
