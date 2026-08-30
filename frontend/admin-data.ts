@@ -43,7 +43,11 @@ export function validateAdminData(section: string, value: any) {
             Number.isInteger(value.totalRows) &&
             Number.isInteger(value.totalPages) &&
             typeof value.hasMore === "boolean" &&
-            typeof value.protectedOnly === "boolean" &&
+            ["ALL", "PROTECTED", "UNPROTECTED"].includes(value.minimumFilter) &&
+            ["ALL", "ACTIVE", "ARCHIVED"].includes(value.statusFilter) &&
+            ["ALL", "COST_MARKUP", "LIST_DISCOUNT", "FIXED"].includes(
+              value.methodFilter,
+            ) &&
             Number.isInteger(value.selectionOffset) &&
             typeof value.selectionHasMore === "boolean" &&
             typeof value.selectionLimitReached === "boolean"

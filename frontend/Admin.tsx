@@ -27,6 +27,9 @@ import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
 import { showConfirm } from "./confirm";
+type ProductMinimumFilter = "ALL" | "PROTECTED" | "UNPROTECTED";
+type ProductStatusFilter = "ALL" | "ACTIVE" | "ARCHIVED";
+type ProductMethodFilter = "ALL" | "COST_MARKUP" | "LIST_DISCOUNT" | "FIXED";
 const sections = [
   ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
   [
@@ -119,7 +122,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
     [productSelectionOffset, setProductSelectionOffset] = useState(0),
-    [productProtectedOnly, setProductProtectedOnly] = useState(false),
+    [productMinimumFilter, setProductMinimumFilter] =
+      useState<ProductMinimumFilter>("ALL"),
+    [productStatusFilter, setProductStatusFilter] =
+      useState<ProductStatusFilter>("ALL"),
+    [productMethodFilter, setProductMethodFilter] =
+      useState<ProductMethodFilter>("ALL"),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [actionState, setActionState] = useState<AdminActionState>({
@@ -163,7 +171,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     page?: number;
     query?: string;
     selectionOffset?: number;
-    protectedOnly?: boolean;
+    minimumFilter?: ProductMinimumFilter;
+    statusFilter?: ProductStatusFilter;
+    methodFilter?: ProductMethodFilter;
     minimumProtectedPage?: number;
     minimumProtectedSelectionOffset?: number;
   }) {
@@ -183,14 +193,19 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     try {
       const payload = await api(
         section === "products"
-          ? "products?q=" +
-              encodeURIComponent(overrides?.query ?? productQuery) +
-              "&page=" +
-              String(overrides?.page ?? productPage) +
-              "&pageSize=50&selectionOffset=" +
-              String(overrides?.selectionOffset ?? productSelectionOffset) +
-              "&protectedOnly=" +
-              String(overrides?.protectedOnly ?? productProtectedOnly)
+          ? "products?" +
+            new URLSearchParams({
+              q: overrides?.query ?? productQuery,
+              page: String(overrides?.page ?? productPage),
+              pageSize: "50",
+              selectionOffset: String(
+                overrides?.selectionOffset ?? productSelectionOffset,
+              ),
+              minimumFilter:
+                overrides?.minimumFilter ?? productMinimumFilter,
+              statusFilter: overrides?.statusFilter ?? productStatusFilter,
+              methodFilter: overrides?.methodFilter ?? productMethodFilter,
+            }).toString()
           : section === "dashboard"
             ? "admin/dashboard?minimumProtectedPage=" +
                 String(
@@ -214,8 +229,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         setProductSelectionOffset(
           overrides?.selectionOffset ?? payload.selectionOffset ?? 0,
         );
-        setProductProtectedOnly(
-          overrides?.protectedOnly ?? payload.protectedOnly ?? false,
+        setProductMinimumFilter(
+          overrides?.minimumFilter ?? payload.minimumFilter ?? "ALL",
+        );
+        setProductStatusFilter(
+          overrides?.statusFilter ?? payload.statusFilter ?? "ALL",
+        );
+        setProductMethodFilter(
+          overrides?.methodFilter ?? payload.methodFilter ?? "ALL",
         );
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
@@ -442,6 +463,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   const showProductSelectionBar =
     section === "products" &&
     (!!visibleProductIds.length || !!matchedProductItems.length || !!selectedCount);
+  const protectedCleanupActive = productMinimumFilter === "PROTECTED";
   const selectionOffset = productData?.selectionOffset ?? productSelectionOffset;
   const selectionBatchStart = matchedProductItems.length ? selectionOffset + 1 : 0;
   const selectionBatchEnd = selectionOffset + matchedProductItems.length;
@@ -452,6 +474,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       minimumProtectedPage?: number;
       minimumProtectedSelectionOffset?: number;
       protectedOnly?: boolean;
+      minimumFilter?: ProductMinimumFilter;
+      statusFilter?: ProductStatusFilter;
+      methodFilter?: ProductMethodFilter;
       query?: string;
     } = {},
   ) => {
@@ -466,7 +491,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         options.minimumProtectedSelectionOffset ?? 0,
       );
     if (nextSection === "products") {
-      setProductProtectedOnly(options.protectedOnly ?? false);
+      const minimumFilter =
+        options.minimumFilter ??
+        (options.protectedOnly ? "PROTECTED" : "ALL");
+      setProductMinimumFilter(minimumFilter);
+      setProductStatusFilter(options.statusFilter ?? "ALL");
+      setProductMethodFilter(options.methodFilter ?? "ALL");
       setQuery(options.query ?? "");
       setProductQuery(options.query ?? "");
       setProductPage(0);
@@ -475,7 +505,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setPreview(null);
     }
     if (nextSection !== "products") {
-      setProductProtectedOnly(false);
+      setProductMinimumFilter("ALL");
+      setProductStatusFilter("ALL");
+      setProductMethodFilter("ALL");
       setQuery("");
       setProductQuery("");
     }
@@ -630,17 +662,19 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             )}
             {section === "products" && (
               <>
-                {productProtectedOnly && (
+                {protectedCleanupActive && (
                   <div className="notice">
                     {t(
-                      "Protected-only cleanup is active. This view shows only products with a positive minimum protection rule.",
-                      "وضع تنظيف الأصناف المحمية نشط. يعرض هذا العرض فقط الأصناف التي لديها قاعدة حماية بحد أدنى موجب.",
+                      "Protected minimum cleanup is active. This view shows only products with a positive minimum protection rule.",
+                      "تنظيف الحد الأدنى المحمي نشط. يعرض هذا العرض فقط الأصناف التي لديها قاعدة حماية بحد أدنى موجب.",
                     )}
                     {" "}
                     <button
                       type="button"
                       onClick={() => {
-                        setProductProtectedOnly(false);
+                        setProductMinimumFilter("ALL");
+                        setProductStatusFilter("ALL");
+                        setProductMethodFilter("ALL");
                         setQuery("");
                         setProductQuery("");
                         setProductPage(0);
@@ -651,7 +685,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           query: "",
                           page: 0,
                           selectionOffset: 0,
-                          protectedOnly: false,
+                          minimumFilter: "ALL",
+                          statusFilter: "ALL",
+                          methodFilter: "ALL",
                         });
                       }}
                     >
@@ -665,7 +701,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       ref={productSearchInput}
                       className="grow"
                       placeholder={
-                        productProtectedOnly
+                        protectedCleanupActive
                           ? t(
                               "Find a protected product or part number…",
                               "ابحث عن صنف محمي أو رقم جزء…",
@@ -772,6 +808,86 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </div>
                     )}
                   </div>
+                  <select
+                    aria-label={t("Minimum filter", "تصفية الحد الأدنى")}
+                    value={productMinimumFilter}
+                    onChange={(e) => {
+                      const minimumFilter = e.target
+                        .value as ProductMinimumFilter;
+                      setSelected({});
+                      setPreview(null);
+                      setProductMinimumFilter(minimumFilter);
+                      setProductPage(0);
+                      setProductSelectionOffset(0);
+                      void load({
+                        query,
+                        page: 0,
+                        selectionOffset: 0,
+                        minimumFilter,
+                        statusFilter: productStatusFilter,
+                        methodFilter: productMethodFilter,
+                      });
+                    }}
+                  >
+                    <option value="ALL">
+                      {t("All minimums", "كل حالات الحد الأدنى")}
+                    </option>
+                    <option value="PROTECTED">
+                      {t("Minimum applied", "الحد الأدنى مطبق")}
+                    </option>
+                    <option value="UNPROTECTED">
+                      {t("No minimum", "بدون حد أدنى")}
+                    </option>
+                  </select>
+                  <select
+                    aria-label={t("Status filter", "تصفية الحالة")}
+                    value={productStatusFilter}
+                    onChange={(e) => {
+                      const statusFilter = e.target.value as ProductStatusFilter;
+                      setSelected({});
+                      setPreview(null);
+                      setProductStatusFilter(statusFilter);
+                      setProductPage(0);
+                      setProductSelectionOffset(0);
+                      void load({
+                        query,
+                        page: 0,
+                        selectionOffset: 0,
+                        minimumFilter: productMinimumFilter,
+                        statusFilter,
+                        methodFilter: productMethodFilter,
+                      });
+                    }}
+                  >
+                    <option value="ALL">{t("All status", "كل الحالات")}</option>
+                    <option value="ACTIVE">{t("Active", "نشط")}</option>
+                    <option value="ARCHIVED">{t("Archived", "مؤرشف")}</option>
+                  </select>
+                  <select
+                    aria-label={t("Method filter", "تصفية الطريقة")}
+                    value={productMethodFilter}
+                    onChange={(e) => {
+                      const methodFilter = e.target.value as ProductMethodFilter;
+                      setSelected({});
+                      setPreview(null);
+                      setProductMethodFilter(methodFilter);
+                      setProductPage(0);
+                      setProductSelectionOffset(0);
+                      void load({
+                        query,
+                        page: 0,
+                        selectionOffset: 0,
+                        minimumFilter: productMinimumFilter,
+                        statusFilter: productStatusFilter,
+                        methodFilter,
+                      });
+                    }}
+                  >
+                    <option value="ALL">{t("All methods", "كل الطرق")}</option>
+                    <option value="COST_MARKUP">COST_MARKUP</option>
+                    <option value="LIST_DISCOUNT">LIST_DISCOUNT</option>
+                    <option value="FIXED">FIXED</option>
+                  </select>
                   <button onClick={() => triggerProductSearch(query)}>
                     {t("Search", "بحث")}
                   </button>
@@ -842,27 +958,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </h3>
                       <div className="actions wrap">
                         <button
-                          disabled={busy || !visibleProductIds.length}
-                          onClick={() => {
-                            setSelected({
-                              ...selected,
-                              ...Object.fromEntries(
-                                productItems.map((item: any) => [
-                                  item.id,
-                                  item.version,
-                                ]),
-                              ),
-                            });
-                            setPreview(null);
-                          }}
-                        >
-                          {t("Select visible 50", "تحديد 50 الظاهرة")}
-                        </button>
-                        <button
                           disabled={
-                            busy ||
-                            !matchedProductItems.length ||
-                            allMatchedSelected
+                            busy || !matchedProductItems.length || allMatchedSelected
                           }
                           onClick={() => {
                             setSelected({
@@ -877,43 +974,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                             setPreview(null);
                           }}
                         >
-                          {t("Select current batch", "تحديد الدفعة الحالية")}
-                        </button>
-                        <button
-                          disabled={busy || selectionOffset === 0}
-                          onClick={() => {
-                            const nextOffset = Math.max(
-                              selectionOffset - 5000,
-                              0,
-                            );
-                            setSelected({});
-                            setPreview(null);
-                            setProductSelectionOffset(nextOffset);
-                            void load({
-                              page: productPage,
-                              query: productQuery,
-                              selectionOffset: nextOffset,
-                            });
-                          }}
-                        >
-                          {t("Previous batch", "الدفعة السابقة")}
-                        </button>
-                        <button
-                          disabled={busy || !productData?.selectionHasMore}
-                          onClick={() => {
-                            const nextOffset =
-                              selectionOffset + matchedProductItems.length;
-                            setSelected({});
-                            setPreview(null);
-                            setProductSelectionOffset(nextOffset);
-                            void load({
-                              page: productPage,
-                              query: productQuery,
-                              selectionOffset: nextOffset,
-                            });
-                          }}
-                        >
-                          {t("Next batch", "الدفعة التالية")}
+                          {productData?.selectionLimitReached
+                            ? t(
+                                "Select filtered batch",
+                                "تحديد دفعة النتائج المفلترة",
+                              )
+                            : t(
+                                "Select filtered results",
+                                "تحديد النتائج المفلترة",
+                              )}
                         </button>
                         <button
                           disabled={busy || !selectedCount}
@@ -927,8 +996,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         <span className="muted">
                           {matchedProductItems.length
                             ? t(
-                                `Batch ${selectionBatchStart}-${selectionBatchEnd} of ${productData?.totalRows ?? matchedProductItems.length} matched products.`,
-                                `الدفعة ${selectionBatchStart}-${selectionBatchEnd} من ${productData?.totalRows ?? matchedProductItems.length} من الأصناف المطابقة.`,
+                                `${productData?.selectionLimitReached ? `Batch ${selectionBatchStart}-${selectionBatchEnd}` : "All filtered results"} of ${productData?.totalRows ?? matchedProductItems.length} matched products.`,
+                                `${productData?.selectionLimitReached ? `الدفعة ${selectionBatchStart}-${selectionBatchEnd}` : "كل النتائج المفلترة"} من ${productData?.totalRows ?? matchedProductItems.length} من الأصناف المطابقة.`,
                               )
                             : t(
                                 "Load products to use bulk selection.",
@@ -941,15 +1010,55 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                               )
                             : ""}
                         </span>
-                        {productProtectedOnly && (
+                        {protectedCleanupActive && (
                           <span className="muted">
                             {t(
-                              "Protected-only cleanup is active. Cleared products disappear after reload, then continue with the next batch.",
-                              "وضع تنظيف الأصناف المحمية نشط. تختفي الأصناف التي تم تنظيفها بعد إعادة التحميل، ثم تابع إلى الدفعة التالية.",
+                              "Protected minimum cleanup is active. Cleared products disappear after reload automatically.",
+                              "تنظيف الحد الأدنى المحمي نشط. تختفي الأصناف التي تم تنظيفها بعد إعادة التحميل تلقائياً.",
                             )}
                           </span>
                         )}
                       </div>
+                      {productData?.selectionLimitReached && (
+                        <div className="actions wrap">
+                          <button
+                            disabled={busy || selectionOffset === 0}
+                            onClick={() => {
+                              const nextOffset = Math.max(
+                                selectionOffset - 5000,
+                                0,
+                              );
+                              setSelected({});
+                              setPreview(null);
+                              setProductSelectionOffset(nextOffset);
+                              void load({
+                                page: productPage,
+                                query: productQuery,
+                                selectionOffset: nextOffset,
+                              });
+                            }}
+                          >
+                            {t("Previous batch", "الدفعة السابقة")}
+                          </button>
+                          <button
+                            disabled={busy || !productData?.selectionHasMore}
+                            onClick={() => {
+                              const nextOffset =
+                                selectionOffset + matchedProductItems.length;
+                              setSelected({});
+                              setPreview(null);
+                              setProductSelectionOffset(nextOffset);
+                              void load({
+                                page: productPage,
+                                query: productQuery,
+                                selectionOffset: nextOffset,
+                              });
+                            }}
+                          >
+                            {t("Next batch", "الدفعة التالية")}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   <table>
@@ -1150,10 +1259,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         )}
                       {bulk.operation === "REMOVE_MINIMUM" && (
                         <span className="muted">
-                          {t(
-                            "Remove minimum fully disables protection for this batch. Use this instead of setting the minimum to 0.",
-                            "إزالة الحد الأدنى تعطل الحماية بالكامل لهذه الدفعة. استخدمها بدلاً من تعيين الحد الأدنى إلى 0.",
-                          )}
+                          {protectedCleanupActive
+                            ? t(
+                                "Remove minimum will disable protection for the selected filtered products. Cleared products disappear from this protected view after reload.",
+                                "إزالة الحد الأدنى ستعطل الحماية للأصناف المفلترة المحددة. تختفي الأصناف المنظفة من هذا العرض المحمي بعد إعادة التحميل.",
+                              )
+                            : t(
+                                "Remove minimum fully disables protection for the selected products. Use this instead of setting the minimum to 0.",
+                                "إزالة الحد الأدنى تعطل الحماية بالكامل للأصناف المحددة. استخدمها بدلاً من تعيين الحد الأدنى إلى 0.",
+                              )}
                         </span>
                       )}
                       {priceBulkOperations.has(bulk.operation) ? (

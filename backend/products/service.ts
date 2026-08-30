@@ -672,6 +672,9 @@ export async function search(
         selectionLimit?: number;
         selectionOffset?: number;
         protectedOnly?: boolean;
+        minimumFilter?: "ALL" | "PROTECTED" | "UNPROTECTED";
+        statusFilter?: "ALL" | "ACTIVE" | "ARCHIVED";
+        methodFilter?: "ALL" | "COST_MARKUP" | "LIST_DISCOUNT" | "FIXED";
       } = false,
 ) {
   const options =
@@ -685,23 +688,51 @@ export async function search(
   const pageSize = Math.min(Math.max(options.pageSize ?? 50, 1), 200);
   const page = Math.max(options.page ?? 0, 0);
   const offset = page * pageSize;
-  const protectedOnly = options.protectedOnly ?? false;
+  const minimumFilter =
+    options.minimumFilter ??
+    (options.protectedOnly ? "PROTECTED" : "ALL");
+  const statusFilter = options.statusFilter ?? "ALL";
+  const methodFilter = options.methodFilter ?? "ALL";
   const selectionLimit = Math.min(
     Math.max(options.selectionLimit ?? 5000, 1),
     5000,
   );
   const selectionOffset = Math.max(options.selectionOffset ?? 0, 0);
   const activeClause = admin ? "true" : "p.active";
-  const minimumClause = protectedOnly
-    ? `EXISTS (
+  const minimumClause =
+    minimumFilter === "PROTECTED"
+      ? `EXISTS (
         SELECT 1
         FROM product_pricing pp
         WHERE pp.product_id = p.id
           AND pp.minimum_enabled
           AND pp.minimum > 0
       )`
-    : "true";
-  const productWhere = `${activeClause} AND ${minimumClause}`;
+      : minimumFilter === "UNPROTECTED"
+        ? `NOT EXISTS (
+        SELECT 1
+        FROM product_pricing pp
+        WHERE pp.product_id = p.id
+          AND pp.minimum_enabled
+          AND pp.minimum > 0
+      )`
+        : "true";
+  const statusClause =
+    statusFilter === "ACTIVE"
+      ? "p.active"
+      : statusFilter === "ARCHIVED"
+        ? "NOT p.active"
+        : "true";
+  const methodClause =
+    methodFilter === "ALL"
+      ? "true"
+      : `EXISTS (
+        SELECT 1
+        FROM product_pricing pp
+        WHERE pp.product_id = p.id
+          AND pp.method = '${methodFilter}'
+      )`;
+  const productWhere = `${activeClause} AND ${minimumClause} AND ${statusClause} AND ${methodClause}`;
   const mapRows = (rows: Record<string, any>[]) =>
     rows.map((r) =>
       admin && has(actor, "COST_VIEW")
@@ -753,7 +784,9 @@ export async function search(
       totalRows,
       totalPages,
       hasMore: safePage + 1 < totalPages,
-      protectedOnly,
+      minimumFilter,
+      statusFilter,
+      methodFilter,
       selectableItems,
       selectionLimitReached: totalRows > selectionLimit,
       selectionOffset,
@@ -867,7 +900,9 @@ export async function search(
     totalRows,
     totalPages,
     hasMore: safePage + 1 < totalPages,
-    protectedOnly,
+    minimumFilter,
+    statusFilter,
+    methodFilter,
     selectableItems,
     selectionLimitReached: totalRows > selectionLimit,
     selectionOffset,

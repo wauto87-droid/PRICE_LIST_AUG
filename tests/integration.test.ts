@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import { embedded, migrate, one } from "../backend/core/db";
 import { handle } from "../backend/api/router";
 import { json } from "../backend/core/audit";
@@ -946,7 +947,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       const protectedOnly = (
         await request("products?protectedOnly=true&page=0&pageSize=50")
       ).data;
-      assert.equal(protectedOnly.protectedOnly, true);
+      assert.equal(protectedOnly.minimumFilter, "PROTECTED");
       assert.equal(protectedOnly.items.length, 50);
       assert(
         protectedOnly.items.every(
@@ -954,6 +955,15 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
             item.minimumEnabled === true && Number(item.minimum) > 0,
         ),
       );
+      const unprotectedOnly = (
+        await request(
+          "products?minimumFilter=UNPROTECTED&statusFilter=ACTIVE&methodFilter=COST_MARKUP&page=0&pageSize=50&q=MIN-PROTECT",
+        )
+      ).data;
+      assert.equal(unprotectedOnly.minimumFilter, "UNPROTECTED");
+      assert.equal(unprotectedOnly.statusFilter, "ACTIVE");
+      assert.equal(unprotectedOnly.methodFilter, "COST_MARKUP");
+      assert.equal(unprotectedOnly.totalRows, 0);
     },
   );
   await t.test(
@@ -1226,6 +1236,31 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         (await request("search?q=DOUBLE")).data[0].masterExcl,
         "137.50",
       );
+    },
+  );
+  await t.test(
+    "Imports can be permanently deleted along with their saved upload file",
+    async () => {
+      const iid = randomUUID();
+      const uploadDir = process.env.UPLOAD_DIR || ".data/uploads";
+      await fs.mkdir(uploadDir, { recursive: true });
+      const filePath = `${uploadDir}/${iid}.csv`;
+      await fs.writeFile(filePath, "CODE,DESC,COST\nDELETE,Delete me,10\n");
+      await db.query(
+        "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id) VALUES($1,'delete-me.csv',$2,'EXCEL','FAILED',$3)",
+        [iid, filePath, adminId],
+      );
+      await db.query(
+        "INSERT INTO import_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3)",
+        [randomUUID(), iid, json({ CODE: "DELETE", DESC: "Delete me", COST: "10" })],
+      );
+      await request("imports/" + iid + "/delete", "POST", {});
+      assert.equal(
+        (await one(db, "SELECT id FROM import_jobs WHERE id=$1", [iid])) ??
+          null,
+        null,
+      );
+      await assert.rejects(() => fs.stat(filePath));
     },
   );
   await t.test(

@@ -56,7 +56,7 @@ export default function AdminDashboard({
     section: string,
     options?: {
       minimumProtectedPage?: number;
-      protectedOnly?: boolean;
+      minimumFilter?: "ALL" | "PROTECTED" | "UNPROTECTED";
       query?: string;
     },
   ) => void;
@@ -121,7 +121,7 @@ export default function AdminDashboard({
   const allMinimumVisible =
     !!data.minimumProtected.length &&
     data.minimumProtected.every((row: any) => row.id in selectedMinimums);
-  const allMinimumBatchSelected =
+  const allMinimumFilteredSelected =
     !!minimumSelectableItems.length &&
     minimumSelectableItems.every((row: any) => row.id in selectedMinimums);
   const minimumProtectedRangeStart = data.minimumProtectedTotalRows
@@ -289,6 +289,69 @@ export default function AdminDashboard({
     );
   }
 
+  async function deleteImport(job: any) {
+    if (
+      !(await showConfirm(
+        t(
+          `Permanently delete ${job.filename}? This removes the saved import file and its review record.`,
+          `هل تريد حذف ${job.filename} نهائياً؟ سيؤدي ذلك إلى إزالة ملف الاستيراد المحفوظ وسجل مراجعته.`,
+        ),
+      ))
+    )
+      return;
+    await onAction(
+      {
+        saving: t("Deleting import…", "جارٍ حذف الاستيراد…"),
+        success: t("Import deleted", "تم حذف الاستيراد"),
+        successDetail: t(
+          "The import file and its saved review record were removed.",
+          "تمت إزالة ملف الاستيراد وسجل مراجعته المحفوظ.",
+        ),
+        error: t("Import could not be deleted", "تعذر حذف الاستيراد"),
+      },
+      async () => {
+        await api("imports/" + job.id + "/delete", "POST", {});
+        setSelectedImports((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([id]) => id !== job.id),
+          ),
+        );
+        await onReload();
+      },
+    );
+  }
+
+  async function bulkDeleteImports() {
+    if (!importItems.length) return;
+    if (
+      !(await showConfirm(
+        t(
+          `Permanently delete ${importItems.length} selected imports? This removes their saved files and review records.`,
+          `هل تريد حذف ${importItems.length} عمليات استيراد محددة نهائياً؟ سيؤدي ذلك إلى إزالة الملفات المحفوظة وسجلات المراجعة.`,
+        ),
+      ))
+    )
+      return;
+    await onAction(
+      {
+        saving: t("Deleting selected imports…", "جارٍ حذف عمليات الاستيراد المحددة…"),
+        success: t("Selected imports deleted", "تم حذف عمليات الاستيراد المحددة"),
+        successDetail: t(
+          "The selected import files and review records were removed.",
+          "تمت إزالة ملفات الاستيراد المحددة وسجلات مراجعتها.",
+        ),
+        error: t("Selected imports could not be deleted", "تعذر حذف عمليات الاستيراد المحددة"),
+      },
+      async () => {
+        for (const job of importItems) {
+          await api("imports/" + job.id + "/delete", "POST", {});
+        }
+        setSelectedImports({});
+        await onReload();
+      },
+    );
+  }
+
   async function applyMinimumBulk(operation: "REMOVE_MINIMUM" | "MINIMUM") {
     if (!minimumItems.length) return;
     if (
@@ -428,6 +491,12 @@ export default function AdminDashboard({
         </button>
         <button
           disabled={!Object.keys(selectedImports).length}
+          onClick={() => void bulkDeleteImports()}
+        >
+          {t("Delete selected", "حذف المحدد")}
+        </button>
+        <button
+          disabled={!Object.keys(selectedImports).length}
           onClick={() => setSelectedImports({})}
         >
           {t("Clear selection", "مسح التحديد")}
@@ -509,6 +578,9 @@ export default function AdminDashboard({
                         {t("Roll back", "تراجع")}
                       </button>
                     )}
+                    <button onClick={() => void deleteImport(job)}>
+                      {t("Delete", "حذف")}
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -807,9 +879,11 @@ export default function AdminDashboard({
             {t("Remove minimum", "إزالة الحد الأدنى")}
           </button>
           <button
-            onClick={() => onOpenSection("products", { protectedOnly: true })}
+            onClick={() =>
+              onOpenSection("products", { minimumFilter: "PROTECTED" })
+            }
           >
-            {t("Open Products", "فتح الأصناف")}
+            {t("Open filtered products", "فتح الأصناف المفلترة")}
           </button>
         </div>
       </div>
@@ -826,20 +900,7 @@ export default function AdminDashboard({
               )}
         </span>
         <button
-          disabled={!data.minimumProtected.length}
-          onClick={() =>
-            setSelectedMinimums((current) => ({
-              ...current,
-              ...Object.fromEntries(
-                data.minimumProtected.map((row: any) => [row.id, row.version]),
-              ),
-            }))
-          }
-        >
-          {t("Select visible 50", "تحديد 50 الظاهرة")}
-        </button>
-        <button
-          disabled={!minimumSelectableItems.length || allMinimumBatchSelected}
+          disabled={!minimumSelectableItems.length || allMinimumFilteredSelected}
           onClick={() =>
             setSelectedMinimums((current) => ({
               ...current,
@@ -849,29 +910,9 @@ export default function AdminDashboard({
             }))
           }
         >
-          {t("Select current batch", "تحديد الدفعة الحالية")}
-        </button>
-        <button
-          disabled={minimumSelectionOffset === 0}
-          onClick={() => {
-            setSelectedMinimums({});
-            onMinimumProtectedBatchChange(
-              Math.max(minimumSelectionOffset - 5000, 0),
-            );
-          }}
-        >
-          {t("Previous batch", "الدفعة السابقة")}
-        </button>
-        <button
-          disabled={!data.minimumProtectedSelectionHasMore}
-          onClick={() => {
-            setSelectedMinimums({});
-            onMinimumProtectedBatchChange(
-              minimumSelectionOffset + minimumSelectableItems.length,
-            );
-          }}
-        >
-          {t("Next batch", "الدفعة التالية")}
+          {data.minimumProtectedSelectionLimitReached
+            ? t("Select protected batch", "تحديد دفعة الأصناف المحمية")
+            : t("Select protected results", "تحديد نتائج الأصناف المحمية")}
         </button>
         <button
           disabled={!selectedMinimumCount}
@@ -883,8 +924,8 @@ export default function AdminDashboard({
       <p className="muted">
         {minimumSelectableItems.length
           ? t(
-              `Batch ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd} of ${data.minimumProtectedTotalRows} protected products is ready for bulk cleanup.`,
-              `الدفعة ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd} من ${data.minimumProtectedTotalRows} من الأصناف المحمية جاهزة للتنظيف الجماعي.`,
+              `${data.minimumProtectedSelectionLimitReached ? `Batch ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd}` : "All filtered protected results"} of ${data.minimumProtectedTotalRows} products is ready for bulk cleanup.`,
+              `${data.minimumProtectedSelectionLimitReached ? `الدفعة ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd}` : "كل النتائج المفلترة المحمية"} من ${data.minimumProtectedTotalRows} من الأصناف جاهزة للتنظيف الجماعي.`,
             )
           : t(
               "No protected products are loaded for bulk cleanup.",
@@ -897,6 +938,32 @@ export default function AdminDashboard({
             )
           : ""}
       </p>
+      {data.minimumProtectedSelectionLimitReached && (
+        <div className="actions wrap">
+          <button
+            disabled={minimumSelectionOffset === 0}
+            onClick={() => {
+              setSelectedMinimums({});
+              onMinimumProtectedBatchChange(
+                Math.max(minimumSelectionOffset - 5000, 0),
+              );
+            }}
+          >
+            {t("Previous batch", "الدفعة السابقة")}
+          </button>
+          <button
+            disabled={!data.minimumProtectedSelectionHasMore}
+            onClick={() => {
+              setSelectedMinimums({});
+              onMinimumProtectedBatchChange(
+                minimumSelectionOffset + minimumSelectableItems.length,
+              );
+            }}
+          >
+            {t("Next batch", "الدفعة التالية")}
+          </button>
+        </div>
+      )}
       <div className="table-scroll">
         <table className="dashboard-table">
           <thead>

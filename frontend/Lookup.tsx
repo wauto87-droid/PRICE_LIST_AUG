@@ -394,6 +394,7 @@ export default function Lookup({
     resolvedHighlightedIndex >= 0
       ? filteredSuggestions[resolvedHighlightedIndex]
       : null;
+  const showCategoryFilter = !!results.length && (!selected || showRelatedMatches);
   let displayPrice = price?.value ?? null;
   let previewOnly = false;
   let previewError = "";
@@ -440,217 +441,227 @@ export default function Lookup({
   return (
     <div className={"lookup-layout" + (showAside ? "" : " lookup-compact")}>
       <section className="card lookup-card">
-        <div className="lookup-search-panel">
-          <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
-          <div className="lookup-title-row">
-            <div>
-              <h2>
-                {t("Find the right part fast", "اعثر على الصنف الصحيح بسرعة")}
-              </h2>
-              <p>
-                {t(
-                  "Search by part number, old reference, description, brand, or category.",
-                  "ابحث برقم الصنف أو المرجع القديم أو الوصف أو العلامة أو الفئة.",
-                )}
-              </p>
-            </div>
-            {!!filteredResults.length && (
-              <span className="pill">
-                {filteredResults.length} {t("matches", "نتائج")}
-              </span>
-            )}
-          </div>
-          <div className="lookup-search-stack">
-            <div
-              className={
-                "search-box lookup-combobox" +
-                (suggestionsOpen && filteredSuggestions.length ? " open" : "")
-              }
-            >
-              <span aria-hidden="true">⌕</span>
-              <input
-                ref={searchRef}
-                autoFocus
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={
-                  suggestionsOpen && filteredSuggestions.length > 0
-                }
-                aria-controls={comboboxId.current}
-                aria-activedescendant={
-                  suggestionsOpen && resolvedHighlightedIndex >= 0
-                    ? suggestionOptionId(
-                        comboboxId.current,
-                        resolvedHighlightedIndex,
-                      )
-                    : undefined
-                }
-                aria-label={t(
-                  "Search part number or description",
-                  "البحث برقم الصنف أو الوصف",
-                )}
-                placeholder={t(
-                  "Search Part No. or Description…",
-                  "ابحث برقم الصنف أو الوصف…",
-                )}
-                value={query}
-                onFocus={() => {
-                  if (
-                    filteredSuggestions.length &&
-                    !isSelectedLookupQuery(query, selected?.partNumber)
-                  ) {
-                    setSuggestionsOpen(true);
-                    setHighlightedIndex((current) =>
-                      activeSuggestionIndex(
-                        current,
-                        filteredSuggestions.length,
-                      ),
-                    );
-                  }
-                }}
-                onChange={(e) => {
-                  const nextQuery = e.target.value;
-                  const keepsSelection =
-                    !!selected &&
-                    normalizeLookupQuery(nextQuery) === normalizedSelectedPart;
-                  setQuery(nextQuery);
-                  setCategoryFilter("");
-                  setShowRelatedMatches(false);
-                  setSuggestionsOpen(!!nextQuery.trim() && !keepsSelection);
-                  if (selected && !keepsSelection) {
-                    setSelected(null);
-                    setPrice(null);
-                  }
-                  setHighlightedIndex(0);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSuggestionsOpen(filteredSuggestions.length > 0);
-                    setHighlightedIndex((current) =>
-                      moveHighlightedIndex(
-                        activeSuggestionIndex(
-                          current,
-                          filteredSuggestions.length,
-                        ),
-                        "next",
-                        filteredSuggestions.length,
-                      ),
-                    );
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSuggestionsOpen(filteredSuggestions.length > 0);
-                    setHighlightedIndex((current) =>
-                      moveHighlightedIndex(
-                        activeSuggestionIndex(
-                          current,
-                          filteredSuggestions.length,
-                        ),
-                        "previous",
-                        filteredSuggestions.length,
-                      ),
-                    );
-                    return;
-                  }
-                  if (e.key === "Enter") {
-                    if (suggestionsOpen && filteredSuggestions.length) {
-                      e.preventDefault();
-                      choose(
-                        filteredSuggestions[
-                          activeSuggestionIndex(
-                            highlightedIndex,
-                            filteredSuggestions.length,
-                          )
-                        ],
-                      );
-                    }
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setSuggestionsOpen(false);
-                    setHighlightedIndex(-1);
-                  }
-                }}
-              />
-              <kbd>{t("Enter", "إدخال")}</kbd>
-            </div>
-            <div className="lookup-search-meta">
-              <span className="muted">
-                {searching
-                  ? t("Searching…", "جارٍ البحث…")
-                  : query.trim()
-                    ? t(
-                        "Use Up/Down to move and Enter to choose.",
-                        "استخدم أعلى وأسفل للتنقل ثم إدخال للاختيار.",
-                      )
-                    : t(
-                        "Type to see matching parts instantly.",
-                        "ابدأ الكتابة لرؤية الأصناف المطابقة فوراً.",
-                      )}
-              </span>
-              {!!visibleResults.length && (
-                <span className="lookup-result-count">
-                  {visibleResults.length} {t("shown", "معروض")}
+        <div className="lookup-search-shell">
+          <div className="lookup-search-panel">
+            <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
+            <div className="lookup-title-row">
+              <div>
+                <h2>
+                  {t("Find the right part fast", "اعثر على الصنف الصحيح بسرعة")}
+                </h2>
+                <p>
+                  {t(
+                    "Search by part number, old reference, description, brand, or category.",
+                    "ابحث برقم الصنف أو المرجع القديم أو الوصف أو العلامة أو الفئة.",
+                  )}
+                </p>
+              </div>
+              {!!filteredResults.length && (
+                <span className="pill">
+                  {filteredResults.length} {t("matches", "نتائج")}
                 </span>
               )}
             </div>
-            {suggestionsOpen && !!filteredSuggestions.length && (
+            <div className="lookup-search-stack">
               <div
-                id={comboboxId.current}
-                className="lookup-suggestions"
-                role="listbox"
-                aria-label={t(
-                  "Suggested matching products",
-                  "اقتراحات الأصناف المطابقة",
-                )}
+                className={
+                  "search-box lookup-combobox" +
+                  (suggestionsOpen && filteredSuggestions.length ? " open" : "")
+                }
               >
-                {filteredSuggestions.map((p, index) => (
-                  <button
-                    id={suggestionOptionId(comboboxId.current, index)}
-                    type="button"
-                    className={
-                      "lookup-suggestion" +
-                      (resolvedHighlightedIndex === index ? " active" : "") +
-                      (selected?.id === p.id ? " chosen" : "")
+                <span aria-hidden="true">⌕</span>
+                <input
+                  ref={searchRef}
+                  autoFocus
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={
+                    suggestionsOpen && filteredSuggestions.length > 0
+                  }
+                  aria-controls={comboboxId.current}
+                  aria-activedescendant={
+                    suggestionsOpen && resolvedHighlightedIndex >= 0
+                      ? suggestionOptionId(
+                          comboboxId.current,
+                          resolvedHighlightedIndex,
+                        )
+                      : undefined
+                  }
+                  aria-label={t(
+                    "Search part number or description",
+                    "البحث برقم الصنف أو الوصف",
+                  )}
+                  placeholder={t(
+                    "Search Part No. or Description…",
+                    "ابحث برقم الصنف أو الوصف…",
+                  )}
+                  value={query}
+                  onFocus={() => {
+                    if (
+                      filteredSuggestions.length &&
+                      !isSelectedLookupQuery(query, selected?.partNumber)
+                    ) {
+                      setSuggestionsOpen(true);
+                      setHighlightedIndex((current) =>
+                        activeSuggestionIndex(
+                          current,
+                          filteredSuggestions.length,
+                        ),
+                      );
                     }
-                    key={p.id}
-                    role="option"
-                    aria-selected={resolvedHighlightedIndex === index}
-                    onMouseDown={(e) => {
+                  }}
+                  onChange={(e) => {
+                    const nextQuery = e.target.value;
+                    const keepsSelection =
+                      !!selected &&
+                      normalizeLookupQuery(nextQuery) === normalizedSelectedPart;
+                    setQuery(nextQuery);
+                    setCategoryFilter("");
+                    setShowRelatedMatches(false);
+                    setSuggestionsOpen(!!nextQuery.trim() && !keepsSelection);
+                    if (selected && !keepsSelection) {
+                      setSelected(null);
+                      setPrice(null);
+                    }
+                    setHighlightedIndex(0);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown") {
                       e.preventDefault();
-                      choose(p);
-                    }}
-                  >
-                    <span className="lookup-suggestion-copy">
-                      <strong>{p.partNumber}</strong>
-                      <small>{p.description}</small>
-                      <small>
-                        {[p.brand, p.category].filter(Boolean).join(" · ") ||
-                          t("Catalog item", "صنف كتالوج")}
-                      </small>
-                    </span>
-                    <span className="lookup-suggestion-price">
-                      {(() => {
-                        const level =
-                          visibleLevels(p).find(
-                            (l) =>
-                              l.code === (p.defaultLevel ?? "END_CUSTOMER"),
-                          ) || visibleLevels(p)[0];
-                        return level ? (
-                          <>
-                            <b>{level.masterExcl}</b>
-                            <small>{levelLabel(level.code, t)}</small>
-                          </>
-                        ) : null;
-                      })()}
-                    </span>
-                  </button>
-                ))}
+                      setSuggestionsOpen(filteredSuggestions.length > 0);
+                      setHighlightedIndex((current) =>
+                        moveHighlightedIndex(
+                          activeSuggestionIndex(
+                            current,
+                            filteredSuggestions.length,
+                          ),
+                          "next",
+                          filteredSuggestions.length,
+                        ),
+                      );
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSuggestionsOpen(filteredSuggestions.length > 0);
+                      setHighlightedIndex((current) =>
+                        moveHighlightedIndex(
+                          activeSuggestionIndex(
+                            current,
+                            filteredSuggestions.length,
+                          ),
+                          "previous",
+                          filteredSuggestions.length,
+                        ),
+                      );
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      if (suggestionsOpen && filteredSuggestions.length) {
+                        e.preventDefault();
+                        choose(
+                          filteredSuggestions[
+                            activeSuggestionIndex(
+                              highlightedIndex,
+                              filteredSuggestions.length,
+                            )
+                          ],
+                        );
+                      }
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setSuggestionsOpen(false);
+                      setHighlightedIndex(-1);
+                    }
+                  }}
+                />
+                <kbd>{t("Enter", "إدخال")}</kbd>
               </div>
-            )}
+              <div className="lookup-search-meta">
+                <span className="muted">
+                  {searching
+                    ? t("Searching…", "جارٍ البحث…")
+                    : query.trim()
+                      ? t(
+                          "Use Up/Down to move and Enter to choose.",
+                          "استخدم أعلى وأسفل للتنقل ثم إدخال للاختيار.",
+                        )
+                      : t(
+                          "Type to see matching parts instantly.",
+                          "ابدأ الكتابة لرؤية الأصناف المطابقة فوراً.",
+                        )}
+                </span>
+                {!!visibleResults.length && (
+                  <span className="lookup-result-count">
+                    {visibleResults.length} {t("shown", "معروض")}
+                  </span>
+                )}
+              </div>
+              {selected && (
+                <div className="lookup-selected-hint">
+                  <strong>
+                    {t("Selected", "المحدد")}: {selected.partNumber}
+                  </strong>
+                  <span>{selected.description}</span>
+                </div>
+              )}
+              {suggestionsOpen && !!filteredSuggestions.length && (
+                <div
+                  id={comboboxId.current}
+                  className="lookup-suggestions"
+                  role="listbox"
+                  aria-label={t(
+                    "Suggested matching products",
+                    "اقتراحات الأصناف المطابقة",
+                  )}
+                >
+                  {filteredSuggestions.map((p, index) => (
+                    <button
+                      id={suggestionOptionId(comboboxId.current, index)}
+                      type="button"
+                      className={
+                        "lookup-suggestion" +
+                        (resolvedHighlightedIndex === index ? " active" : "") +
+                        (selected?.id === p.id ? " chosen" : "")
+                      }
+                      key={p.id}
+                      role="option"
+                      aria-selected={resolvedHighlightedIndex === index}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        choose(p);
+                      }}
+                    >
+                      <span className="lookup-suggestion-copy">
+                        <strong>{p.partNumber}</strong>
+                        <small>{p.description}</small>
+                        <small>
+                          {[p.brand, p.category].filter(Boolean).join(" · ") ||
+                            t("Catalog item", "صنف كتالوج")}
+                        </small>
+                      </span>
+                      <span className="lookup-suggestion-price">
+                        {(() => {
+                          const level =
+                            visibleLevels(p).find(
+                              (l) =>
+                                l.code === (p.defaultLevel ?? "END_CUSTOMER"),
+                            ) || visibleLevels(p)[0];
+                          return level ? (
+                            <>
+                              <b>{level.masterExcl}</b>
+                              <small>{levelLabel(level.code, t)}</small>
+                            </>
+                          ) : null;
+                        })()}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {activeError && (
@@ -661,30 +672,6 @@ export default function Lookup({
         {stamp && !online && (
           <div className="notice">
             {t("Last synced", "آخر مزامنة")}: {new Date(stamp).toLocaleString()}
-          </div>
-        )}
-        {!!results.length && (!selected || showRelatedMatches) && (
-          <div className="actions wrap lookup-filters lookup-filter-bar">
-            <label className="grow">
-              {t("Category filter", "تصفية الفئة")}
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-              >
-                <option value="">{t("All categories", "كل الفئات")}</option>
-                {resultCategories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="lookup-filter-note">
-              {t(
-                "Filter the current matches without running a new search.",
-                "قم بتصفية النتائج الحالية دون تشغيل بحث جديد.",
-              )}
-            </div>
           </div>
         )}
         {!!visibleResults.length && relatedMatchesVisible && (
@@ -701,6 +688,30 @@ export default function Lookup({
                 </h3>
               </div>
             </div>
+            {showCategoryFilter && (
+              <div className="actions wrap lookup-filters lookup-filter-bar">
+                <label className="grow">
+                  {t("Category filter", "تصفية الفئة")}
+                  <select
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                  >
+                    <option value="">{t("All categories", "كل الفئات")}</option>
+                    {resultCategories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="lookup-filter-note">
+                  {t(
+                    "Filter the current matches without running a new search.",
+                    "قم بتصفية النتائج الحالية دون تشغيل بحث جديد.",
+                  )}
+                </div>
+              </div>
+            )}
             <div className="result-head tier-result-head">
               <span>{t("Part / description", "الصنف / الوصف")}</span>
               <span>{t("Main selling price", "سعر البيع الرئيسي")}</span>
@@ -782,7 +793,10 @@ export default function Lookup({
                   onClick={() => setShowRelatedMatches((current) => !current)}
                 >
                   {showRelatedMatches
-                    ? t("Hide related matches", "إخفاء النتائج ذات الصلة")
+                    ? t(
+                        `Hide related matches (${visibleResults.length})`,
+                        `إخفاء النتائج ذات الصلة (${visibleResults.length})`,
+                      )
                     : t(
                         `Show related matches (${visibleResults.length})`,
                         `عرض النتائج ذات الصلة (${visibleResults.length})`,

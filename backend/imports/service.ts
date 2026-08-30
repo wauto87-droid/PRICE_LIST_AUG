@@ -950,3 +950,51 @@ export async function rollback(db: DB, actor: Actor, id: string) {
     return { ok: true };
   });
 }
+
+export async function deleteImport(db: DB, actor: Actor, id: string) {
+  requirePermission(actor, "IMPORT_CONFIRM");
+  const uploadRoot = path.resolve(process.env.UPLOAD_DIR || ".data/uploads");
+  let filePath = "";
+  return db.transaction(async (tx) => {
+    const job = await one(
+      tx,
+      "SELECT id,filename,file_path,status,version FROM import_jobs WHERE id=$1 FOR UPDATE",
+      [id],
+    );
+    assert(job, 404, "Import not found");
+    assert(
+      !["PROCESSING", "CONFIRMED"].includes(job.status),
+      409,
+      "This import is busy. Wait for it to finish before deleting it",
+    );
+    filePath = path.resolve(job.file_path || "");
+    const relative = path.relative(uploadRoot, filePath);
+    assert(
+      !!filePath &&
+        !path.isAbsolute(relative) &&
+        relative !== "" &&
+        !relative.startsWith(".."),
+      409,
+      "Import file path is outside the upload directory",
+    );
+    await tx.query(
+      "DELETE FROM jobs WHERE kind='IMPORT_EXTRACT' AND payload->>'importId'=$1",
+      [id],
+    );
+    await tx.query("DELETE FROM import_rows WHERE job_id=$1", [id]);
+    await tx.query("DELETE FROM import_jobs WHERE id=$1", [id]);
+    await audit(
+      tx,
+      actor.id,
+      "IMPORT_DELETE",
+      "import_jobs",
+      id,
+      job,
+      null,
+    );
+    return { ok: true, filename: job.filename, status: job.status };
+  }).then(async (result) => {
+    await fs.rm(filePath, { force: true });
+    return result;
+  });
+}

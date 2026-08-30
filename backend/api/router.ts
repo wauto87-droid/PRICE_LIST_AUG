@@ -248,7 +248,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         );
     }
     if (root === "products") {
-      if (method === "GET" && !id)
+      if (method === "GET" && !id) {
+        const protectedOnly = ["1", "true", "yes", "on"].includes(
+          (url.searchParams.get("protectedOnly") ?? "").toLowerCase(),
+        );
         return response(
           await products.search(
             db,
@@ -257,6 +260,18 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             settings,
             {
               admin: true,
+              minimumFilter: z
+                .enum(["ALL", "PROTECTED", "UNPROTECTED"])
+                .catch(protectedOnly ? "PROTECTED" : "ALL")
+                .parse(url.searchParams.get("minimumFilter") ?? undefined),
+              statusFilter: z
+                .enum(["ALL", "ACTIVE", "ARCHIVED"])
+                .catch("ALL")
+                .parse(url.searchParams.get("statusFilter") ?? undefined),
+              methodFilter: z
+                .enum(["ALL", "COST_MARKUP", "LIST_DISCOUNT", "FIXED"])
+                .catch("ALL")
+                .parse(url.searchParams.get("methodFilter") ?? undefined),
               page: z.coerce
                 .number()
                 .int()
@@ -273,12 +288,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .int()
                 .min(0)
                 .parse(url.searchParams.get("selectionOffset") ?? 0),
-              protectedOnly: ["1", "true", "yes", "on"].includes(
-                (url.searchParams.get("protectedOnly") ?? "").toLowerCase(),
-              ),
             },
           ),
         );
+      }
       if (id === "bulk" && method === "POST")
         return response(await admin.bulkPrice(db, actor, await body(req)));
       if (id && method === "GET") {
@@ -636,6 +649,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         if (action === "rollback" && method === "POST")
           return response(await imports.rollback(db, actor, id));
+        if (action === "delete" && method === "POST")
+          return response(await imports.deleteImport(db, actor, id));
       }
     }
     if (root === "sales-price-checks") {
