@@ -27,7 +27,8 @@ export default function CustomLineForm({
   const [open, setOpen] = useState(false),
     [value, setValue] = useState(blank()),
     [error, setError] = useState(""),
-    [savedItems, setSavedItems] = useState<any[]>([]);
+    [savedItems, setSavedItems] = useState<any[]>([]),
+    [checking, setChecking] = useState(false);
   useEffect(() => {
     if (!open && suggestedPart.trim())
       setValue((current) => ({ ...current, partNumber: suggestedPart.trim() }));
@@ -68,8 +69,23 @@ export default function CustomLineForm({
     });
     setError("");
   }
-  function add() {
+  async function add() {
     try {
+      const reference = value.partNumber.trim();
+      if (reference) {
+        setChecking(true);
+        const matches: any[] = await api(
+          "search?q=" + encodeURIComponent(reference),
+        );
+        const exact = matches.find(
+          (item) => String(item.partNumber ?? "").trim().toUpperCase() ===
+            reference.toUpperCase(),
+        );
+        if (exact)
+          throw new Error(
+            `Part reference matches catalog item ${exact.partNumber}. Use the catalog item instead`,
+          );
+      }
       const input = customLineInput.parse({ type: "CUSTOM", ...value });
       onAdd({
         source: "CUSTOM",
@@ -86,6 +102,8 @@ export default function CustomLineForm({
       setOpen(false);
     } catch (reason) {
       setError((reason as Error).message);
+    } finally {
+      setChecking(false);
     }
   }
   return (
@@ -219,7 +237,12 @@ export default function CustomLineForm({
             )}
           </p>
           {error && <div className="notice error">{error}</div>}
-          <button type="button" className="primary" onClick={add}>
+          <button
+            type="button"
+            className="primary"
+            disabled={checking}
+            onClick={() => void add()}
+          >
             {t("Add to quotation", "إضافة إلى عرض السعر")}
           </button>
         </div>

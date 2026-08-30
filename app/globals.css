@@ -1259,6 +1259,7 @@ strong + small {
   border-radius: 16px;
   background: #fff;
   box-shadow: inset 0 1px 0 #ffffffc7;
+  overflow: auto;
 }
 .sales-check-table {
   min-width: 1220px;
@@ -1324,6 +1325,68 @@ strong + small {
 .sales-check-status-stack {
   display: grid;
   gap: 5px;
+}
+.quantity-finder-tabs {
+  padding-bottom: 10px;
+}
+.quantity-history-list {
+  display: grid;
+  gap: 12px;
+}
+.quantity-history-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff 0%, #fcfcfd 100%);
+}
+.quantity-history-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.quantity-mapping-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+.quantity-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.quantity-compare-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid #ecd9dc;
+  background: #fff8f9;
+}
+.quantity-drilldown-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.quantity-drilldown-summary span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #f5f6fa;
+  color: #444956;
+  font-size: 12px;
+}
+.quantity-finder-table {
+  min-width: 980px;
+}
+.quantity-finder-table th,
+.quantity-finder-table td {
+  vertical-align: middle;
+}
+.quantity-finder-table td .status-badge {
+  display: inline-flex;
 }
 .sales-check-error {
   display: block;
@@ -2417,6 +2480,15 @@ body :is(h1, h2, h3, strong, b) {
     color: #777781;
     font-size: 10px;
     text-transform: uppercase;
+  }
+  .quantity-history-card {
+    flex-direction: column;
+  }
+  .quantity-mapping-grid {
+    grid-template-columns: 1fr;
+  }
+  .quantity-finder-table td:last-child {
+    align-items: start;
   }
   .sales-check-status-stack {
     gap: 7px;

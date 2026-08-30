@@ -14,6 +14,7 @@ import {
 import {
   analyze,
   get,
+  remove,
   processAnalysis,
 } from "../backend/quantity-finder/service";
 import {
@@ -48,17 +49,22 @@ test("Quantity Finder groups exact source text and separates returns and invalid
   const id = randomUUID();
   await db.query(
     "INSERT INTO quantity_reports(id,filename,file_path,status,owner_id,columns,summary) VALUES($1,'qty.xlsx','fixture','AWAITING_MAPPING',$2,$3,$4)",
-    [id, actor.id, json(["Part Number", "Qty"]), json({ totalRows: 8 })],
+    [
+      id,
+      actor.id,
+      json(["Part Number", "Qty", "Description", "Unit Price", "Line Total"]),
+      json({ totalRows: 8 }),
+    ],
   );
   const source = [
-    { p: "ABC", q: "2" },
-    { p: "ABC", q: "3.5" },
-    { p: "ABC", q: "-1" },
-    { p: "abc", q: "4" },
-    { p: " ABC ", q: "5" },
-    { p: "A.BC", q: "6" },
-    { p: "", q: "2" },
-    { p: "ABC", q: "0" },
+    { p: "ABC", q: "2", d: "Panel A", u: "10", t: "20" },
+    { p: "ABC", q: "3.5", d: "Panel A", u: "11", t: "38.5" },
+    { p: "ABC", q: "-1", d: "Panel A Return", u: "10", t: "-10" },
+    { p: "abc", q: "4", d: "Panel B", u: "15", t: "60" },
+    { p: " ABC ", q: "5", d: "Panel C", u: "9", t: "45" },
+    { p: "A.BC", q: "6", d: "Panel D", u: "8", t: "48" },
+    { p: "", q: "2", d: "Missing", u: "5", t: "10" },
+    { p: "ABC", q: "0", d: "Zero", u: "10", t: "0" },
   ];
   for (let i = 0; i < source.length; i++)
     await db.query(
@@ -67,13 +73,22 @@ test("Quantity Finder groups exact source text and separates returns and invalid
         randomUUID(),
         id,
         i + 1,
-        json({ "Part Number": source[i].p, Qty: source[i].q }),
+        json({
+          "Part Number": source[i].p,
+          Qty: source[i].q,
+          Description: source[i].d,
+          "Unit Price": source[i].u,
+          "Line Total": source[i].t,
+        }),
       ],
     );
   await analyze(db, actor, id, {
     version: 1,
     partNumber: "Part Number",
     quantity: "Qty",
+    description: "Description",
+    unitPrice: "Unit Price",
+    lineTotal: "Line Total",
   });
   await processAnalysis(db, id, actor.id);
   const result: any = await get(db, actor, id, 0, 50, "GROUPS", "", "PART_ASC");
@@ -99,6 +114,25 @@ test("Quantity Finder groups exact source text and separates returns and invalid
   assert.equal(invalid.resultCount, 2);
   assert.match(invalid.rows[0].error, /blank/);
   assert.match(invalid.rows[1].error, /zero/);
+  const detail: any = await get(
+    db,
+    actor,
+    id,
+    0,
+    50,
+    "GROUPS",
+    "",
+    "PART_ASC",
+    "ABC",
+  );
+  assert.equal(detail.group, "ABC");
+  assert.equal(detail.groupRows.length, 3);
+  assert.equal(detail.groupRows[0].description, "Panel A");
+  assert.equal(detail.groupRows[0].unitPrice, "10");
+  assert.equal(detail.groupRows[2].direction, "RETURNED");
+  assert.equal(detail.groupInsights.unitPriceMin, "10.000000");
+  assert.equal(detail.groupInsights.unitPriceMax, "11.000000");
+  assert.equal(detail.groupInsights.lineTotalSum, "48.500000");
   const job = randomUUID();
   await exportQuantityXlsx(db, job, id);
   const book = new ExcelJS.Workbook();
@@ -131,6 +165,14 @@ test("Quantity Finder groups exact source text and separates returns and invalid
       await browser.close();
     }
   }
+  await db.query(
+    "UPDATE jobs SET status='DONE' WHERE payload->>'reportId'=$1 AND kind IN ('QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF')",
+    [id],
+  );
+  await fs.writeFile("fixture", "");
+  await remove(db, actor, id);
+  await assert.rejects(() => get(db, actor, id), /not found/i);
+  await fs.rm("fixture", { force: true });
   await fs.rm(process.env.UPLOAD_DIR, { recursive: true, force: true });
   await db.close?.();
 });

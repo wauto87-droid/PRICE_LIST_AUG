@@ -7,7 +7,7 @@ import {
   authenticate,
   sessionCookie,
 } from "../backend/auth/service";
-import { saveDraft } from "../backend/quotations/service";
+import { duplicateLineInput, saveDraft } from "../backend/quotations/service";
 import {
   search,
   list,
@@ -196,4 +196,32 @@ test("Reusable custom items are deduplicated, reusable, admin-managed, and safel
   assert.equal(original!.lines[0].description, "Special fabricated panel");
   assert.equal(original!.lines[0].price.finalExcl, "95.00");
   await db.close?.();
+});
+
+test("Duplicating a quotation keeps custom-line payloads schema-safe", () => {
+  const payload = duplicateLineInput({
+    source: "CUSTOM",
+    input: {
+      type: "CUSTOM",
+      partNumber: "SPECIAL-1",
+      description: "Special fabricated panel",
+      unit: "pcs",
+      quantity: "2",
+      unitPriceExcl: "100",
+      discount: "5",
+      reusableItemId: "11111111-1111-1111-1111-111111111111",
+    },
+  });
+  assert.deepEqual(payload, {
+    type: "CUSTOM",
+    partNumber: "SPECIAL-1",
+    description: "Special fabricated panel",
+    unit: "pcs",
+    quantity: "2",
+    unitPriceExcl: "100",
+    discount: "5",
+    reusableItemId: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal("override" in payload, false);
+  assert.equal("reason" in payload, false);
 });

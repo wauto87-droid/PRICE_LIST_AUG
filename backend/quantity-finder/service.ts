@@ -65,6 +65,7 @@ export async function get(
   view = "GROUPS",
   search = "",
   sort = "PART_ASC",
+  group = "",
 ) {
   permission(actor);
   const report = await one(
@@ -115,9 +116,75 @@ export async function get(
     "SELECT count(*)::int total FROM quantity_report_groups WHERE report_id=$1 AND source_part ILIKE $2",
     [id, pattern],
   );
+  const selectedGroup = group.trim();
+  const reportMapping = z
+    .object({
+      partNumber: z.string().optional(),
+      quantity: z.string().optional(),
+      description: z.string().optional(),
+      unitPrice: z.string().optional(),
+      lineTotal: z.string().optional(),
+      version: z.any().optional(),
+    })
+    .catch({})
+    .parse(report.mapping ?? {});
+  const groupRows = selectedGroup
+    ? (
+        await db.query(
+          "SELECT row_number,source_part,quantity,raw FROM quantity_report_rows WHERE report_id=$1 AND status='VALID' AND source_part=$2 ORDER BY row_number",
+          [id, selectedGroup],
+        )
+      ).rows.map((row) => {
+        const amount = new Decimal(String(row.quantity ?? 0));
+        return {
+          ...row,
+          direction: amount.lt(0) ? "RETURNED" : "SOLD",
+          absoluteQuantity: amount.abs().toFixed(6),
+          description: reportMapping.description
+            ? String(row.raw?.[reportMapping.description] ?? "")
+            : "",
+          unitPrice: reportMapping.unitPrice
+            ? String(row.raw?.[reportMapping.unitPrice] ?? "")
+            : "",
+          lineTotal: reportMapping.lineTotal
+            ? String(row.raw?.[reportMapping.lineTotal] ?? "")
+            : "",
+        };
+      })
+    : [];
+  const priceValues = groupRows
+    .map((row) => row.unitPrice.trim())
+    .filter((value) => /^-?\d+(?:\.\d+)?$/.test(value))
+    .map((value) => new Decimal(value));
+  const lineTotals = groupRows
+    .map((row) => row.lineTotal.trim())
+    .filter((value) => /^-?\d+(?:\.\d+)?$/.test(value))
+    .map((value) => new Decimal(value));
+  const descriptions = [
+    ...new Set(groupRows.map((row) => row.description).filter(Boolean)),
+  ];
   return {
     ...report,
     rows,
+    group: selectedGroup,
+    groupRows,
+    groupInsights: selectedGroup
+      ? {
+          descriptionCount: descriptions.length,
+          descriptions: descriptions.slice(0, 10),
+          unitPriceMin: priceValues.length
+            ? Decimal.min(...priceValues).toFixed(6)
+            : null,
+          unitPriceMax: priceValues.length
+            ? Decimal.max(...priceValues).toFixed(6)
+            : null,
+          lineTotalSum: lineTotals.length
+            ? lineTotals
+                .reduce((sum, value) => sum.add(value), new Decimal(0))
+                .toFixed(6)
+            : null,
+        }
+      : null,
     resultCount: count?.total ?? 0,
     page,
     pageSize,
@@ -136,6 +203,9 @@ export async function analyze(
       version: z.coerce.number().int(),
       partNumber: z.string().min(1),
       quantity: z.string().min(1),
+      description: z.string().min(1).optional(),
+      unitPrice: z.string().min(1).optional(),
+      lineTotal: z.string().min(1).optional(),
     })
     .strict()
     .parse(input);
@@ -161,6 +231,12 @@ export async function analyze(
       400,
       "Select columns from this file",
     );
+    for (const optional of [
+      data.description,
+      data.unitPrice,
+      data.lineTotal,
+    ].filter((value): value is string => !!value))
+      assert(report.columns.includes(optional), 400, "Select columns from this file");
     assert(
       !(await one(
         tx,
@@ -206,6 +282,9 @@ export async function processAnalysis(
     .object({
       partNumber: z.string(),
       quantity: z.string(),
+      description: z.string().optional(),
+      unitPrice: z.string().optional(),
+      lineTotal: z.string().optional(),
       version: z.any().optional(),
     })
     .parse(report.mapping);

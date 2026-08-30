@@ -51,6 +51,10 @@ export const savedLineInput = (line: any) =>
         sellingLevel:
           line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
       };
+export const duplicateLineInput = (line: any) =>
+  line.source === "CUSTOM" || line.input?.type === "CUSTOM"
+    ? savedLineInput(line)
+    : { ...savedLineInput(line), override: false, reason: "" };
 export async function snapshot(
   db: DB,
   actor: Actor,

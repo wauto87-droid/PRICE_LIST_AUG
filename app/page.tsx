@@ -406,7 +406,7 @@ export default function App() {
           >
             {[
               ["workspace", "Workspace", "مساحة العمل"],
-              ["draft", "Draft", "المسودة"],
+              ["draft", "Quotation", "عرض السعر"],
               ["quotations", "Quotations", "العروض"],
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [["admin", "Admin", "الإدارة"]]
@@ -437,7 +437,7 @@ export default function App() {
                   {tab === "workspace"
                     ? t("Catalog workspace", "مساحة الكتالوج")
                     : tab === "draft"
-                      ? t("Draft quotation", "مسودة عرض السعر")
+                      ? t("Current quotation", "عرض السعر الحالي")
                       : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
@@ -475,8 +475,8 @@ export default function App() {
                   onSaved={(q) =>
                     setMessage(
                       t(
-                        "Saved draft " + q.number,
-                        "تم حفظ المسودة " + q.number,
+                        "Saved quotation " + q.number,
+                        "تم حفظ عرض السعر " + q.number,
                       ),
                     )
                   }
@@ -487,18 +487,18 @@ export default function App() {
                       if (
                         await showConfirm(
                           t(
-                            "Start a new cart? Unsaved items will be cleared.",
-                            "بدء سلة جديدة؟ ستحذف الأصناف غير المحفوظة.",
+                            "Start a new quotation? Unsaved items will be cleared.",
+                            "بدء عرض سعر جديد؟ ستحذف الأصناف غير المحفوظة.",
                           ),
                         )
                       )
                         setCart(emptyCart());
                     }}
                   >
-                    {t("New cart", "سلة جديدة")}
+                    {t("New quotation", "عرض سعر جديد")}
                   </button>
                   <button onClick={() => setTab("quotations")}>
-                    {t("Open quotations", "فتح العروض")}
+                    {t("Open saved quotations", "فتح العروض المحفوظة")}
                   </button>
                 </div>
               </div>

@@ -302,7 +302,7 @@ export default function Quotations({
               {selected.status === "DRAFT" && (
                 <>
                   <button disabled={busy} onClick={() => onOpen(selected)}>
-                    {t("Edit draft", "تعديل المسودة")}
+                    {t("Edit quotation", "تعديل عرض السعر")}
                   </button>
                   {user.permissions.includes("QUOTE_ISSUE") && (
                     <button

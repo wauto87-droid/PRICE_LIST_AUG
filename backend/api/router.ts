@@ -417,11 +417,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               actor,
               {
                 customer: q.customer,
-                lines: q.lines.map((l: any) => ({
-                  ...quotes.savedLineInput(l),
-                  override: false,
-                  reason: "",
-                })),
+                lines: q.lines.map((l: any) => quotes.duplicateLineInput(l)),
               },
               settings,
             ),
@@ -821,6 +817,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               url.searchParams.get("view") ?? "GROUPS",
               url.searchParams.get("q") ?? "",
               url.searchParams.get("sort") ?? "PART_ASC",
+              url.searchParams.get("group") ?? "",
             ),
           );
         if (action === "analyze" && method === "POST")

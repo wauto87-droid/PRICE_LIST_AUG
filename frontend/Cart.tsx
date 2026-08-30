@@ -25,6 +25,10 @@ export default function Cart({
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
   const [options, setOptions] = useState<Record<string, any[]>>({});
+  const hasPendingLines = cart.lines.some((l: any) => l.pending);
+  const hasBlockingErrors = cart.lines.some(
+    (line: any) => !line.input || (!line.input?.type && !line.productId),
+  );
   async function loadLevels(productId: string) {
     try {
       const p = await api("products/" + productId);
@@ -34,7 +38,9 @@ export default function Cart({
     }
   }
   const valid = cart.lines.every((l: any) => l.price && !l.pending);
-  const sum = valid ? totals(cart.lines.map((l: any) => l.price)) : null;
+  const sum = cart.lines.every((l: any) => l.price)
+    ? totals(cart.lines.map((l: any) => l.price))
+    : null;
   function change(index: number, key: string, value: string) {
     const lines = cart.lines.map((l: any, i: number) =>
       i === index
@@ -136,11 +142,11 @@ export default function Cart({
       <div className="section-title">
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
-          <h2>{cart.number || t("New draft", "مسودة جديدة")}</h2>
+          <h2>{cart.number || t("Current quotation", "عرض السعر الحالي")}</h2>
           <p className="muted cart-subtitle">
             {t(
-              "Review customer details, add internal notes, and save the draft when ready.",
-              "راجع بيانات العميل وأضف الملاحظات واحفظ المسودة عندما تصبح جاهزة.",
+              "Review customer details, add internal notes, and save the quotation when ready.",
+              "راجع بيانات العميل وأضف الملاحظات واحفظ عرض السعر عندما يصبح جاهزاً.",
             )}
           </p>
         </div>
@@ -385,11 +391,11 @@ export default function Cart({
           </table>
         </div>
       )}
-      {!valid && (
+      {hasPendingLines && (
         <div className="notice">
           {t(
-            "Changes need online price validation. Use Recalculate before saving.",
-            "تحتاج التغييرات إلى التحقق عبر الإنترنت. أعد الحساب قبل الحفظ.",
+            "Some edited lines will be refreshed when you save or issue the quotation. Recalculate is optional.",
+            "سيتم تحديث بعض الأسطر المعدلة عند حفظ أو إصدار عرض السعر. إعادة الحساب اختيارية.",
           )}
         </div>
       )}
@@ -425,10 +431,14 @@ export default function Cart({
         </button>
         <button
           className="primary"
-          disabled={!online || busy || !cart.lines.length || !valid}
+          disabled={!online || busy || !cart.lines.length || hasBlockingErrors}
           onClick={save}
         >
-          {busy ? t("Saving…", "جارٍ الحفظ…") : t("Save draft", "حفظ المسودة")}
+          {busy
+            ? t("Saving…", "جارٍ الحفظ…")
+            : cart.id
+              ? t("Update quotation", "تحديث عرض السعر")
+              : t("Save quotation", "حفظ عرض السعر")}
         </button>
       </div>
       <p className="muted">
@@ -438,8 +448,8 @@ export default function Cart({
               "بيانات العميل اختيارية. خصومات السلة لا تغير أسعار الكتالوج.",
             )
           : t(
-              "Offline draft — changes remain on this device until you reconnect and save.",
-              "مسودة دون اتصال — تبقى التغييرات على الجهاز حتى الاتصال والحفظ.",
+              "Offline quotation — changes remain on this device until you reconnect and save.",
+              "عرض سعر دون اتصال — تبقى التغييرات على الجهاز حتى الاتصال والحفظ.",
             )}
       </p>
     </section>
