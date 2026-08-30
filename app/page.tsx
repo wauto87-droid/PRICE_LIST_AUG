@@ -468,6 +468,7 @@ export default function App() {
               <div className="workspace-side">
                 <Cart
                   t={t}
+                  user={session.user}
                   cart={cart}
                   setCart={setCart}
                   settings={session.settings}

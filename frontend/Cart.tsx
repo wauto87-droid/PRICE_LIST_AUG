@@ -1,13 +1,17 @@
 "use client";
 import { useState } from "react";
 import { api, type Translate } from "./api";
-import { totals } from "@/backend/pricing/engine";
+import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
 import { wheelSafeNumberInputProps } from "./number-input";
-import { calculateCustom } from "@/backend/pricing/engine";
 import CustomLineForm from "./CustomLineForm";
+import DeliveryQuoteImport from "./DeliveryQuoteImport";
+import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
+import { humanizeCustomLineError } from "./custom-line-errors";
+
 export default function Cart({
   t,
+  user,
   cart,
   setCart,
   settings,
@@ -15,20 +19,26 @@ export default function Cart({
   onSaved,
 }: {
   t: Translate;
+  user: any;
   cart: any;
   setCart: (c: any) => void;
   settings: any;
   online: boolean;
   onSaved: (q: any) => void;
 }) {
-  const [error, setError] = useState(""),
-    [notice, setNotice] = useState(""),
-    [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [suggestedCustomPart, setSuggestedCustomPart] = useState("");
   const [options, setOptions] = useState<Record<string, any[]>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
   const hasBlockingErrors = cart.lines.some(
     (line: any) => !line.input || (!line.input?.type && !line.productId),
   );
+  const sum = cart.lines.every((l: any) => l.price)
+    ? totals(cart.lines.map((l: any) => l.price))
+    : null;
+
   async function loadLevels(productId: string) {
     try {
       const p = await api("products/" + productId);
@@ -37,22 +47,23 @@ export default function Cart({
       setError((e as Error).message);
     }
   }
-  const valid = cart.lines.every((l: any) => l.price && !l.pending);
-  const sum = cart.lines.every((l: any) => l.price)
-    ? totals(cart.lines.map((l: any) => l.price))
-    : null;
+
   function change(index: number, key: string, value: string) {
     const lines = cart.lines.map((l: any, i: number) =>
       i === index
         ? {
             ...l,
             pending: true,
-            input: { ...l.input, [key]: value, override: false, reason: "" },
+            input:
+              l.input?.type === "CUSTOM"
+                ? { ...l.input, [key]: value }
+                : { ...l.input, [key]: value, override: false, reason: "" },
           }
         : l,
     );
     setCart({ ...cart, lines });
   }
+
   async function reprice() {
     setBusy(true);
     setError("");
@@ -83,11 +94,12 @@ export default function Cart({
         );
       setCart({ ...cart, lines });
     } catch (e) {
-      setError((e as Error).message);
+      setError(humanizeCustomLineError((e as Error).message));
     } finally {
       setBusy(false);
     }
   }
+
   async function save() {
     setBusy(true);
     setError("");
@@ -132,13 +144,33 @@ export default function Cart({
         );
       onSaved(q);
     } catch (e) {
-      setError((e as Error).message);
+      setError(humanizeCustomLineError((e as Error).message));
     } finally {
       setBusy(false);
     }
   }
+
   return (
     <section className="card">
+      <DeliveryQuoteImport
+        t={t}
+        online={online}
+        onImported={(q) => {
+          setCart({
+            id: q.id,
+            version: q.version,
+            number: q.number,
+            customer: q.customer,
+            lines: q.lines,
+          });
+          setNotice(
+            t(
+              "Delivery note imported into the current quotation.",
+              "تم استيراد إذن التسليم إلى عرض السعر الحالي.",
+            ),
+          );
+        }}
+      />
       <div className="section-title">
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
@@ -157,7 +189,11 @@ export default function Cart({
       <CustomLineForm
         t={t}
         vat={String(settings.vat)}
-        onAdd={(line) => setCart({ ...cart, lines: [...cart.lines, line] })}
+        suggestedPart={suggestedCustomPart}
+        onAdd={(line) => {
+          setCart({ ...cart, lines: [...cart.lines, line] });
+          setSuggestedCustomPart("");
+        }}
       />
       <div className="form-grid">
         {[
@@ -207,8 +243,8 @@ export default function Cart({
           <h2>{t("Your cart is ready", "سلتك جاهزة")}</h2>
           <p>
             {t(
-              "Add products from Lookup to start your quotation.",
-              "أضف أصنافاً من البحث لبدء عرض السعر.",
+              "Add products from Lookup or import a delivery note to start your quotation.",
+              "أضف أصنافاً من البحث أو استورد إذن تسليم لبدء عرض السعر.",
             )}
           </p>
         </div>
@@ -226,6 +262,29 @@ export default function Cart({
               </tr>
             </thead>
             <tbody>
+              <QuotationLineQuickAdd
+                t={t}
+                user={user}
+                online={online}
+                onAdd={(line) => {
+                  setCart({ ...cart, lines: [...cart.lines, line] });
+                  setNotice(
+                    t(
+                      "Added product to the quotation.",
+                      "تمت إضافة الصنف إلى عرض السعر.",
+                    ),
+                  );
+                }}
+                onAddCustom={(partNumber) => {
+                  setSuggestedCustomPart(partNumber);
+                  setNotice(
+                    t(
+                      `No catalog match for ${partNumber}. Complete it as a custom item.`,
+                      `لا يوجد صنف مطابق لـ ${partNumber}. أكمله كعنصر مخصص.`,
+                    ),
+                  );
+                }}
+              />
               {cart.lines.map((l: any, i: number) => (
                 <tr key={i}>
                   <td>
@@ -266,7 +325,7 @@ export default function Cart({
                           }
                           disabled={busy}
                           onFocus={() => {
-                            if (online) loadLevels(l.productId);
+                            if (online) void loadLevels(l.productId);
                           }}
                           value={
                             l.input.sellingLevel ??

@@ -1,0 +1,416 @@
+"use client";
+import { useEffect, useState } from "react";
+import { api, type Translate } from "./api";
+
+const autoMap = (columns: string[], names: string[]) =>
+  columns.find((column) =>
+    names.includes(column.toLowerCase().replace(/[^a-z0-9]/g, "")),
+  ) || "";
+
+export default function DeliveryQuoteImport({
+  t,
+  online,
+  onImported,
+}: {
+  t: Translate;
+  online: boolean;
+  onImported: (quote: any) => void;
+}) {
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [job, setJob] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [filter, setFilter] = useState("all");
+  const [mapping, setMapping] = useState({
+    date: "",
+    docNo: "",
+    customerName: "",
+    partNumber: "",
+    description: "",
+    quantity: "",
+    price: "",
+  });
+
+  const loadJobs = () => api("delivery-quote-imports").then(setJobs);
+  const open = async (id: string, nextFilter = filter) => {
+    const next: any = await api(
+      `delivery-quote-imports/${id}?page=0&pageSize=100&filter=${encodeURIComponent(nextFilter)}`,
+    );
+    setJob(next);
+    setFilter(nextFilter);
+    const columns = next.summary?.columns || [];
+    setMapping({
+      date: next.mapping?.date || autoMap(columns, ["date", "docdate"]),
+      docNo: next.mapping?.docNo || autoMap(columns, ["docno", "deliveryno", "documentno"]),
+      customerName:
+        next.mapping?.customerName || autoMap(columns, ["customername", "customer", "partyname"]),
+      partNumber:
+        next.mapping?.partNumber || autoMap(columns, ["item", "partnumber", "partreference", "itemcode"]),
+      description:
+        next.mapping?.description || autoMap(columns, ["description", "desc", "itemdescription"]),
+      quantity: next.mapping?.quantity || autoMap(columns, ["qty", "quantity"]),
+      price: next.mapping?.price || autoMap(columns, ["price", "unitprice", "rate", "amount"]),
+    });
+    setSelected({});
+  };
+
+  useEffect(() => {
+    void loadJobs().catch((e) => setError(e.message));
+  }, []);
+
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await loadJobs();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedIds = Object.entries(selected)
+    .filter(([, value]) => value)
+    .map(([id]) => id);
+
+  return (
+    <section className="card">
+      <div className="section-title">
+        <div>
+          <div className="eyebrow">
+            {t("DELIVERY NOTE TO QUOTATION", "إذن التسليم إلى عرض سعر")}
+          </div>
+          <h2>{t("Import delivery note", "استيراد إذن تسليم")}</h2>
+          <p className="muted">
+            {t(
+              "Upload a delivery-note Excel file, review rows, then create one editable quotation.",
+              "ارفع ملف إذن تسليم، راجع الصفوف، ثم أنشئ عرض سعر واحد قابل للتعديل.",
+            )}
+          </p>
+        </div>
+      </div>
+      <div className="actions wrap">
+        <input
+          type="file"
+          accept=".xls,.xlsx,.csv"
+          disabled={!online || busy}
+          onChange={(e) =>
+            void run(async () => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const form = new FormData();
+              form.set("file", file);
+              const created: any = await api("delivery-quote-imports", "POST", form);
+              await open(created.id);
+            })
+          }
+        />
+        {jobs.map((item) => (
+          <button key={item.id} onClick={() => void open(item.id)}>
+            {item.filename} · {item.status}
+          </button>
+        ))}
+      </div>
+      {job?.summary?.warnings?.length ? (
+        <div className="notice">
+          {job.summary.warnings.join(" ")}
+        </div>
+      ) : null}
+      {job?.status === "AWAITING_MAPPING" && (
+        <div className="form-grid three">
+          {[
+            ["date", "Date", "التاريخ"],
+            ["docNo", "Delivery no.", "رقم إذن التسليم"],
+            ["customerName", "Customer name", "اسم العميل"],
+            ["partNumber", "Part number", "رقم الصنف"],
+            ["description", "Description", "الوصف"],
+            ["quantity", "Quantity", "الكمية"],
+            ["price", "Price (optional)", "السعر (اختياري)"],
+          ].map(([key, en, ar]) => (
+            <label key={key}>
+              {t(en, ar)}
+              <select
+                value={mapping[key as keyof typeof mapping]}
+                onChange={(e) =>
+                  setMapping({ ...mapping, [key]: e.target.value })
+                }
+              >
+                <option value="">{t("Select column", "اختر العمود")}</option>
+                {(job.summary?.columns || []).map((column: string) => (
+                  <option key={column}>{column}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <button
+            className="primary"
+            disabled={busy || !mapping.customerName || !mapping.partNumber || !mapping.description || !mapping.quantity || !mapping.docNo || !mapping.date}
+            onClick={() =>
+              void run(async () => {
+                await api(`delivery-quote-imports/${job.id}/mapping`, "POST", {
+                  version: job.version,
+                  ...mapping,
+                  ...(mapping.price ? { price: mapping.price } : {}),
+                });
+                await open(job.id);
+              })
+            }
+          >
+            {t("Apply mapping", "تطبيق الربط")}
+          </button>
+        </div>
+      )}
+      {job?.status === "AWAITING_REVIEW" && (
+        <>
+          <div className="notice">
+            {job.summary?.blockedReason
+              ? job.summary.blockedReason
+              : t(
+                  "Review rows, remove anything unnecessary, complete custom rows, then create the quotation.",
+                  "راجع الصفوف، احذف غير الضروري، أكمل الصفوف المخصصة، ثم أنشئ عرض السعر.",
+                )}
+          </div>
+          <div className="actions wrap">
+            {[
+              ["all", "All rows", "كل الصفوف"],
+              ["included", "Included", "المضمنة"],
+              ["removed", "Removed", "المحذوفة"],
+              ["problems", "Problems", "المشكلات"],
+            ].map(([key, en, ar]) => (
+              <button
+                key={key}
+                className={filter === key ? "primary" : ""}
+                onClick={() => void open(job.id, key)}
+              >
+                {t(en, ar)}
+              </button>
+            ))}
+            <button
+              disabled={busy || !selectedIds.length}
+              onClick={() =>
+                void run(async () => {
+                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                    version: job.version,
+                    rowIds: selectedIds,
+                    action: "REMOVE",
+                  });
+                  await open(job.id, filter);
+                })
+              }
+            >
+              {t("Remove selected", "حذف المحدد")}
+            </button>
+            <button
+              disabled={busy || !selectedIds.length}
+              onClick={() =>
+                void run(async () => {
+                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                    version: job.version,
+                    rowIds: selectedIds,
+                    action: "RESTORE",
+                  });
+                  await open(job.id, filter);
+                })
+              }
+            >
+              {t("Restore selected", "استعادة المحدد")}
+            </button>
+            <button
+              disabled={busy || !selectedIds.length}
+              onClick={() =>
+                void run(async () => {
+                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                    version: job.version,
+                    rowIds: selectedIds,
+                    completed: true,
+                  });
+                  await open(job.id, filter);
+                })
+              }
+            >
+              {t("Mark complete", "تحديد كمكتمل")}
+            </button>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  const quote = await api(
+                    `delivery-quote-imports/${job.id}/finalize`,
+                    "POST",
+                    { version: job.version },
+                  );
+                  onImported(quote);
+                  await open(job.id, filter);
+                })
+              }
+            >
+              {t("Create quotation", "إنشاء عرض السعر")}
+            </button>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>{t("Row", "الصف")}</th>
+                  <th>{t("Part / description", "الصنف / الوصف")}</th>
+                  <th>{t("Qty", "الكمية")}</th>
+                  <th>{t("Price", "السعر")}</th>
+                  <th>{t("Status", "الحالة")}</th>
+                  <th>{t("Actions", "إجراءات")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {job.rows.map((row: any) => {
+                  const input = row.line_input || {};
+                  const raw = row.raw || {};
+                  return (
+                    <tr key={row.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={!!selected[row.id]}
+                          onChange={(e) =>
+                            setSelected({
+                              ...selected,
+                              [row.id]: e.target.checked,
+                            })
+                          }
+                        />
+                      </td>
+                      <td>{row.row_number}</td>
+                      <td>
+                        <strong>
+                          {input.partNumber ||
+                            raw[job.mapping?.partNumber] ||
+                            input.productId ||
+                            "—"}
+                        </strong>
+                        <small>
+                          {input.description || raw[job.mapping?.description] || "—"}
+                        </small>
+                      </td>
+                      <td>
+                        <input
+                          value={input.quantity || ""}
+                          onChange={(e) => {
+                            const rows = job.rows.map((item: any) =>
+                              item.id === row.id
+                                ? {
+                                    ...item,
+                                    line_input: {
+                                      ...item.line_input,
+                                      quantity: e.target.value,
+                                    },
+                                  }
+                                : item,
+                            );
+                            setJob({ ...job, rows });
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <div className="delivery-price-stack">
+                          <input
+                            value={input.unitPriceExcl || row.source_price || ""}
+                            disabled={row.resolution !== "UNMATCHED_CUSTOM"}
+                            onChange={(e) => {
+                              const rows = job.rows.map((item: any) =>
+                                item.id === row.id
+                                  ? {
+                                      ...item,
+                                      line_input: {
+                                        ...item.line_input,
+                                        unitPriceExcl: e.target.value,
+                                      },
+                                    }
+                                  : item,
+                              );
+                              setJob({ ...job, rows });
+                            }}
+                          />
+                          {row.source_price && row.resolution === "MATCHED_CATALOG" && (
+                            <small>
+                              {t("File price", "سعر الملف")}: {row.source_price}
+                            </small>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={"pill " + (row.completed ? "success" : "")}>
+                          {row.action === "REMOVE"
+                            ? t("Removed", "محذوف")
+                            : row.completed
+                              ? t("Complete", "مكتمل")
+                              : t("Needs work", "يحتاج عمل")}
+                        </span>
+                        <small>{row.resolution}</small>
+                        {!!row.issues?.length && (
+                          <small>{row.issues.join("; ")}</small>
+                        )}
+                      </td>
+                      <td>
+                        <div className="actions wrap">
+                          <button
+                            onClick={() =>
+                              void run(async () => {
+                                await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                                  version: job.version,
+                                  rowIds: [row.id],
+                                  completed: true,
+                                  updates: {
+                                    quantity: job.rows.find((item: any) => item.id === row.id)
+                                      ?.line_input?.quantity,
+                                    unitPriceExcl:
+                                      job.rows.find((item: any) => item.id === row.id)
+                                        ?.line_input?.unitPriceExcl,
+                                  },
+                                });
+                                await open(job.id, filter);
+                              })
+                            }
+                          >
+                            {t("Complete", "إكمال")}
+                          </button>
+                          <button
+                            onClick={() =>
+                              void run(async () => {
+                                await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                                  version: job.version,
+                                  rowIds: [row.id],
+                                  action: row.action === "REMOVE" ? "RESTORE" : "REMOVE",
+                                });
+                                await open(job.id, filter);
+                              })
+                            }
+                          >
+                            {row.action === "REMOVE"
+                              ? t("Restore", "استعادة")
+                              : t("Remove", "حذف")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {job?.status === "COMPLETED" && (
+        <div className="notice success">
+          {t(
+            "Quotation created from this delivery note. Opened in the current quotation workspace.",
+            "تم إنشاء عرض السعر من إذن التسليم هذا وتم فتحه في مساحة عرض السعر الحالية.",
+          )}
+        </div>
+      )}
+      {error && <div className="notice error">{error}</div>}
+    </section>
+  );
+}

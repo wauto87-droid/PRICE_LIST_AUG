@@ -4,6 +4,7 @@ import { calculateCustom, customLineInput } from "@/backend/pricing/engine";
 import type { Translate } from "./api";
 import { api } from "./api";
 import { wheelSafeNumberInputProps } from "./number-input";
+import { humanizeCustomLineError } from "./custom-line-errors";
 const blank = (partNumber = "") => ({
   partNumber,
   description: "",
@@ -101,7 +102,7 @@ export default function CustomLineForm({
       setError("");
       setOpen(false);
     } catch (reason) {
-      setError((reason as Error).message);
+      setError(humanizeCustomLineError((reason as Error).message));
     } finally {
       setChecking(false);
     }

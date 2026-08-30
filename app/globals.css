@@ -1060,6 +1060,33 @@ strong + small {
   overflow-x: auto;
   margin-top: 20px;
 }
+.quote-inline-add td,
+.quote-inline-results td {
+  background: #fffaf7;
+}
+.quote-inline-add input {
+  width: 100%;
+}
+.inline-lookup-results {
+  display: grid;
+  gap: 8px;
+}
+.inline-lookup-results button {
+  display: grid;
+  gap: 4px;
+  text-align: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.delivery-price-stack {
+  display: grid;
+  gap: 4px;
+}
+.delivery-price-stack small {
+  color: #666670;
+}
 .sales-check-shell {
   padding: 22px 22px 18px;
 }

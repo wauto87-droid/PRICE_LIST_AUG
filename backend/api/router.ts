@@ -16,6 +16,7 @@ import * as imports from "../imports/service";
 import * as salesChecks from "../sales-checks/service";
 import * as quantityFinder from "../quantity-finder/service";
 import * as reusableCustom from "../reusable-custom/service";
+import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
@@ -874,6 +875,69 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         error: job.error,
         format: job.kind.endsWith("PDF") ? "PDF" : "XLSX",
       });
+    }
+    if (root === "delivery-quote-imports") {
+      if (!id && method === "GET")
+        return response(await deliveryQuoteImports.list(db, actor));
+      if (!id && method === "POST") {
+        const bytes = await readLimited(
+          req,
+          (Number(process.env.UPLOAD_MAX_MB || 20) + 1) * 1024 * 1024,
+        );
+        const form = await new Response(new Uint8Array(bytes), {
+          headers: { "Content-Type": req.headers.get("content-type") ?? "" },
+        }).formData();
+        const file = form.get("file");
+        assert(file instanceof File, 400, "Select a file");
+        return response(await deliveryQuoteImports.upload(db, actor, file));
+      }
+      if (id) {
+        uuid(id);
+        if (!action && method === "GET")
+          return response(
+            await deliveryQuoteImports.get(
+              db,
+              actor,
+              id,
+              z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
+              url.searchParams.get("filter") ?? "all",
+            ),
+          );
+        if (action === "mapping" && method === "POST")
+          return response(
+            await deliveryQuoteImports.mapRows(db, actor, id, await body(req)),
+          );
+        if (action === "review" && method === "POST")
+          return response(
+            await deliveryQuoteImports.reviewRows(
+              db,
+              actor,
+              id,
+              await body(req),
+            ),
+          );
+        if (action === "finalize" && method === "POST")
+          return response(
+            await deliveryQuoteImports.finalize(
+              db,
+              actor,
+              id,
+              await body(req),
+            ),
+          );
+        if (!action && method === "DELETE")
+          return response(await deliveryQuoteImports.remove(db, actor, id));
+      }
     }
     if (root === "exports") {
       auth.requirePermission(actor, "EXPORT");

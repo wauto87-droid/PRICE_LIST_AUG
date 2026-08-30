@@ -34,7 +34,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -54,6 +54,7 @@ export async function runJob(db: DB) {
       });
     else if (
       job.kind === "IMPORT_EXTRACT" ||
+      job.kind === "DELIVERY_QUOTE_EXTRACT" ||
       job.kind === "SALES_CHECK_EXTRACT" ||
       job.kind === "QUANTITY_EXTRACT"
     ) {
@@ -187,7 +188,7 @@ export async function runJob(db: DB) {
             ],
           );
         });
-      } else {
+      } else if (job.kind === "IMPORT_EXTRACT") {
         const imp = await one(db, "SELECT * FROM import_jobs WHERE id=$1", [
           job.payload.importId,
         ]);
@@ -231,6 +232,56 @@ export async function runJob(db: DB) {
             );
           await tx.query(
             "UPDATE import_jobs SET status='AWAITING_REVIEW',summary=$2,version=version+1,updated_at=now() WHERE id=$1",
+            [
+              imp.id,
+              json({
+                rows: extracted.rows.length,
+                columns: extracted.columns,
+                warnings: extracted.warnings ?? [],
+              }),
+            ],
+          );
+        });
+      } else {
+        const imp = await one(
+          db,
+          "SELECT * FROM delivery_quote_jobs WHERE id=$1",
+          [job.payload.importId],
+        );
+        if (!imp) throw new Error("Delivery-note quotation import missing");
+        if (!["UPLOADED", "PROCESSING"].includes(imp.status))
+          throw new Error("Delivery-note quotation import cannot be re-extracted in this state");
+        await db.query(
+          "UPDATE delivery_quote_jobs SET status='PROCESSING',updated_at=now() WHERE id=$1",
+          [imp.id],
+        );
+        const { stdout } = await exec(
+          process.env.PYTHON_BIN || "python3",
+          [
+            path.join(process.cwd(), "scripts", "extract.py"),
+            imp.file_path,
+            "1",
+            String(IMPORT_MAX_ROWS),
+          ],
+          { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        );
+        const extracted = JSON.parse(stdout);
+        if (
+          !Array.isArray(extracted.rows) ||
+          extracted.rows.length > IMPORT_MAX_ROWS
+        )
+          throw new Error(`Maximum ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows per import`);
+        await db.transaction(async (tx) => {
+          await tx.query("DELETE FROM delivery_quote_rows WHERE job_id=$1", [
+            imp.id,
+          ]);
+          for (let i = 0; i < extracted.rows.length; i++)
+            await tx.query(
+              "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)",
+              [randomUUID(), imp.id, i + 1, json(extracted.rows[i])],
+            );
+          await tx.query(
+            "UPDATE delivery_quote_jobs SET status='AWAITING_MAPPING',summary=$2,version=version+1,updated_at=now() WHERE id=$1",
             [
               imp.id,
               json({
@@ -382,6 +433,11 @@ export async function runJob(db: DB) {
     if (job.kind === "IMPORT_EXTRACT")
       await db.query(
         "UPDATE import_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
+        [job.payload.importId, importFailureMessage(failure)],
+      );
+    if (job.kind === "DELIVERY_QUOTE_EXTRACT")
+      await db.query(
+        "UPDATE delivery_quote_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
         [job.payload.importId, importFailureMessage(failure)],
       );
     if (
