@@ -14,6 +14,7 @@ import * as admin from "../admin/service";
 import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
 import * as salesChecks from "../sales-checks/service";
+import * as quantityFinder from "../quantity-finder/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
@@ -736,6 +737,101 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 ? "application/pdf"
                 : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "Content-Disposition": `attachment; filename="AMT-sales-price-check.${ext}"`,
+              "Cache-Control": "no-store",
+            },
+          },
+        );
+      }
+      return response({
+        id: job.id,
+        status: job.status,
+        error: job.error,
+        format: job.kind.endsWith("PDF") ? "PDF" : "XLSX",
+      });
+    }
+    if (root === "quantity-finder") {
+      auth.requirePermission(actor, "QUANTITY_FINDER");
+      if (!id && method === "GET")
+        return response(await quantityFinder.list(db, actor));
+      if (!id && method === "POST") {
+        const bytes = await readLimited(
+          req,
+          (Number(process.env.UPLOAD_MAX_MB || 20) + 1) * 1024 * 1024,
+        );
+        const form = await new Response(new Uint8Array(bytes), {
+          headers: { "Content-Type": req.headers.get("content-type") ?? "" },
+        }).formData();
+        const file = form.get("file");
+        assert(file instanceof File, 400, "Select a file");
+        return response(await quantityFinder.upload(db, actor, file));
+      }
+      if (id) {
+        uuid(id);
+        if (!action && method === "GET")
+          return response(
+            await quantityFinder.get(
+              db,
+              actor,
+              id,
+              z.coerce
+                .number()
+                .int()
+                .min(0)
+                .parse(url.searchParams.get("page") ?? 0),
+              z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .parse(url.searchParams.get("pageSize") ?? 50),
+              url.searchParams.get("view") ?? "GROUPS",
+              url.searchParams.get("q") ?? "",
+              url.searchParams.get("sort") ?? "PART_ASC",
+            ),
+          );
+        if (action === "analyze" && method === "POST")
+          return response(
+            await quantityFinder.analyze(db, actor, id, await body(req)),
+          );
+        if (action === "excel" && method === "POST")
+          return response(
+            await quantityFinder.queueExport(db, actor, id, "XLSX"),
+          );
+        if (action === "pdf" && method === "POST")
+          return response(
+            await quantityFinder.queueExport(db, actor, id, "PDF"),
+          );
+        if (!action && method === "DELETE")
+          return response(await quantityFinder.remove(db, actor, id));
+      }
+    }
+    if (root === "quantity-finder-exports" && id) {
+      auth.requirePermission(actor, "QUANTITY_FINDER");
+      uuid(id);
+      const job = await one(
+        db,
+        "SELECT * FROM jobs WHERE id=$1 AND kind IN ('QUANTITY_XLSX','QUANTITY_PDF')",
+        [id],
+      );
+      assert(job && job.payload.ownerId === actor.id, 404, "Export not found");
+      if (action === "download") {
+        assert(job.status === "DONE", 409, "Export is not ready");
+        const pdf = job.kind === "QUANTITY_PDF",
+          ext = pdf ? "pdf" : "xlsx";
+        return new Response(
+          await fs.readFile(
+            path.join(
+              path.resolve(process.env.UPLOAD_DIR || ".data/uploads"),
+              "quantity-finder-exports",
+              `${id}.${ext}`,
+            ),
+          ),
+          {
+            headers: {
+              "Content-Type": pdf
+                ? "application/pdf"
+                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "Content-Disposition": `attachment; filename="AMT-quantity-finder.${ext}"`,
               "Cache-Control": "no-store",
             },
           },

@@ -404,7 +404,7 @@ export default function App() {
             className="main-nav"
             aria-label={t("Main navigation", "التنقل الرئيسي")}
           >
-            {[ 
+            {[
               ["workspace", "Workspace", "مساحة العمل"],
               ["draft", "Draft", "المسودة"],
               ["quotations", "Quotations", "العروض"],
@@ -438,7 +438,7 @@ export default function App() {
                     ? t("Catalog workspace", "مساحة الكتالوج")
                     : tab === "draft"
                       ? t("Draft quotation", "مسودة عرض السعر")
-                    : tab === "admin"
+                      : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
                 </h1>
@@ -457,7 +457,9 @@ export default function App() {
                   showAside
                   onAdd={(line) => {
                     setCart({ ...cart, lines: [...cart.lines, line] });
-                    setMessage(t("Added to quotation", "تمت الإضافة إلى عرض السعر"));
+                    setMessage(
+                      t("Added to quotation", "تمت الإضافة إلى عرض السعر"),
+                    );
                   }}
                 />
               </div>
@@ -468,6 +470,7 @@ export default function App() {
                   t={t}
                   cart={cart}
                   setCart={setCart}
+                  settings={session.settings}
                   online={online}
                   onSaved={(q) =>
                     setMessage(

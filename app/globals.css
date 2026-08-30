@@ -789,6 +789,50 @@ kbd {
   font-size: 12px;
   text-align: center;
 }
+.custom-line-entry {
+  margin: 0 0 14px;
+}
+.custom-line-toggle {
+  border-color: var(--red);
+  color: var(--red);
+}
+.custom-line-form {
+  margin-top: 10px;
+  padding: 16px;
+  border: 2px dashed #e3aeb4;
+  border-radius: 14px;
+  background: #fffafa;
+}
+.custom-line-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+.custom-line-head p {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.custom-line-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.custom-description {
+  grid-column: span 2;
+}
+.custom-line-badge {
+  margin-inline-start: 8px;
+  background: #fff1cc;
+  color: #6d4a00;
+}
+@media (max-width: 700px) {
+  .custom-line-fields {
+    grid-template-columns: 1fr;
+  }
+  .custom-description {
+    grid-column: auto;
+  }
+}
 .lookup-action-row {
   display: grid;
   gap: 10px;

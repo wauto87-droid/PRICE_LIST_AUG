@@ -17,6 +17,7 @@ import {
   normalizeLookupQuery,
   relatedLookupResults,
 } from "./lookup-view";
+import CustomLineForm from "./CustomLineForm";
 export default function Lookup({
   t,
   onAdd,
@@ -477,6 +478,12 @@ export default function Lookup({
   return (
     <div className={"lookup-layout" + (showAside ? "" : " lookup-compact")}>
       <section className="card lookup-card">
+        <CustomLineForm
+          t={t}
+          vat={String(settings.vat)}
+          onAdd={onAdd}
+          suggestedPart={query}
+        />
         <div className="lookup-search-panel">
           <div className="eyebrow">{t("PART LOOKUP", "البحث عن صنف")}</div>
           <div className="lookup-title-row">

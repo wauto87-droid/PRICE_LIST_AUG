@@ -12,7 +12,18 @@ import {
   requirePermission,
   lockActor,
 } from "../auth/service";
-import { lineInput, calculate, totals } from "../pricing/engine";
+import {
+  lineInput,
+  customLineInput,
+  calculate,
+  calculateCustom,
+  normalizePart,
+  totals,
+} from "../pricing/engine";
+const catalogLineInput = lineInput.extend({
+  type: z.literal("CATALOG").optional(),
+});
+const quotationLineInput = z.union([catalogLineInput, customLineInput]);
 import { getProduct, toInput } from "../products/service";
 import { allocateNumber } from "./settings";
 export const quoteInput = z
@@ -26,31 +37,72 @@ export const quoteInput = z
         notes: z.string().max(1000).default(""),
       })
       .strict(),
-    lines: z.array(lineInput).min(1).max(200),
+    lines: z.array(quotationLineInput).min(1).max(200),
   })
   .strict();
 // Pre-migration snapshots used the one original price, migrated to End Customer.
-export const savedLineInput = (line: any) => ({
-  ...line.input,
-  sellingLevel: line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
-});
+export const savedLineInput = (line: any) =>
+  line.source === "CUSTOM" || line.input?.type === "CUSTOM"
+    ? { ...line.input, type: "CUSTOM" }
+    : {
+        ...line.input,
+        type: line.input?.type ?? "CATALOG",
+        sellingLevel:
+          line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
+      };
 export async function snapshot(
   db: DB,
   actor: Actor,
-  lines: z.infer<typeof lineInput>[],
+  lines: z.infer<typeof quotationLineInput>[],
+  settings: any,
 ) {
   const result = [];
   await lockActor(db, actor);
+  const catalogLines = lines.filter(
+    (line): line is z.infer<typeof catalogLineInput> => line.type !== "CUSTOM",
+  );
   await db.query(
     "SELECT id FROM products WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE",
-    [[...new Set(lines.map((l) => l.productId))]],
+    [[...new Set(catalogLines.map((l) => l.productId))]],
   );
   for (const input of lines) {
+    if (input.type === "CUSTOM") {
+      if (input.partNumber) {
+        const normalized = normalizePart(input.partNumber);
+        const existing = await one(
+          db,
+          `SELECT p.part_number FROM products p WHERE p.normalized_part=$1
+           UNION ALL
+           SELECT p.part_number FROM product_aliases a JOIN products p ON p.id=a.product_id WHERE a.normalized=$1
+           LIMIT 1`,
+          [normalized],
+        );
+        assert(
+          !existing,
+          409,
+          `Part reference matches catalog item ${existing?.part_number}. Use the catalog item instead`,
+        );
+      }
+      const capturedVat = input.vat ?? settings.vat;
+      const price = calculateCustom(input, capturedVat);
+      result.push({
+        source: "CUSTOM",
+        partNumber: input.partNumber || "CUSTOM",
+        description: input.description,
+        unit: input.unit,
+        quantityPrecision: 6,
+        input: { ...input, vat: capturedVat },
+        price,
+        timestamp: new Date().toISOString(),
+      });
+      continue;
+    }
     const row = await getProduct(db, input.productId);
     assert(row.active, 409, `Product is archived: ${row.part_number}`);
     const p = toInput(row),
       calculation = calculate(p, pricingPolicy(actor), input);
     result.push({
+      source: "CATALOG",
       productId: row.id,
       partNumber: p.partNumber,
       description: p.description,
@@ -156,7 +208,7 @@ export async function saveDraft(
         "Draft changed on another device. Reload before saving",
       );
     }
-    const lines = await snapshot(tx, actor, data.lines);
+    const lines = await snapshot(tx, actor, data.lines, settings);
     const sum = totals(lines.map((l) => l.price));
     const quoteId = id ?? randomUUID();
     if (id)
@@ -177,7 +229,7 @@ export async function saveDraft(
         ],
       );
     for (const line of lines)
-      if (line.price.overridden)
+      if (line.source === "CATALOG" && line.price.overridden)
         await audit(
           tx,
           actor.id,
@@ -186,7 +238,7 @@ export async function saveDraft(
           quoteId,
           null,
           { productId: line.productId, price: line.price.finalExcl },
-          line.input.reason,
+          line.input.type === "CUSTOM" ? null : line.input.reason,
         );
     await audit(
       tx,
@@ -237,7 +289,12 @@ export async function reviewIssue(
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
     assert(q.status === "DRAFT", 409, "Only drafts can be issued");
-    const lines = await snapshot(tx, actor, q.lines.map(savedLineInput));
+    const lines = await snapshot(
+      tx,
+      actor,
+      q.lines.map(savedLineInput),
+      settings,
+    );
     return {
       token: fingerprint(q, lines, actor, settings),
       version: q.version,
@@ -263,7 +320,12 @@ export async function issue(
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
     assert(q.status === "DRAFT", 409, "Only drafts can be issued");
-    const lines = await snapshot(tx, actor, q.lines.map(savedLineInput));
+    const lines = await snapshot(
+      tx,
+      actor,
+      q.lines.map(savedLineInput),
+      settings,
+    );
     assert(
       fingerprint(q, lines, actor, settings) === token,
       409,
@@ -293,7 +355,7 @@ export async function issue(
       ],
     );
     for (const line of lines)
-      if (line.price.overridden)
+      if (line.source === "CATALOG" && line.price.overridden)
         await audit(
           tx,
           actor.id,
@@ -302,7 +364,7 @@ export async function issue(
           id,
           null,
           { productId: line.productId, price: line.price.finalExcl },
-          line.input.reason,
+          line.input.type === "CUSTOM" ? null : line.input.reason,
         );
     await audit(tx, actor.id, "QUOTATION_ISSUE", "quotations", id);
     return publicQuote(await getQuote(tx, actor, id), actor);

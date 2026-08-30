@@ -4,16 +4,20 @@ import { api, type Translate } from "./api";
 import { totals } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
 import { wheelSafeNumberInputProps } from "./number-input";
+import { calculateCustom } from "@/backend/pricing/engine";
+import CustomLineForm from "./CustomLineForm";
 export default function Cart({
   t,
   cart,
   setCart,
+  settings,
   online,
   onSaved,
 }: {
   t: Translate;
   cart: any;
   setCart: (c: any) => void;
+  settings: any;
   online: boolean;
   onSaved: (q: any) => void;
 }) {
@@ -48,16 +52,27 @@ export default function Cart({
     try {
       const lines = [];
       for (const line of cart.lines)
-        lines.push({
-          ...line,
-          price: await api("pricing", "POST", {
-            ...line.input,
-            sellingLevel:
-              line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
-          }),
-          pending: false,
-          offline: false,
-        });
+        lines.push(
+          line.input?.type === "CUSTOM"
+            ? {
+                ...line,
+                price: calculateCustom(line.input, String(settings.vat)),
+                pending: false,
+                offline: false,
+              }
+            : {
+                ...line,
+                price: await api("pricing", "POST", {
+                  ...line.input,
+                  sellingLevel:
+                    line.input.sellingLevel ??
+                    line.sellingLevel ??
+                    "END_CUSTOMER",
+                }),
+                pending: false,
+                offline: false,
+              },
+        );
       setCart({ ...cart, lines });
     } catch (e) {
       setError((e as Error).message);
@@ -78,8 +93,13 @@ export default function Cart({
           customer: cart.customer,
           lines: cart.lines.map((l: any) => ({
             ...l.input,
-            sellingLevel:
-              l.input.sellingLevel ?? l.sellingLevel ?? "END_CUSTOMER",
+            ...(l.input?.type === "CUSTOM"
+              ? {}
+              : {
+                  type: l.input?.type ?? "CATALOG",
+                  sellingLevel:
+                    l.input.sellingLevel ?? l.sellingLevel ?? "END_CUSTOMER",
+                }),
           })),
           ...(cart.id ? { version: cart.version } : { requestId }),
         },
@@ -115,6 +135,11 @@ export default function Cart({
           {cart.lines.length} {t("items", "أصناف")}
         </span>
       </div>
+      <CustomLineForm
+        t={t}
+        vat={String(settings.vat)}
+        onAdd={(line) => setCart({ ...cart, lines: [...cart.lines, line] })}
+      />
       <div className="form-grid">
         {[
           ["name", "Customer name", "اسم العميل"],
@@ -185,56 +210,82 @@ export default function Cart({
               {cart.lines.map((l: any, i: number) => (
                 <tr key={i}>
                   <td>
-                    <strong>{l.partNumber}</strong>
-                    <small>{l.description}</small>
-                    <label>
-                      {t("Selling level", "مستوى سعر البيع")}
-                      <select
-                        aria-label={
-                          t("Selling level", "مستوى سعر البيع") +
-                          " " +
-                          l.partNumber
-                        }
-                        disabled={busy}
-                        onFocus={() => {
-                          if (online) loadLevels(l.productId);
-                        }}
-                        value={
-                          l.input.sellingLevel ??
-                          l.sellingLevel ??
-                          "END_CUSTOMER"
-                        }
-                        onChange={(e) =>
-                          change(i, "sellingLevel", e.target.value)
-                        }
-                      >
-                        <option
+                    {l.input?.type === "CUSTOM" ? (
+                      <>
+                        <span className="pill custom-line-badge">
+                          {t("Custom", "مخصص")}
+                        </span>
+                        <input
+                          aria-label={t("Part / reference", "الصنف / المرجع")}
+                          value={l.input.partNumber}
+                          onChange={(e) =>
+                            change(i, "partNumber", e.target.value)
+                          }
+                        />
+                        <input
+                          aria-label={t("Description", "الوصف")}
+                          value={l.input.description}
+                          onChange={(e) =>
+                            change(i, "description", e.target.value)
+                          }
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <strong>{l.partNumber}</strong>
+                        <small>{l.description}</small>
+                      </>
+                    )}
+                    {l.input?.type !== "CUSTOM" && (
+                      <label>
+                        {t("Selling level", "مستوى سعر البيع")}
+                        <select
+                          aria-label={
+                            t("Selling level", "مستوى سعر البيع") +
+                            " " +
+                            l.partNumber
+                          }
+                          disabled={busy}
+                          onFocus={() => {
+                            if (online) loadLevels(l.productId);
+                          }}
                           value={
                             l.input.sellingLevel ??
                             l.sellingLevel ??
                             "END_CUSTOMER"
                           }
+                          onChange={(e) =>
+                            change(i, "sellingLevel", e.target.value)
+                          }
                         >
-                          {levelLabel(
-                            l.input.sellingLevel ?? l.sellingLevel,
-                            t,
-                          )}
-                        </option>
-                        {(options[l.productId] ?? l.sellingLevels ?? [])
-                          .filter(
-                            (v) =>
-                              v.code !==
-                              (l.input.sellingLevel ??
-                                l.sellingLevel ??
-                                "END_CUSTOMER"),
-                          )
-                          .map((v) => (
-                            <option key={v.code} value={v.code}>
-                              {levelLabel(v.code, t)} · {v.masterExcl}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
+                          <option
+                            value={
+                              l.input.sellingLevel ??
+                              l.sellingLevel ??
+                              "END_CUSTOMER"
+                            }
+                          >
+                            {levelLabel(
+                              l.input.sellingLevel ?? l.sellingLevel,
+                              t,
+                            )}
+                          </option>
+                          {(options[l.productId] ?? l.sellingLevels ?? [])
+                            .filter(
+                              (v) =>
+                                v.code !==
+                                (l.input.sellingLevel ??
+                                  l.sellingLevel ??
+                                  "END_CUSTOMER"),
+                            )
+                            .map((v) => (
+                              <option key={v.code} value={v.code}>
+                                {levelLabel(v.code, t)} · {v.masterExcl}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    )}
                   </td>
                   <td>
                     <input
@@ -261,7 +312,31 @@ export default function Cart({
                       onChange={(e) => change(i, "discount", e.target.value)}
                     />
                   </td>
-                  <td>{l.pending ? "—" : (l.price?.finalExcl ?? "—")}</td>
+                  <td>
+                    {l.input?.type === "CUSTOM" && (
+                      <input
+                        aria-label={
+                          t("Unit price", "سعر الوحدة") + " " + l.partNumber
+                        }
+                        className="compact"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        {...wheelSafeNumberInputProps}
+                        value={l.input.unitPriceExcl}
+                        onChange={(e) =>
+                          change(i, "unitPriceExcl", e.target.value)
+                        }
+                      />
+                    )}
+                    {l.input?.type === "CUSTOM" ? (
+                      <small>{l.pending ? "—" : l.price?.finalExcl}</small>
+                    ) : l.pending ? (
+                      "—"
+                    ) : (
+                      (l.price?.finalExcl ?? "—")
+                    )}
+                  </td>
                   <td>{l.pending ? "—" : (l.price?.total ?? "—")}</td>
                   <td>
                     <div className="actions">

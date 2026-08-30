@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   calculate,
+  calculateCustom,
   masterPrice,
   normalizePart,
   productInput,
@@ -24,6 +25,39 @@ test("Cost + markup example", () => {
   assert.equal(p.finalExcl, "125.00");
   assert.equal(p.vatAmount, "18.75");
   assert.equal(p.finalIncl, "143.75");
+});
+test("Custom quotation prices use exact line rounding and allow a full discount", () => {
+  const priced = calculateCustom(
+    {
+      type: "CUSTOM",
+      partNumber: "SPECIAL",
+      description: "Quotation-only item",
+      unit: "pcs",
+      quantity: "2.5",
+      unitPriceExcl: "19.99",
+      discount: "10",
+    },
+    "15",
+  );
+  assert.equal(priced.finalExcl, "17.99");
+  assert.equal(priced.subtotal, "44.98");
+  assert.equal(priced.vatAmount, "6.75");
+  assert.equal(priced.total, "51.73");
+  assert.equal(
+    calculateCustom(
+      {
+        type: "CUSTOM",
+        partNumber: "",
+        description: "Free sample",
+        unit: "pcs",
+        quantity: "1",
+        unitPriceExcl: "50",
+        discount: "100",
+      },
+      "15",
+    ).total,
+    "0.00",
+  );
 });
 test("List minus discount example", () => {
   const p = calculate(

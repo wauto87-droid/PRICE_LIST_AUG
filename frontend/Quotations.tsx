@@ -229,7 +229,9 @@ export default function Quotations({
                 <span>
                   <strong>{l.partNumber}</strong>
                   <small>
-                    {levelLabel(l.input?.sellingLevel ?? l.sellingLevel, t)}
+                    {l.source === "CUSTOM" || l.input?.type === "CUSTOM"
+                      ? t("Custom item", "صنف مخصص")
+                      : levelLabel(l.input?.sellingLevel ?? l.sellingLevel, t)}
                   </small>
                   <small>{l.description}</small>
                 </span>
@@ -258,7 +260,12 @@ export default function Quotations({
                   <div className="quote-line" key={i}>
                     <strong>{l.partNumber}</strong>
                     <small>
-                      {levelLabel(l.input?.sellingLevel ?? l.sellingLevel, t)}
+                      {l.source === "CUSTOM" || l.input?.type === "CUSTOM"
+                        ? t("Custom item", "صنف مخصص")
+                        : levelLabel(
+                            l.input?.sellingLevel ?? l.sellingLevel,
+                            t,
+                          )}
                     </small>
                     <span>
                       {review.before.lines[i].price.finalExcl} →{" "}
@@ -364,7 +371,11 @@ export default function Quotations({
                   <button
                     className="danger"
                     onClick={async () => {
-                      if (await showConfirm(t("Delete this draft?", "حذف هذه المسودة؟")))
+                      if (
+                        await showConfirm(
+                          t("Delete this draft?", "حذف هذه المسودة؟"),
+                        )
+                      )
                         action(async () => {
                           await api("quotations/" + selected.id, "DELETE");
                           setSelected(null);

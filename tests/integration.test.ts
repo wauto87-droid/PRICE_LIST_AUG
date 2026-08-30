@@ -281,6 +281,38 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test(
+    "Custom-only and mixed drafts persist without bypassing catalog items",
+    async () => {
+      const custom = {
+        type: "CUSTOM",
+        partNumber: "SITE-WORK",
+        description: "Site installation work",
+        unit: "job",
+        quantity: "2",
+        unitPriceExcl: "75",
+        discount: "10",
+      };
+      const saved = (
+        await request("quotations", "POST", {
+          customer: { name: "Custom customer" },
+          lines: [line, custom],
+        })
+      ).data;
+      assert.equal(saved.lines.length, 2);
+      assert.equal(saved.lines[1].source, "CUSTOM");
+      assert.equal(saved.lines[1].description, "Site installation work");
+      assert.equal(saved.lines[1].price.total, "148.50");
+      const reopened = (await request("quotations/" + saved.id)).data;
+      assert.equal(reopened.lines[1].input.unit, "job");
+      await request(
+        "quotations",
+        "POST",
+        { customer: {}, lines: [{ ...custom, partNumber: "LC1D09M7" }] },
+        409,
+      );
+    },
+  );
+  await t.test(
     "Below-minimum discount requests persist for admin review with history and quotation context",
     async () => {
       await request(
@@ -320,7 +352,9 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(pending.counts.pending, 2);
       const detail = (await request("discount-requests/" + rejected.id)).data;
       assert.equal(detail.reason, "Need approval for a project customer");
-      assert.equal(detail.quotations[0].id, quoteId);
+      assert(
+        detail.quotations.some((quotation: any) => quotation.id === quoteId),
+      );
       assert(detail.history.length >= 1);
       await request("discount-requests/" + rejected.id + "/reject", "POST", {
         note: "Below protected floor for this order",

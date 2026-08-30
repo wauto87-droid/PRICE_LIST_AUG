@@ -58,6 +58,19 @@ export const lineInput = z
   })
   .strict();
 export type LineInput = z.infer<typeof lineInput>;
+export const customLineInput = z
+  .object({
+    type: z.literal("CUSTOM"),
+    partNumber: z.string().trim().max(100).default(""),
+    description: z.string().trim().min(1).max(1000),
+    unit: z.string().trim().min(1).max(20).default("pcs"),
+    quantity: decimal,
+    unitPriceExcl: decimal,
+    discount: percent.default("0"),
+    vat: percent.optional(),
+  })
+  .strict();
+export type CustomLineInput = z.infer<typeof customLineInput>;
 export const money = (value: Decimal.Value) =>
   new Decimal(value).toDecimalPlaces(2).toFixed(2);
 export const normalizePart = (value: string) =>
@@ -223,7 +236,51 @@ export function calculate(
   };
 }
 export type Calculation = ReturnType<typeof calculate>;
-export function totals(lines: Calculation[]) {
+export function calculateCustom(
+  input: CustomLineInput,
+  vat: string,
+  quantityPrecision = 6,
+) {
+  const parsed = customLineInput.parse(input);
+  const qty = new Decimal(parsed.quantity);
+  if (!qty.gt(0) || qty.gt(1000000) || qty.decimalPlaces() > quantityPrecision)
+    throw new Error(
+      `Quantity must be positive with at most ${quantityPrecision} decimals`,
+    );
+  const rate = percent.parse(vat);
+  const master = new Decimal(parsed.unitPriceExcl);
+  const requested = new Decimal(parsed.discount);
+  const final = new Decimal(
+    money(master.mul(new Decimal(1).sub(requested.div(100)))),
+  );
+  const subtotal = money(final.mul(qty));
+  const vatAmount = money(new Decimal(subtotal).mul(rate).div(100));
+  return {
+    sellingLevel: "CUSTOM" as const,
+    masterExcl: master.toFixed(2),
+    masterIncl: money(
+      master.mul(new Decimal(1).add(new Decimal(rate).div(100))),
+    ),
+    requestedDiscount: requested.toString(),
+    allowedDiscount: requested.toString(),
+    effectiveDiscount: requested.toString(),
+    finalExcl: final.toFixed(2),
+    finalIncl: money(final.mul(new Decimal(1).add(new Decimal(rate).div(100)))),
+    vatRate: new Decimal(rate).toString(),
+    vatAmount,
+    subtotal,
+    total: money(new Decimal(subtotal).add(vatAmount)),
+    quantity: qty.toString(),
+    minimumReached: false,
+    discountLimited: false,
+    discountLimitSource: "CUSTOM" as const,
+    overridden: false,
+    maxDiscount: "100",
+  };
+}
+export function totals(
+  lines: { subtotal: string; vatAmount: string; total: string }[],
+) {
   const sum = (key: "subtotal" | "vatAmount" | "total") =>
     money(lines.reduce((a, l) => a.add(l[key]), new Decimal(0)));
   return {

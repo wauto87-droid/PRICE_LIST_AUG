@@ -22,6 +22,7 @@ import BulkRules from "./BulkRules";
 import QuotationSettings from "./QuotationSettings";
 import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
 import SalesPriceCheck from "./SalesPriceCheck";
+import QuantityFinder from "./QuantityFinder";
 import AdminDashboard from "./AdminDashboard";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
@@ -53,6 +54,7 @@ const sections = [
     "فحص أسعار المبيعات",
     "SALES_PRICE_CHECK",
   ],
+  ["quantity-finder", "Quantity Finder", "تجميع الكميات", "QUANTITY_FINDER"],
   ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
   ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
   ["users", "Users", "المستخدمون", "USER_MANAGE"],
@@ -116,8 +118,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [menuOpen, setMenuOpen] = useState(false),
     [dashboardMinimumProtectedPage, setDashboardMinimumProtectedPage] =
       useState(0),
-    [dashboardMinimumProtectedSelectionOffset, setDashboardMinimumProtectedSelectionOffset] =
-      useState(0),
+    [
+      dashboardMinimumProtectedSelectionOffset,
+      setDashboardMinimumProtectedSelectionOffset,
+    ] = useState(0),
     [query, setQuery] = useState(""),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
@@ -187,6 +191,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         "quotation-settings",
         "discount-requests",
         "sales-price-check",
+        "quantity-finder",
       ].includes(section)
     )
       return;
@@ -194,29 +199,28 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       const payload = await api(
         section === "products"
           ? "products?" +
-            new URLSearchParams({
-              q: overrides?.query ?? productQuery,
-              page: String(overrides?.page ?? productPage),
-              pageSize: "50",
-              selectionOffset: String(
-                overrides?.selectionOffset ?? productSelectionOffset,
-              ),
-              minimumFilter:
-                overrides?.minimumFilter ?? productMinimumFilter,
-              statusFilter: overrides?.statusFilter ?? productStatusFilter,
-              methodFilter: overrides?.methodFilter ?? productMethodFilter,
-            }).toString()
+              new URLSearchParams({
+                q: overrides?.query ?? productQuery,
+                page: String(overrides?.page ?? productPage),
+                pageSize: "50",
+                selectionOffset: String(
+                  overrides?.selectionOffset ?? productSelectionOffset,
+                ),
+                minimumFilter: overrides?.minimumFilter ?? productMinimumFilter,
+                statusFilter: overrides?.statusFilter ?? productStatusFilter,
+                methodFilter: overrides?.methodFilter ?? productMethodFilter,
+              }).toString()
           : section === "dashboard"
             ? "admin/dashboard?minimumProtectedPage=" +
-                String(
-                  overrides?.minimumProtectedPage ??
-                    dashboardMinimumProtectedPage,
-                ) +
-                "&minimumProtectedPageSize=50&minimumProtectedSelectionOffset=" +
-                String(
-                  overrides?.minimumProtectedSelectionOffset ??
-                    dashboardMinimumProtectedSelectionOffset,
-                )
+              String(
+                overrides?.minimumProtectedPage ??
+                  dashboardMinimumProtectedPage,
+              ) +
+              "&minimumProtectedPageSize=50&minimumProtectedSelectionOffset=" +
+              String(
+                overrides?.minimumProtectedSelectionOffset ??
+                  dashboardMinimumProtectedSelectionOffset,
+              )
             : "admin/" + section,
       );
       if (
@@ -240,17 +244,16 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         );
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
-      if (section === "dashboard" && payload && !Array.isArray(payload))
-        {
-          setDashboardMinimumProtectedPage(
-            overrides?.minimumProtectedPage ?? payload.minimumProtectedPage ?? 0,
-          );
-          setDashboardMinimumProtectedSelectionOffset(
-            overrides?.minimumProtectedSelectionOffset ??
-              payload.minimumProtectedSelectionOffset ??
-              0,
-          );
-        }
+      if (section === "dashboard" && payload && !Array.isArray(payload)) {
+        setDashboardMinimumProtectedPage(
+          overrides?.minimumProtectedPage ?? payload.minimumProtectedPage ?? 0,
+        );
+        setDashboardMinimumProtectedSelectionOffset(
+          overrides?.minimumProtectedSelectionOffset ??
+            payload.minimumProtectedSelectionOffset ??
+            0,
+        );
+      }
       setResult({ section, payload: validateAdminData(section, payload) });
     } catch (e) {
       if (
@@ -462,10 +465,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
   const selectedCount = Object.keys(selected).length;
   const showProductSelectionBar =
     section === "products" &&
-    (!!visibleProductIds.length || !!matchedProductItems.length || !!selectedCount);
+    (!!visibleProductIds.length ||
+      !!matchedProductItems.length ||
+      !!selectedCount);
   const protectedCleanupActive = productMinimumFilter === "PROTECTED";
-  const selectionOffset = productData?.selectionOffset ?? productSelectionOffset;
-  const selectionBatchStart = matchedProductItems.length ? selectionOffset + 1 : 0;
+  const selectionOffset =
+    productData?.selectionOffset ?? productSelectionOffset;
+  const selectionBatchStart = matchedProductItems.length
+    ? selectionOffset + 1
+    : 0;
   const selectionBatchEnd = selectionOffset + matchedProductItems.length;
   const bulkItems = buildBulkItems(selected);
   const openAdminSection = (
@@ -492,8 +500,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       );
     if (nextSection === "products") {
       const minimumFilter =
-        options.minimumFilter ??
-        (options.protectedOnly ? "PROTECTED" : "ALL");
+        options.minimumFilter ?? (options.protectedOnly ? "PROTECTED" : "ALL");
       setProductMinimumFilter(minimumFilter);
       setProductStatusFilter(options.statusFilter ?? "ALL");
       setProductMethodFilter(options.methodFilter ?? "ALL");
@@ -548,7 +555,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setEdit(full);
   };
   return (
-    <div className={`admin-layout ${menuOpen ? "menu-open" : "menu-collapsed"}`}>
+    <div
+      className={`admin-layout ${menuOpen ? "menu-open" : "menu-collapsed"}`}
+    >
       <div
         className={`admin-menu-backdrop ${menuOpen ? "open" : ""}`}
         onClick={() => setMenuOpen(false)}
@@ -608,6 +617,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               "quotation-settings",
               "discount-requests",
               "sales-price-check",
+              "quantity-finder",
             ].includes(section) && (
               <button disabled={busy} onClick={() => void load()}>
                 {t("Refresh", "تحديث")}
@@ -630,6 +640,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <DiscountRequestsAdmin t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "sales-price-check" ? (
           <SalesPriceCheck t={t} />
+        ) : section === "quantity-finder" ? (
+          <QuantityFinder t={t} />
         ) : !data ? (
           <p>
             {error
@@ -667,8 +679,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     {t(
                       "Protected minimum cleanup is active. This view shows only products with a positive minimum protection rule.",
                       "تنظيف الحد الأدنى المحمي نشط. يعرض هذا العرض فقط الأصناف التي لديها قاعدة حماية بحد أدنى موجب.",
-                    )}
-                    {" "}
+                    )}{" "}
                     <button
                       type="button"
                       onClick={() => {
@@ -843,7 +854,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     aria-label={t("Status filter", "تصفية الحالة")}
                     value={productStatusFilter}
                     onChange={(e) => {
-                      const statusFilter = e.target.value as ProductStatusFilter;
+                      const statusFilter = e.target
+                        .value as ProductStatusFilter;
                       setSelected({});
                       setPreview(null);
                       setProductStatusFilter(statusFilter);
@@ -867,7 +879,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     aria-label={t("Method filter", "تصفية الطريقة")}
                     value={productMethodFilter}
                     onChange={(e) => {
-                      const methodFilter = e.target.value as ProductMethodFilter;
+                      const methodFilter = e.target
+                        .value as ProductMethodFilter;
                       setSelected({});
                       setPreview(null);
                       setProductMethodFilter(methodFilter);
@@ -959,7 +972,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       <div className="actions wrap">
                         <button
                           disabled={
-                            busy || !matchedProductItems.length || allMatchedSelected
+                            busy ||
+                            !matchedProductItems.length ||
+                            allMatchedSelected
                           }
                           onClick={() => {
                             setSelected({
