@@ -527,7 +527,7 @@ export async function finalize(
     assert(
       incomplete.length === 0,
       409,
-      "Complete every included row before creating the quotation",
+      "Some included rows still need price or corrections. Complete or remove them before creating the quotation",
     );
     const quote = await saveDraft(
       tx,

@@ -82,6 +82,29 @@ export default function DeliveryQuoteImport({
   const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
   const completedJobs = jobs.filter((item) => item.quote_id);
   const headerSummary = job?.header || job?.summary || {};
+  const visibleRowIds = (job?.rows || []).map((row: any) => row.id);
+  const allVisibleSelected =
+    visibleRowIds.length > 0 && visibleRowIds.every((id: string) => selected[id]);
+  const someVisibleSelected =
+    visibleRowIds.some((id: string) => selected[id]) && !allVisibleSelected;
+  const toggleVisibleRows = (checked: boolean) =>
+    setSelected((current) => {
+      const next = { ...current };
+      for (const id of visibleRowIds) next[id] = checked;
+      return next;
+    });
+  const resolutionLabel = (resolution: string) =>
+    resolution === "MATCHED_CATALOG"
+      ? t("Catalog item", "صنف من الكتالوج")
+      : resolution === "UNMATCHED_CUSTOM"
+        ? t("Custom item", "صنف مخصص")
+        : t("Needs review", "يحتاج مراجعة");
+  const completionLabel = (row: any) =>
+    row.action === "REMOVE"
+      ? t("Removed", "محذوف")
+      : row.completed
+        ? t("Complete", "مكتمل")
+        : t("Needs work", "يحتاج عمل");
 
   return (
     <section className="card">
@@ -397,7 +420,17 @@ export default function DeliveryQuoteImport({
             <table>
               <thead>
                 <tr>
-                  <th></th>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      ref={(node) => {
+                        if (node) node.indeterminate = someVisibleSelected;
+                      }}
+                      aria-label={t("Select all rows", "تحديد كل الصفوف")}
+                      onChange={(e) => toggleVisibleRows(e.target.checked)}
+                    />
+                  </th>
                   <th>{t("Row", "الصف")}</th>
                   <th>{t("Part / description", "الصنف / الوصف")}</th>
                   <th>{t("Qty", "الكمية")}</th>
@@ -499,13 +532,9 @@ export default function DeliveryQuoteImport({
                       </td>
                       <td>
                         <span className={"pill " + (row.completed ? "success" : "")}>
-                          {row.action === "REMOVE"
-                            ? t("Removed", "محذوف")
-                            : row.completed
-                              ? t("Complete", "مكتمل")
-                              : t("Needs work", "يحتاج عمل")}
+                          {completionLabel(row)}
                         </span>
-                        <small>{row.resolution}</small>
+                        <small>{resolutionLabel(row.resolution)}</small>
                         {!!row.issues?.length && (
                           <small>{row.issues.join("; ")}</small>
                         )}
