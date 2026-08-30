@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
+import { chunkBulkItems } from "./admin-products";
 import {
   importSummaryDetails,
   importSummaryLines,
@@ -44,6 +45,7 @@ export default function AdminDashboard({
   onReload,
   onOpenSection,
   onMinimumProtectedPageChange,
+  onMinimumProtectedBatchChange,
   onEditProduct,
 }: {
   t: Translate;
@@ -59,6 +61,7 @@ export default function AdminDashboard({
     },
   ) => void;
   onMinimumProtectedPageChange: (page: number) => void;
+  onMinimumProtectedBatchChange: (offset: number) => void;
   onEditProduct: (id: string) => Promise<void>;
 }) {
   const [panel, setPanel] = useState<DashboardPanel>("pending-imports");
@@ -107,6 +110,7 @@ export default function AdminDashboard({
     id,
     version,
   }));
+  const minimumSelectableItems = data.minimumProtectedSelectionItems || [];
   const importItems = Object.values(selectedImports);
 
   const awaitingReviewSelected = importItems.filter(isAwaitingReview);
@@ -117,12 +121,21 @@ export default function AdminDashboard({
   const allMinimumVisible =
     !!data.minimumProtected.length &&
     data.minimumProtected.every((row: any) => row.id in selectedMinimums);
+  const allMinimumBatchSelected =
+    !!minimumSelectableItems.length &&
+    minimumSelectableItems.every((row: any) => row.id in selectedMinimums);
   const minimumProtectedRangeStart = data.minimumProtectedTotalRows
     ? data.minimumProtectedPage * data.minimumProtectedPageSize + 1
     : 0;
   const minimumProtectedRangeEnd = data.minimumProtectedTotalRows
     ? minimumProtectedRangeStart + data.minimumProtected.length - 1
     : 0;
+  const minimumSelectionOffset = data.minimumProtectedSelectionOffset ?? 0;
+  const minimumSelectionBatchStart = minimumSelectableItems.length
+    ? minimumSelectionOffset + 1
+    : 0;
+  const minimumSelectionBatchEnd =
+    minimumSelectionOffset + minimumSelectableItems.length;
 
   const selectedDuplicateCount = duplicateSelection.length;
   const selectedMinimumCount = minimumItems.length;
@@ -323,12 +336,14 @@ export default function AdminDashboard({
             : t("Minimum prices could not be saved", "تعذر حفظ أسعار الحد الأدنى"),
       },
       async () => {
-        await api("products/bulk", "POST", {
-          items: minimumItems,
-          operation,
-          ...(operation === "MINIMUM" ? { value: newMinimum.trim() } : {}),
-          confirm: true,
-        });
+        for (const chunk of chunkBulkItems(minimumItems)) {
+          await api("products/bulk", "POST", {
+            items: chunk,
+            operation,
+            ...(operation === "MINIMUM" ? { value: newMinimum.trim() } : {}),
+            confirm: true,
+          });
+        }
         setSelectedMinimums({});
         if (operation === "REMOVE_MINIMUM") setNewMinimum("");
         await onReload();
@@ -798,6 +813,90 @@ export default function AdminDashboard({
           </button>
         </div>
       </div>
+      <div className="dashboard-bulk-bar">
+        <span>
+          {selectedMinimumCount
+            ? t(
+                `${selectedMinimumCount} minimum-protected products selected`,
+                `تم تحديد ${selectedMinimumCount} من الأصناف المحمية بالحد الأدنى`,
+              )
+            : t(
+                "Select products for minimum cleanup",
+                "حدد أصنافاً لتنظيف الحد الأدنى",
+              )}
+        </span>
+        <button
+          disabled={!data.minimumProtected.length}
+          onClick={() =>
+            setSelectedMinimums((current) => ({
+              ...current,
+              ...Object.fromEntries(
+                data.minimumProtected.map((row: any) => [row.id, row.version]),
+              ),
+            }))
+          }
+        >
+          {t("Select visible 50", "تحديد 50 الظاهرة")}
+        </button>
+        <button
+          disabled={!minimumSelectableItems.length || allMinimumBatchSelected}
+          onClick={() =>
+            setSelectedMinimums((current) => ({
+              ...current,
+              ...Object.fromEntries(
+                minimumSelectableItems.map((row: any) => [row.id, row.version]),
+              ),
+            }))
+          }
+        >
+          {t("Select current batch", "تحديد الدفعة الحالية")}
+        </button>
+        <button
+          disabled={minimumSelectionOffset === 0}
+          onClick={() => {
+            setSelectedMinimums({});
+            onMinimumProtectedBatchChange(
+              Math.max(minimumSelectionOffset - 5000, 0),
+            );
+          }}
+        >
+          {t("Previous batch", "الدفعة السابقة")}
+        </button>
+        <button
+          disabled={!data.minimumProtectedSelectionHasMore}
+          onClick={() => {
+            setSelectedMinimums({});
+            onMinimumProtectedBatchChange(
+              minimumSelectionOffset + minimumSelectableItems.length,
+            );
+          }}
+        >
+          {t("Next batch", "الدفعة التالية")}
+        </button>
+        <button
+          disabled={!selectedMinimumCount}
+          onClick={() => setSelectedMinimums({})}
+        >
+          {t("Clear selection", "مسح التحديد")}
+        </button>
+      </div>
+      <p className="muted">
+        {minimumSelectableItems.length
+          ? t(
+              `Batch ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd} of ${data.minimumProtectedTotalRows} protected products is ready for bulk cleanup.`,
+              `الدفعة ${minimumSelectionBatchStart}-${minimumSelectionBatchEnd} من ${data.minimumProtectedTotalRows} من الأصناف المحمية جاهزة للتنظيف الجماعي.`,
+            )
+          : t(
+              "No protected products are loaded for bulk cleanup.",
+              "لا توجد أصناف محمية محملة للتنظيف الجماعي.",
+            )}
+        {data.minimumProtectedSelectionLimitReached
+          ? t(
+              " Apply this batch, then move to the next one.",
+              " طبّق هذه الدفعة ثم انتقل إلى التالية.",
+            )
+          : ""}
+      </p>
       <div className="table-scroll">
         <table className="dashboard-table">
           <thead>

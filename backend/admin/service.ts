@@ -85,12 +85,25 @@ export async function saveSettings(db: DB, actor: Actor, input: unknown) {
 }
 export async function dashboard(
   db: DB,
-  options: { minimumProtectedPage?: number; minimumProtectedPageSize?: number } = {},
+  options: {
+    minimumProtectedPage?: number;
+    minimumProtectedPageSize?: number;
+    minimumProtectedSelectionOffset?: number;
+    minimumProtectedSelectionLimit?: number;
+  } = {},
 ) {
   const minimumProtectedPage = Math.max(options.minimumProtectedPage ?? 0, 0);
   const minimumProtectedPageSize = Math.min(
     Math.max(options.minimumProtectedPageSize ?? 50, 1),
     200,
+  );
+  const minimumProtectedSelectionLimit = Math.min(
+    Math.max(options.minimumProtectedSelectionLimit ?? 5000, 1),
+    5000,
+  );
+  const minimumProtectedSelectionOffset = Math.max(
+    options.minimumProtectedSelectionOffset ?? 0,
+    0,
   );
   const minimumProtectedTotalRows = Number(
     (
@@ -198,12 +211,32 @@ export async function dashboard(
         [minimumProtectedPageSize, minimumProtectedOffset],
       )
     ).rows,
+    minimumProtectedSelectionItems: (
+      await db.query(
+        `SELECT
+           p.id,
+           p.version
+         FROM products p
+         JOIN product_pricing pp ON pp.product_id = p.id
+         WHERE pp.minimum_enabled
+           AND pp.minimum > 0
+         ORDER BY p.updated_at DESC, p.part_number
+         LIMIT $1 OFFSET $2`,
+        [minimumProtectedSelectionLimit, minimumProtectedSelectionOffset],
+      )
+    ).rows,
     minimumProtectedPage: safeMinimumProtectedPage,
     minimumProtectedPageSize,
     minimumProtectedTotalRows,
     minimumProtectedTotalPages,
     minimumProtectedHasMore:
       safeMinimumProtectedPage + 1 < minimumProtectedTotalPages,
+    minimumProtectedSelectionOffset,
+    minimumProtectedSelectionHasMore:
+      minimumProtectedSelectionOffset + minimumProtectedSelectionLimit <
+      minimumProtectedTotalRows,
+    minimumProtectedSelectionLimitReached:
+      minimumProtectedTotalRows > minimumProtectedSelectionLimit,
     updatedTodayItems: (
       await db.query(
         `SELECT

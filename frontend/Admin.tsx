@@ -113,6 +113,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     [menuOpen, setMenuOpen] = useState(false),
     [dashboardMinimumProtectedPage, setDashboardMinimumProtectedPage] =
       useState(0),
+    [dashboardMinimumProtectedSelectionOffset, setDashboardMinimumProtectedSelectionOffset] =
+      useState(0),
     [query, setQuery] = useState(""),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
@@ -163,6 +165,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     selectionOffset?: number;
     protectedOnly?: boolean;
     minimumProtectedPage?: number;
+    minimumProtectedSelectionOffset?: number;
   }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
@@ -194,7 +197,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   overrides?.minimumProtectedPage ??
                     dashboardMinimumProtectedPage,
                 ) +
-                "&minimumProtectedPageSize=50"
+                "&minimumProtectedPageSize=50&minimumProtectedSelectionOffset=" +
+                String(
+                  overrides?.minimumProtectedSelectionOffset ??
+                    dashboardMinimumProtectedSelectionOffset,
+                )
             : "admin/" + section,
       );
       if (
@@ -213,9 +220,16 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
       if (section === "dashboard" && payload && !Array.isArray(payload))
-        setDashboardMinimumProtectedPage(
-          overrides?.minimumProtectedPage ?? payload.minimumProtectedPage ?? 0,
-        );
+        {
+          setDashboardMinimumProtectedPage(
+            overrides?.minimumProtectedPage ?? payload.minimumProtectedPage ?? 0,
+          );
+          setDashboardMinimumProtectedSelectionOffset(
+            overrides?.minimumProtectedSelectionOffset ??
+              payload.minimumProtectedSelectionOffset ??
+              0,
+          );
+        }
       setResult({ section, payload: validateAdminData(section, payload) });
     } catch (e) {
       if (
@@ -234,6 +248,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setPreview(null);
     setProductPage(0);
     setProductSelectionOffset(0);
+    setDashboardMinimumProtectedSelectionOffset(0);
     setLoadedProductQuery("");
     setSearchFocused(false);
     setActiveSuggestion(-1);
@@ -435,6 +450,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     nextSection: string,
     options: {
       minimumProtectedPage?: number;
+      minimumProtectedSelectionOffset?: number;
       protectedOnly?: boolean;
       query?: string;
     } = {},
@@ -445,6 +461,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     setMenuOpen(false);
     if (nextSection === "dashboard")
       setDashboardMinimumProtectedPage(options.minimumProtectedPage ?? 0);
+    if (nextSection === "dashboard")
+      setDashboardMinimumProtectedSelectionOffset(
+        options.minimumProtectedSelectionOffset ?? 0,
+      );
     if (nextSection === "products") {
       setProductProtectedOnly(options.protectedOnly ?? false);
       setQuery(options.query ?? "");
@@ -459,7 +479,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setQuery("");
       setProductQuery("");
     }
-    if (nextSection !== "dashboard") setDashboardMinimumProtectedPage(0);
+    if (nextSection !== "dashboard") {
+      setDashboardMinimumProtectedPage(0);
+      setDashboardMinimumProtectedSelectionOffset(0);
+    }
     setSection(nextSection);
   };
   const editField = (key: string, label: string, type = "text") => (
@@ -595,6 +618,12 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 onOpenSection={openAdminSection}
                 onMinimumProtectedPageChange={(nextPage) =>
                   void load({ minimumProtectedPage: nextPage })
+                }
+                onMinimumProtectedBatchChange={(nextOffset) =>
+                  void load({
+                    minimumProtectedPage: dashboardMinimumProtectedPage,
+                    minimumProtectedSelectionOffset: nextOffset,
+                  })
                 }
                 onEditProduct={editProductById}
               />
