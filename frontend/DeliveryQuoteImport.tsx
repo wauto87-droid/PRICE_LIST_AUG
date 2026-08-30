@@ -81,6 +81,7 @@ export default function DeliveryQuoteImport({
   const isAdmin = user.permissions.includes("QUOTE_VIEW_ALL");
   const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
   const completedJobs = jobs.filter((item) => item.quote_id);
+  const headerSummary = job?.header || job?.summary || {};
 
   return (
     <section className="card">
@@ -230,6 +231,24 @@ export default function DeliveryQuoteImport({
           {job.summary.warnings.join(" ")}
         </div>
       ) : null}
+      {job && (
+        <div className="quantity-drilldown-summary">
+          <span>
+            {t("Customer", "العميل")}:{" "}
+            {headerSummary.customerName ||
+              t("Will be set from the mapped header", "سيتم تعيينه من الرأس المرتبط")}
+          </span>
+          <span>
+            {t("Delivery rows", "صفوف التسليم")}: {job.summary?.totalRows || 0}
+          </span>
+          <span>
+            {t("Delivery references", "مراجع التسليم")}:{" "}
+            {Array.isArray(headerSummary.docNos) && headerSummary.docNos.length
+              ? headerSummary.docNos.join(", ")
+              : "—"}
+          </span>
+        </div>
+      )}
       {job?.status === "AWAITING_MAPPING" && (
         <div className="form-grid three">
           {[
@@ -261,11 +280,17 @@ export default function DeliveryQuoteImport({
             disabled={busy || !mapping.customerName || !mapping.partNumber || !mapping.description || !mapping.quantity || !mapping.docNo || !mapping.date}
             onClick={() =>
               void run(async () => {
-                await api(`delivery-quote-imports/${job.id}/mapping`, "POST", {
+                const payload = {
                   version: job.version,
-                  ...mapping,
+                  date: mapping.date,
+                  docNo: mapping.docNo,
+                  customerName: mapping.customerName,
+                  partNumber: mapping.partNumber,
+                  description: mapping.description,
+                  quantity: mapping.quantity,
                   ...(mapping.price ? { price: mapping.price } : {}),
-                });
+                };
+                await api(`delivery-quote-imports/${job.id}/mapping`, "POST", payload);
                 await open(job.id);
               })
             }
@@ -283,6 +308,12 @@ export default function DeliveryQuoteImport({
                   "Review rows, remove anything unnecessary, complete custom rows, then create the quotation.",
                   "راجع الصفوف، احذف غير الضروري، أكمل الصفوف المخصصة، ثم أنشئ عرض السعر.",
                 )}
+          </div>
+          <div className="notice">
+            {t(
+              "Customer details will be added once in the quotation header. Review and complete the line rows below.",
+              "ستتم إضافة بيانات العميل مرة واحدة في رأس عرض السعر. راجع وأكمل صفوف البنود أدناه.",
+            )}
           </div>
           <div className="actions wrap">
             {[
@@ -370,7 +401,8 @@ export default function DeliveryQuoteImport({
                   <th>{t("Row", "الصف")}</th>
                   <th>{t("Part / description", "الصنف / الوصف")}</th>
                   <th>{t("Qty", "الكمية")}</th>
-                  <th>{t("Price", "السعر")}</th>
+                  <th>{t("File price", "سعر الملف")}</th>
+                  <th>{t("Quotation price", "سعر عرض السعر")}</th>
                   <th>{t("Status", "الحالة")}</th>
                   <th>{t("Actions", "إجراءات")}</th>
                 </tr>
@@ -427,7 +459,16 @@ export default function DeliveryQuoteImport({
                       <td>
                         <div className="delivery-price-stack">
                           <input
-                            value={input.unitPriceExcl || row.source_price || ""}
+                            value={row.source_price || ""}
+                            readOnly
+                            placeholder="—"
+                          />
+                        </div>
+                      </td>
+                      <td>
+                        <div className="delivery-price-stack">
+                          <input
+                            value={input.unitPriceExcl || ""}
                             disabled={row.resolution !== "UNMATCHED_CUSTOM"}
                             onChange={(e) => {
                               const rows = job.rows.map((item: any) =>
@@ -443,6 +484,11 @@ export default function DeliveryQuoteImport({
                               );
                               setJob({ ...job, rows });
                             }}
+                            placeholder={
+                              row.resolution === "UNMATCHED_CUSTOM"
+                                ? t("Enter price", "أدخل السعر")
+                                : t("Uses catalog price", "يستخدم سعر الكتالوج")
+                            }
                           />
                           {row.source_price && row.resolution === "MATCHED_CATALOG" && (
                             <small>

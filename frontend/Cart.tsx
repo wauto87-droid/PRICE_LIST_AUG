@@ -5,7 +5,6 @@ import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
 import { wheelSafeNumberInputProps } from "./number-input";
 import CustomLineForm from "./CustomLineForm";
-import DeliveryQuoteImport from "./DeliveryQuoteImport";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import { humanizeCustomLineError } from "./custom-line-errors";
 import {
@@ -260,26 +259,6 @@ export default function Cart({
 
   return (
     <section className="card">
-      <DeliveryQuoteImport
-        t={t}
-        user={user}
-        online={online}
-        onImported={(q) => {
-          setCart({
-            id: q.id,
-            version: q.version,
-            number: q.number,
-            customer: q.customer,
-            lines: q.lines,
-          });
-          setNotice(
-            t(
-              "Delivery note imported into the current quotation.",
-              "تم استيراد إذن التسليم إلى عرض السعر الحالي.",
-            ),
-          );
-        }}
-      />
       <div className="section-title">
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>

@@ -150,6 +150,107 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   await db.close?.();
 });
 
+test("Delivery-note quotation import accepts files with no mapped price column", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-quote-no-price-token-long-enough";
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin",
+    password: "abcd",
+    name: "Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  const productId = randomUUID();
+  await db.query(
+    "INSERT INTO products(id,part_number,normalized_part,description,keywords,unit,quantity_precision,active,created_by,updated_by) VALUES($1,'ITEM-1','ITEM-1','Catalog item','',$2,0,true,$3,$3)",
+    [productId, "pcs", actor.id],
+  );
+  await db.query(
+    "INSERT INTO product_selling_levels(product_id,code,active,method,fixed_price,markup,list_price,base_discount) VALUES($1,'END_CUSTOMER',true,'LIST_DISCOUNT',0,0,45,0)",
+    [productId],
+  );
+  await db.query(
+    "INSERT INTO product_pricing(product_id,method,cost,markup,list_price,base_discount,master_excl,vat,minimum_enabled,minimum,default_level) VALUES($1,'LIST_DISCOUNT',0,0,45,0,45,15,false,0,'END_CUSTOMER')",
+    [productId],
+  );
+  const jobId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'1533.XLS','fixture','AWAITING_MAPPING',$2,$3)",
+    [jobId, actor.id, json({ columns: ["Date", "Doc.No", "Customer", "Item Code", "Item Name", "Qty"] })],
+  );
+  const customRowId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5)",
+    [
+      randomUUID(),
+      jobId,
+      json({
+        Date: "2026-08-31",
+        "Doc.No": "DN-300",
+        Customer: "ACME",
+        "Item Code": "ITEM-1",
+        "Item Name": "Catalog item",
+        Qty: "2",
+      }),
+      customRowId,
+      json({
+        Date: "2026-08-31",
+        "Doc.No": "DN-300",
+        Customer: "ACME",
+        "Item Code": "SITE-SERVICE",
+        "Item Name": "Site service",
+        Qty: "1",
+      }),
+    ],
+  );
+  await mapRows(db, actor, jobId, {
+    version: 1,
+    date: "Date",
+    docNo: "Doc.No",
+    customerName: "Customer",
+    partNumber: "Item Code",
+    description: "Item Name",
+    quantity: "Qty",
+  });
+  let opened: any = await get(db, actor, jobId);
+  assert.equal(opened.status, "AWAITING_REVIEW");
+  assert.equal(opened.mapping.price, undefined);
+  assert.equal(opened.summary.customerName, "ACME");
+  assert.equal(opened.rows.length, 2);
+  const matched = opened.rows.find((row: any) => row.resolution === "MATCHED_CATALOG");
+  const custom = opened.rows.find((row: any) => row.id === customRowId);
+  assert.equal(matched.completed, true);
+  assert.equal(custom.completed, false);
+  await reviewRows(db, actor, jobId, {
+    version: opened.version,
+    rowIds: [customRowId],
+    completed: true,
+    updates: {
+      unitPriceExcl: "25",
+      quantity: "1",
+    },
+  });
+  opened = await get(db, actor, jobId);
+  const quote: any = await finalize(db, actor, jobId, {
+    version: opened.version,
+  });
+  assert.equal(quote.customer.name, "ACME");
+  assert.equal(quote.lines.length, 2);
+  assert.equal(quote.lines[0].source, "CATALOG");
+  assert.equal(quote.lines[0].price.finalExcl, "45.00");
+  assert.equal(quote.lines[1].source, "CUSTOM");
+  assert.equal(quote.lines[1].price.finalExcl, "25.00");
+  await db.close?.();
+});
+
 test("Delivery-note quotation import blocks finalize when customer names are mixed", async () => {
   const db = await embedded();
   await migrate(db);

@@ -4,6 +4,7 @@ import { api, setCsrf } from "@/frontend/api";
 import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
+import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
 import Admin from "@/frontend/Admin";
 import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
@@ -407,6 +408,7 @@ export default function App() {
             {[
               ["workspace", "Workspace", "مساحة العمل"],
               ["draft", "Quotation", "عرض السعر"],
+              ["delivery", "Delivery note to quotation", "إذن التسليم إلى عرض سعر"],
               ["quotations", "Quotations", "العروض"],
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [["admin", "Admin", "الإدارة"]]
@@ -438,6 +440,11 @@ export default function App() {
                     ? t("Catalog workspace", "مساحة الكتالوج")
                     : tab === "draft"
                       ? t("Current quotation", "عرض السعر الحالي")
+                      : tab === "delivery"
+                        ? t(
+                            "Delivery note to quotation",
+                            "إذن التسليم إلى عرض سعر",
+                          )
                       : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
@@ -504,6 +511,37 @@ export default function App() {
                 </div>
               </div>
             )}
+            {tab === "delivery" &&
+              (online ? (
+                <DeliveryQuoteImport
+                  t={t}
+                  user={session.user}
+                  online={online}
+                  onImported={(q) => {
+                    setCart({
+                      id: q.id,
+                      version: q.version,
+                      number: q.number,
+                      customer: q.customer,
+                      lines: q.lines,
+                    });
+                    setTab("draft");
+                    setMessage(
+                      t(
+                        "Delivery note imported into the current quotation.",
+                        "تم استيراد إذن التسليم إلى عرض السعر الحالي.",
+                      ),
+                    );
+                  }}
+                />
+              ) : (
+                <div className="card notice">
+                  {t(
+                    "Reconnect to upload or review delivery-note quotation files.",
+                    "أعد الاتصال لرفع أو مراجعة ملفات عروض أسعار أذونات التسليم.",
+                  )}
+                </div>
+              ))}
             {tab === "quotations" &&
               (online ? (
                 <Quotations t={t} user={session.user} onOpen={openQuote} />
