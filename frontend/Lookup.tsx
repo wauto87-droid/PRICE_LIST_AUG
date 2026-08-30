@@ -409,6 +409,27 @@ export default function Lookup({
     setDiscountRequestReason("");
     searchRef.current?.focus();
   }
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k")
+        return;
+      if (document.activeElement === searchRef.current) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+      if (
+        filteredSuggestions.length &&
+        !isSelectedLookupQuery(query, selected?.partNumber)
+      ) {
+        setSuggestionsOpen(true);
+        setHighlightedIndex((current) =>
+          activeSuggestionIndex(current, filteredSuggestions.length),
+        );
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filteredSuggestions.length, query, selected?.partNumber]);
   let displayPrice = price?.value ?? null;
   let previewOnly = false;
   let previewError = "";
@@ -812,220 +833,229 @@ export default function Lookup({
         )}
         {selected && (
           <>
-            <div className="product-heading">
-              <div>
-                <h2>{selected.partNumber}</h2>
-                <p>{selected.description}</p>
-              </div>
-              <span className="pill">
-                {[selected.brand, selected.category]
-                  .filter(Boolean)
-                  .join(" · ") || t("Catalog item", "صنف كتالوج")}
-              </span>
-            </div>
-            <div
-              className="selling-levels"
-              role="group"
-              aria-label={t("Price option", "خيار السعر")}
-            >
-              {visibleLevels(selected).map((l) => (
-                <button
-                  key={l.code}
-                  type="button"
-                  className={
-                    "selling-level" +
-                    (sellingLevel === l.code ? " selected" : "")
-                  }
-                  aria-pressed={sellingLevel === l.code}
-                  onClick={() => chooseLevel(l.code)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      chooseLevel(l.code);
-                    }
-                  }}
-                >
-                  <span>
-                    {levelLabel(l.code, t)} {sellingLevel === l.code ? "✓" : ""}
+            <div className="lookup-selected-workspace">
+              <div className="lookup-selected-main">
+                <div className="product-heading">
+                  <div>
+                    <h2>{selected.partNumber}</h2>
+                    <p>{selected.description}</p>
+                  </div>
+                  <span className="pill">
+                    {[selected.brand, selected.category]
+                      .filter(Boolean)
+                      .join(" · ") || t("Catalog item", "صنف كتالوج")}
                   </span>
-                  {l.code === (selected.defaultLevel ?? "END_CUSTOMER") && (
-                    <small>{t("Main price", "السعر الرئيسي")}</small>
-                  )}
-                  <strong>{l.masterExcl}</strong>
-                  <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
-                  <small>
-                    {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
-                  </small>
-                </button>
-              ))}
-            </div>
-            <div className="field-pair">
-              <label>
-                {t("DISCOUNT %", "الخصم %")}
-                <input
-                  ref={discountRef}
-                  inputMode="decimal"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  {...wheelSafeNumberInputProps}
-                  value={discount}
-                  placeholder="0"
-                  onChange={(e) => setDiscount(e.target.value)}
-                />
-              </label>
-              <label>
-                {t("QUANTITY", "الكمية")} · {selected.unit}
-                <input
-                  inputMode="decimal"
-                  type="number"
-                  min={selected.quantityPrecision ? "0.001" : "1"}
-                  step={
-                    selected.quantityPrecision
-                      ? Math.pow(10, -selected.quantityPrecision)
-                      : 1
-                  }
-                  {...wheelSafeNumberInputProps}
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") add();
-                  }}
-                />
-              </label>
-            </div>
-            <div className="final-price">
-              <div className="eyebrow">
-                {online
-                  ? t(
-                      previewOnly
-                        ? "PREVIEW PRICE — VALIDATED ON ADD"
-                        : "FINAL PRICE",
-                      previewOnly
-                        ? "سعر معاينة — يتم التحقق عند الإضافة"
-                        : "السعر النهائي",
-                    ) +
-                    " · " +
-                    levelLabel(sellingLevel, t)
-                  : t(
-                      "OFFLINE ESTIMATE — NOT VALIDATED",
-                      "تقدير دون اتصال — غير معتمد",
-                    )}
+                </div>
+                <div
+                  className="selling-levels"
+                  role="group"
+                  aria-label={t("Price option", "خيار السعر")}
+                >
+                  {visibleLevels(selected).map((l) => (
+                    <button
+                      key={l.code}
+                      type="button"
+                      className={
+                        "selling-level" +
+                        (sellingLevel === l.code ? " selected" : "")
+                      }
+                      aria-pressed={sellingLevel === l.code}
+                      onClick={() => chooseLevel(l.code)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          chooseLevel(l.code);
+                        }
+                      }}
+                    >
+                      <span>
+                        {levelLabel(l.code, t)}{" "}
+                        {sellingLevel === l.code ? "✓" : ""}
+                      </span>
+                      {l.code === (selected.defaultLevel ?? "END_CUSTOMER") && (
+                        <small>{t("Main price", "السعر الرئيسي")}</small>
+                      )}
+                      <strong>{l.masterExcl}</strong>
+                      <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
+                      <small>
+                        {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
+                      </small>
+                    </button>
+                  ))}
+                </div>
               </div>
-              {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
-                <p className="muted">
-                  No minimum-price restriction; discount up to 100%
-                </p>
-              )}
-              {displayPrice?.maxDiscount !== undefined &&
-                displayPrice.discountLimitSource !== "ZERO_FLOOR" && (
-                  <p className="muted">
-                    {t("Salesman limit", "حد المندوب")}:{" "}
-                    {displayPrice.maxDiscount}%
-                  </p>
-                )}
-              {displayPrice ? (
-                <>
-                  <div className="price-pair counter-prices">
-                    <div>
-                      <label>{t("Excl. VAT", "قبل الضريبة")}</label>
-                      <strong>{displayPrice.finalExcl}</strong>
-                    </div>
-                    <div>
-                      <label>{t("Incl. VAT", "شامل الضريبة")}</label>
-                      <strong>{displayPrice.finalIncl}</strong>
-                    </div>
+              <div className="lookup-selected-side">
+                <div className="field-pair lookup-compact-fields">
+                  <label>
+                    {t("DISCOUNT %", "الخصم %")}
+                    <input
+                      ref={discountRef}
+                      inputMode="decimal"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      {...wheelSafeNumberInputProps}
+                      value={discount}
+                      placeholder="0"
+                      onChange={(e) => setDiscount(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    {t("QUANTITY", "الكمية")} · {selected.unit}
+                    <input
+                      inputMode="decimal"
+                      type="number"
+                      min={selected.quantityPrecision ? "0.001" : "1"}
+                      step={
+                        selected.quantityPrecision
+                          ? Math.pow(10, -selected.quantityPrecision)
+                          : 1
+                      }
+                      {...wheelSafeNumberInputProps}
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") add();
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="final-price lookup-final-price-compact">
+                  <div className="eyebrow">
+                    {online
+                      ? t(
+                          previewOnly
+                            ? "PREVIEW PRICE — VALIDATED ON ADD"
+                            : "FINAL PRICE",
+                          previewOnly
+                            ? "سعر معاينة — يتم التحقق عند الإضافة"
+                            : "السعر النهائي",
+                        ) +
+                        " · " +
+                        levelLabel(sellingLevel, t)
+                      : t(
+                          "OFFLINE ESTIMATE — NOT VALIDATED",
+                          "تقدير دون اتصال — غير معتمد",
+                        )}
                   </div>
-                  {previewOnly && (
+                  {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
                     <p className="muted">
-                      {t(
-                        "Instant browser preview. The server confirms the protected final price when you add this line.",
-                        "معاينة فورية داخل المتصفح. يؤكد الخادم السعر النهائي المحمي عند إضافة هذا البند.",
-                      )}
+                      No minimum-price restriction; discount up to 100%
                     </p>
                   )}
-                  {displayPrice.minimumReached && (
-                    <p className="notice">
-                      {t(
-                        "Minimum selling price reached",
-                        "تم الوصول إلى أقل سعر بيع",
+                  {displayPrice?.maxDiscount !== undefined &&
+                    displayPrice.discountLimitSource !== "ZERO_FLOOR" && (
+                      <p className="muted">
+                        {t("Salesman limit", "حد المندوب")}:{" "}
+                        {displayPrice.maxDiscount}%
+                      </p>
+                    )}
+                  {displayPrice ? (
+                    <>
+                      <div className="price-pair counter-prices">
+                        <div>
+                          <label>{t("Excl. VAT", "قبل الضريبة")}</label>
+                          <strong>{displayPrice.finalExcl}</strong>
+                        </div>
+                        <div>
+                          <label>{t("Incl. VAT", "شامل الضريبة")}</label>
+                          <strong>{displayPrice.finalIncl}</strong>
+                        </div>
+                      </div>
+                      {previewOnly && (
+                        <p className="muted">
+                          {t(
+                            "Instant browser preview. The server confirms the protected final price when you add this line.",
+                            "معاينة فورية داخل المتصفح. يؤكد الخادم السعر النهائي المحمي عند إضافة هذا البند.",
+                          )}
+                        </p>
                       )}
+                      {displayPrice.minimumReached && (
+                        <p className="notice">
+                          {t(
+                            "Minimum selling price reached",
+                            "تم الوصول إلى أقل سعر بيع",
+                          )}
+                        </p>
+                      )}
+                      {displayPrice.discountLimited && (
+                        <p className="notice">
+                          {t(
+                            `Discount adjusted to the current allowed limit of ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
+                            `تم تعديل الخصم إلى الحد المسموح الحالي ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
+                          )}
+                        </p>
+                      )}
+                      {displayPrice.overridden && (
+                        <p className="notice error">
+                          {t(
+                            "Authorized minimum-price override",
+                            "تجاوز الحد الأدنى المصرح به",
+                          )}
+                        </p>
+                      )}
+                      <div className="line-summary">
+                        <span>
+                          {t("TOTAL EXCL. VAT", "الإجمالي قبل الضريبة")}{" "}
+                          <b>SAR {displayPrice.subtotal}</b>
+                        </span>
+                        <span>
+                          VAT {displayPrice.vatRate}%{" "}
+                          <b>{displayPrice.vatAmount}</b>
+                        </span>
+                        <span>
+                          {t("TOTAL INCL. VAT", "الإجمالي شامل الضريبة")}{" "}
+                          <b>SAR {displayPrice.total}</b>
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <p>
+                      {online
+                        ? t(
+                            pricingBusy
+                              ? "Loading base validation…"
+                              : "Enter a valid quantity and discount to preview the price.",
+                            pricingBusy
+                              ? "جارٍ تحميل التحقق الأساسي…"
+                              : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
+                          )
+                        : t(
+                            `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
+                            `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
+                          )}
                     </p>
                   )}
-                  {displayPrice.discountLimited && (
-                    <p className="notice">
-                      {t(
-                        `Discount adjusted to the current allowed limit of ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
-                        `تم تعديل الخصم إلى الحد المسموح الحالي ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
-                      )}
-                    </p>
+                </div>
+                {requestFeedback && <div className="notice">{requestFeedback}</div>}
+                <div className="lookup-action-row">
+                  {displayPrice?.minimumReached && (
+                    <button
+                      className="link-button"
+                      onClick={() => {
+                        setError("");
+                        setRequestFeedback("");
+                        setRequestDialogOpen(true);
+                      }}
+                    >
+                      {t("Request discount approval", "طلب اعتماد خصم")}
+                    </button>
                   )}
-                  {displayPrice.overridden && (
-                    <p className="notice error">
-                      {t(
-                        "Authorized minimum-price override",
-                        "تجاوز الحد الأدنى المصرح به",
-                      )}
-                    </p>
-                  )}
-                  <div className="line-summary">
-                    <span>
-                      {t("TOTAL EXCL. VAT", "الإجمالي قبل الضريبة")}{" "}
-                      <b>SAR {displayPrice.subtotal}</b>
-                    </span>
-                    <span>
-                      VAT {displayPrice.vatRate}%{" "}
-                      <b>{displayPrice.vatAmount}</b>
-                    </span>
-                    <span>
-                      {t("TOTAL INCL. VAT", "الإجمالي شامل الضريبة")}{" "}
-                      <b>SAR {displayPrice.total}</b>
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <p>
-                  {online
-                    ? t(
-                        pricingBusy
-                          ? "Loading base validation…"
-                          : "Enter a valid quantity and discount to preview the price.",
-                        pricingBusy
-                          ? "جارٍ تحميل التحقق الأساسي…"
-                          : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
-                      )
-                    : t(
-                        `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
-                        `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
-                      )}
-                </p>
-              )}
+                  <button
+                    className="primary add-button"
+                    onClick={add}
+                    disabled={
+                      adding ||
+                      !!previewError ||
+                      (!online && !settings.allowOfflineCache)
+                    }
+                  >
+                    {t("＋ ADD TO CART", "＋ أضف إلى السلة")}
+                  </button>
+                </div>
+              </div>
             </div>
-            {requestFeedback && <div className="notice">{requestFeedback}</div>}
-            {displayPrice?.minimumReached && (
-              <button
-                className="link-button"
-                onClick={() => {
-                  setError("");
-                  setRequestFeedback("");
-                  setRequestDialogOpen(true);
-                }}
-              >
-                {t("Request discount approval", "طلب اعتماد خصم")}
-              </button>
-            )}
-            <button
-              className="primary add-button"
-              onClick={add}
-              disabled={
-                adding ||
-                !!previewError ||
-                (!online && !settings.allowOfflineCache)
-              }
-            >
-              {t("＋ ADD TO CART", "＋ أضف إلى السلة")}
-            </button>
           </>
         )}
       </section>
