@@ -96,21 +96,18 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
   );
   return q;
 }
-async function nextNumber(db: DB, kind: "DR" | "QT", settings: any) {
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Riyadh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-    .format(new Date())
-    .replaceAll("-", "");
-  const row = await one(
-    db,
-    "INSERT INTO document_sequences(day,kind,counter) VALUES($1,$2,1) ON CONFLICT(day,kind) DO UPDATE SET counter=document_sequences.counter+1 RETURNING counter",
-    [day, kind],
-  );
-  return `${kind === "DR" ? settings.draftPrefix : settings.quotePrefix}-${day}-${String(row!.counter).padStart(4, "0")}`;
+export async function nextDraftNumber(db: DB, settings: any) {
+  // PostgreSQL sequences do not roll back, so allocated numbers are never
+  // reused after a failed or deleted draft.
+  for (;;) {
+    const row = await one(
+      db,
+      "SELECT nextval('draft_serial_seq')::text AS serial",
+    );
+    const number = `${settings.draftPrefix}-${row!.serial.padStart(4, "0")}`;
+    if (!(await one(db, "SELECT id FROM quotations WHERE number=$1", [number])))
+      return number;
+  }
 }
 export async function saveDraft(
   db: DB,
@@ -172,7 +169,7 @@ export async function saveDraft(
         "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,$2,'DRAFT',$3,$4,$5,$6)",
         [
           quoteId,
-          await nextNumber(tx, "DR", settings),
+          await nextDraftNumber(tx, settings),
           actor.id,
           json(data.customer),
           json(lines),

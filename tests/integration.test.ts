@@ -72,7 +72,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         name: "Administrator",
         companyName: "AMT Electric",
       });
-      const saved = (await one(db, "SELECT data FROM settings WHERE id=1"))!.data;
+      const saved = (await one(db, "SELECT data FROM settings WHERE id=1"))!
+        .data;
       assert.equal(saved.vat, "15");
       assert.equal(saved.quotePrefix, "QT");
       await request(
@@ -152,7 +153,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test("Create staff with restricted permissions", async () => {
-      staffId = (
+    staffId = (
       await request("admin/users", "POST", {
         username: "sales@amt.com",
         name: "Counter Staff",
@@ -262,6 +263,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         })
       ).data;
       quoteId = q.id;
+      assert.match(q.number, /^DR-\d{4,}$/);
+      assert.doesNotMatch(q.number, /^DR-\d{8}-/);
       assert.equal(q.lines[0].price.finalExcl, "110.00");
       assert.equal(q.lines[0].price.maxDiscount, undefined);
       assert.equal(q.customer.notes, "Call before delivery");
@@ -325,17 +328,21 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       await request("discount-requests/" + approved.id + "/approve", "POST", {
         note: "Approved for strategic account",
       });
-      const rejectedDetail = (
-        await request("discount-requests/" + rejected.id)
-      ).data;
-      const approvedDetail = (
-        await request("discount-requests/" + approved.id)
-      ).data;
+      const rejectedDetail = (await request("discount-requests/" + rejected.id))
+        .data;
+      const approvedDetail = (await request("discount-requests/" + approved.id))
+        .data;
       assert.equal(rejectedDetail.status, "REJECTED");
-      assert.equal(rejectedDetail.decisionNote, "Below protected floor for this order");
+      assert.equal(
+        rejectedDetail.decisionNote,
+        "Below protected floor for this order",
+      );
       assert.equal(rejectedDetail.events.length, 2);
       assert.equal(approvedDetail.status, "APPROVED");
-      assert.equal(approvedDetail.decisionNote, "Approved for strategic account");
+      assert.equal(
+        approvedDetail.decisionNote,
+        "Approved for strategic account",
+      );
       const afterReview = (await request("discount-requests")).data;
       assert.equal(afterReview.counts.pending, 0);
       assert.equal(afterReview.counts.approved, 1);
@@ -486,23 +493,27 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.deepEqual(pageTwo.groupValues, ["LIGHTING", "PPCCB"]);
     assert.equal(pageTwo.reviewStats.unverifiedRows, 120);
   });
-  await t.test("Admin product list pages results and exposes full-match selection", async () => {
-    for (let i = 0; i < 55; i++)
-      await request("products", "POST", {
-        ...base,
-        partNumber: `PAGE-${String(i).padStart(3, "0")}`,
-        description: `Paged product ${i}`,
-        aliases: [],
-      });
-    const pageOne = (await request("products?q=PAGE")).data;
-    const pageTwo = (await request("products?q=PAGE&page=1&pageSize=50")).data;
-    assert.equal(pageOne.totalRows, 55);
-    assert.equal(pageOne.totalPages, 2);
-    assert.equal(pageOne.items.length, 50);
-    assert.equal(pageOne.selectableItems.length, 55);
-    assert.equal(pageTwo.page, 1);
-    assert.equal(pageTwo.items.length, 5);
-  });
+  await t.test(
+    "Admin product list pages results and exposes full-match selection",
+    async () => {
+      for (let i = 0; i < 55; i++)
+        await request("products", "POST", {
+          ...base,
+          partNumber: `PAGE-${String(i).padStart(3, "0")}`,
+          description: `Paged product ${i}`,
+          aliases: [],
+        });
+      const pageOne = (await request("products?q=PAGE")).data;
+      const pageTwo = (await request("products?q=PAGE&page=1&pageSize=50"))
+        .data;
+      assert.equal(pageOne.totalRows, 55);
+      assert.equal(pageOne.totalPages, 2);
+      assert.equal(pageOne.items.length, 50);
+      assert.equal(pageOne.selectableItems.length, 55);
+      assert.equal(pageTwo.page, 1);
+      assert.equal(pageTwo.items.length, 5);
+    },
+  );
   await t.test("Product search matches partial description text", async () => {
     const results = (await request("search?q=Contactor 9A")).data;
     assert.equal(results[0].partNumber, "LC1D09M7");
@@ -551,18 +562,21 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(fallback[0].partNumber, "DESC-ONLY-PANEL");
     },
   );
-  await t.test("Lookup search returns a lean payload with pricing-ready fields", async () => {
-    const results = (await request("search?q=LC1D09M7")).data;
-    assert.equal(results[0].partNumber, "LC1D09M7");
-    assert.equal(results[0].defaultLevel, "END_CUSTOMER");
-    assert.equal(Array.isArray(results[0].sellingLevels), true);
-    assert.equal(typeof results[0].sellingLevels[0].masterExcl, "string");
-    assert.equal(typeof results[0].sellingLevels[0].masterIncl, "string");
-    assert.equal("version" in results[0], false);
-    assert.equal("aliases" in results[0], false);
-    assert.equal("keywords" in results[0], false);
-    assert.equal("active" in results[0], false);
-  });
+  await t.test(
+    "Lookup search returns a lean payload with pricing-ready fields",
+    async () => {
+      const results = (await request("search?q=LC1D09M7")).data;
+      assert.equal(results[0].partNumber, "LC1D09M7");
+      assert.equal(results[0].defaultLevel, "END_CUSTOMER");
+      assert.equal(Array.isArray(results[0].sellingLevels), true);
+      assert.equal(typeof results[0].sellingLevels[0].masterExcl, "string");
+      assert.equal(typeof results[0].sellingLevels[0].masterIncl, "string");
+      assert.equal("version" in results[0], false);
+      assert.equal("aliases" in results[0], false);
+      assert.equal("keywords" in results[0], false);
+      assert.equal("active" in results[0], false);
+    },
+  );
   await t.test(
     "Import cannot publish until mapped, reviewed, and verified",
     async () => {
@@ -725,9 +739,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
   await t.test(
     "Remove minimum fully disables protection and dashboard excludes zero floors",
     async () => {
-      const protectedBefore = (
-        await request("admin/dashboard")
-      ).data.products.protected;
+      const protectedBefore = (await request("admin/dashboard")).data.products
+        .protected;
       const before = (await request("products?q=LC1D")).data.items[0];
       await request("products/bulk", "POST", {
         items: [{ id: before.id, version: before.version }],
@@ -739,7 +752,9 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(after.minimum, "0.00");
       const dashboardAfter = (await request("admin/dashboard")).data;
       assert.equal(
-        dashboardAfter.minimumProtected.some((item: any) => item.id === before.id),
+        dashboardAfter.minimumProtected.some(
+          (item: any) => item.id === before.id,
+        ),
         false,
       );
       assert.equal(
@@ -773,7 +788,10 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       ).data;
       assert.equal(protectedBatch.minimumProtected.length, 50);
       assert.equal(protectedBatch.minimumProtectedSelectionOffset, 0);
-      assert.equal(protectedBatch.minimumProtectedSelectionItems.length >= 260, true);
+      assert.equal(
+        protectedBatch.minimumProtectedSelectionItems.length >= 260,
+        true,
+      );
       assert.equal(protectedBatch.minimumProtectedSelectionHasMore, false);
       const matched = (await request("products?q=MIN-BULK")).data;
       assert.equal(matched.selectableItems.length, 260);
@@ -793,23 +811,26 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(protectedAfter.totalRows, 0);
     },
   );
-  await t.test("Bulk archive and reactivate update product status", async () => {
-    const before = (await request("products?q=LC1D")).data.items[0];
-    await request("products/bulk", "POST", {
-      items: [{ id: before.id, version: before.version }],
-      operation: "ARCHIVE",
-      confirm: true,
-    });
-    const archived = (await request("products?q=LC1D")).data.items[0];
-    assert.equal(archived.active, false);
-    await request("products/bulk", "POST", {
-      items: [{ id: archived.id, version: archived.version }],
-      operation: "REACTIVATE",
-      confirm: true,
-    });
-    const restored = (await request("products?q=LC1D")).data.items[0];
-    assert.equal(restored.active, true);
-  });
+  await t.test(
+    "Bulk archive and reactivate update product status",
+    async () => {
+      const before = (await request("products?q=LC1D")).data.items[0];
+      await request("products/bulk", "POST", {
+        items: [{ id: before.id, version: before.version }],
+        operation: "ARCHIVE",
+        confirm: true,
+      });
+      const archived = (await request("products?q=LC1D")).data.items[0];
+      assert.equal(archived.active, false);
+      await request("products/bulk", "POST", {
+        items: [{ id: archived.id, version: archived.version }],
+        operation: "REACTIVATE",
+        confirm: true,
+      });
+      const restored = (await request("products?q=LC1D")).data.items[0];
+      assert.equal(restored.active, true);
+    },
+  );
   await t.test("Bulk delete removes unused products", async () => {
     const created = (
       await request("products", "POST", {
@@ -825,43 +846,46 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     });
     assert.equal((await request("products?q=DELETE-ME")).data.items.length, 0);
   });
-  await t.test("Bulk delete accepts integer-like versions and reports item validation errors", async () => {
-    const created = (
-      await request("products", "POST", {
-        ...base,
-        partNumber: "DELETE-STRING-VERSION",
-        aliases: [],
-      })
-    ).data;
-    await request("products/bulk", "POST", {
-      items: [{ id: created.id, version: String(created.version) }],
-      operation: "DELETE",
-      confirm: true,
-    });
-    assert.equal(
-      (await request("products?q=DELETE-STRING-VERSION")).data.items.length,
-      0,
-    );
-    const invalid = await request(
-      "products/bulk",
-      "POST",
-      {
-        items: [{ id: created.id, version: "abc" }],
+  await t.test(
+    "Bulk delete accepts integer-like versions and reports item validation errors",
+    async () => {
+      const created = (
+        await request("products", "POST", {
+          ...base,
+          partNumber: "DELETE-STRING-VERSION",
+          aliases: [],
+        })
+      ).data;
+      await request("products/bulk", "POST", {
+        items: [{ id: created.id, version: String(created.version) }],
         operation: "DELETE",
         confirm: true,
-      },
-      400,
-    );
-    assert.equal(invalid.data.error, "Please correct the highlighted values");
-    assert(
-      invalid.data.details.some(
-        (detail: any) =>
-          detail.path?.join(".") === "items.0.version" &&
-          /whole number/i.test(detail.message),
-      ),
-      JSON.stringify(invalid.data.details),
-    );
-  });
+      });
+      assert.equal(
+        (await request("products?q=DELETE-STRING-VERSION")).data.items.length,
+        0,
+      );
+      const invalid = await request(
+        "products/bulk",
+        "POST",
+        {
+          items: [{ id: created.id, version: "abc" }],
+          operation: "DELETE",
+          confirm: true,
+        },
+        400,
+      );
+      assert.equal(invalid.data.error, "Please correct the highlighted values");
+      assert(
+        invalid.data.details.some(
+          (detail: any) =>
+            detail.path?.join(".") === "items.0.version" &&
+            /whole number/i.test(detail.message),
+        ),
+        JSON.stringify(invalid.data.details),
+      );
+    },
+  );
   await t.test("Bulk delete blocks products used in quotations", async () => {
     const p = (
       await request("products", "POST", {
@@ -885,37 +909,47 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       409,
     );
   });
-  await t.test("Bulk archive supports large matched selections up to 5000 items", async () => {
-    for (let i = 0; i < 1005; i++)
-      await request("products", "POST", {
-        ...base,
-        partNumber: `BULK-LARGE-${String(i).padStart(4, "0")}`,
-        description: `Large bulk product ${i}`,
-        aliases: [],
+  await t.test(
+    "Bulk archive supports large matched selections up to 5000 items",
+    async () => {
+      for (let i = 0; i < 1005; i++)
+        await request("products", "POST", {
+          ...base,
+          partNumber: `BULK-LARGE-${String(i).padStart(4, "0")}`,
+          description: `Large bulk product ${i}`,
+          aliases: [],
+        });
+      const matched = (await request("products?q=BULK-LARGE")).data;
+      assert.equal(matched.selectableItems.length, 1005);
+      await request("products/bulk", "POST", {
+        items: matched.selectableItems,
+        operation: "ARCHIVE",
+        confirm: true,
       });
-    const matched = (await request("products?q=BULK-LARGE")).data;
-    assert.equal(matched.selectableItems.length, 1005);
-    await request("products/bulk", "POST", {
-      items: matched.selectableItems,
-      operation: "ARCHIVE",
-      confirm: true,
-    });
-    const archived = (await request("products?q=BULK-LARGE")).data;
-    assert(archived.items.every((item: any) => item.active === false));
-  });
-  await t.test("Bulk selection can load the next matched batch without repeating the first", async () => {
-    const firstBatch = (await request("products?q=BULK-LARGE&selectionOffset=0")).data;
-    const nextBatch = (await request("products?q=BULK-LARGE&selectionOffset=500")).data;
-    assert.equal(firstBatch.selectionOffset, 0);
-    assert.equal(nextBatch.selectionOffset, 500);
-    assert.equal(firstBatch.selectableItems.length, 1005);
-    assert.equal(nextBatch.selectableItems.length, 505);
-    assert.notEqual(
-      firstBatch.selectableItems[0]?.id,
-      nextBatch.selectableItems[0]?.id,
-    );
-    assert.equal(nextBatch.selectionHasMore, false);
-  });
+      const archived = (await request("products?q=BULK-LARGE")).data;
+      assert(archived.items.every((item: any) => item.active === false));
+    },
+  );
+  await t.test(
+    "Bulk selection can load the next matched batch without repeating the first",
+    async () => {
+      const firstBatch = (
+        await request("products?q=BULK-LARGE&selectionOffset=0")
+      ).data;
+      const nextBatch = (
+        await request("products?q=BULK-LARGE&selectionOffset=500")
+      ).data;
+      assert.equal(firstBatch.selectionOffset, 0);
+      assert.equal(nextBatch.selectionOffset, 500);
+      assert.equal(firstBatch.selectableItems.length, 1005);
+      assert.equal(nextBatch.selectableItems.length, 505);
+      assert.notEqual(
+        firstBatch.selectableItems[0]?.id,
+        nextBatch.selectableItems[0]?.id,
+      );
+      assert.equal(nextBatch.selectionHasMore, false);
+    },
+  );
   await t.test(
     "Minimum-protected dashboard pages beyond 50 rows and products can filter protected-only",
     async () => {
@@ -929,10 +963,14 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
           minimum: "90",
         });
       const dashboardPageOne = (
-        await request("admin/dashboard?minimumProtectedPage=0&minimumProtectedPageSize=50")
+        await request(
+          "admin/dashboard?minimumProtectedPage=0&minimumProtectedPageSize=50",
+        )
       ).data;
       const dashboardPageTwo = (
-        await request("admin/dashboard?minimumProtectedPage=1&minimumProtectedPageSize=50")
+        await request(
+          "admin/dashboard?minimumProtectedPage=1&minimumProtectedPageSize=50",
+        )
       ).data;
       assert.equal(dashboardPageOne.minimumProtectedPage, 0);
       assert.equal(dashboardPageOne.minimumProtected.length, 50);
@@ -1013,7 +1051,10 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         },
         400,
       );
-      assert.equal(malformed.data.error, "Please correct the highlighted values");
+      assert.equal(
+        malformed.data.error,
+        "Please correct the highlighted values",
+      );
       assert(
         malformed.data.details.some(
           (detail: any) =>
@@ -1062,7 +1103,10 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       });
       const imported = (await request("imports/" + iid)).data;
       assert.equal(imported.status, "IMPORTED");
-      assert.equal((await request("products?q=AUTO-IMPORT-OK")).data.items.length, 1);
+      assert.equal(
+        (await request("products?q=AUTO-IMPORT-OK")).data.items.length,
+        1,
+      );
     },
   );
   await t.test(
@@ -1145,11 +1189,17 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(repairPageOne.totalPages, 2);
       assert.equal(repairPageOne.rows[0].row_number, 3);
       assert.equal(repairPageTwo.rows[0].row_number, 4);
-      assert.equal((await request("products?q=EZ9F56116")).data.items.length, 1);
+      assert.equal(
+        (await request("products?q=EZ9F56116")).data.items.length,
+        1,
+      );
       const noDesc = (await request("products?q=QUICK-NO-DESC")).data.items;
       assert.equal(noDesc.length, 1);
       assert.equal(noDesc[0].description, "QUICK-NO-DESC");
-      assert.equal((await request("products?q=QUICK-NO-PRICE")).data.items.length, 0);
+      assert.equal(
+        (await request("products?q=QUICK-NO-PRICE")).data.items.length,
+        0,
+      );
     },
   );
   await t.test(
@@ -1181,7 +1231,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         version: 1,
         action: "SELECT_ALL",
       });
-      const paged = (await request("imports/" + iid + "?page=2&pageSize=50")).data;
+      const paged = (await request("imports/" + iid + "?page=2&pageSize=50"))
+        .data;
       assert.equal(paged.page, 2);
       assert.equal(paged.rows[0].row_number, 101);
       assert.equal(paged.rows[0].decision, "UPDATE");
@@ -1252,7 +1303,11 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       );
       await db.query(
         "INSERT INTO import_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3)",
-        [randomUUID(), iid, json({ CODE: "DELETE", DESC: "Delete me", COST: "10" })],
+        [
+          randomUUID(),
+          iid,
+          json({ CODE: "DELETE", DESC: "Delete me", COST: "10" }),
+        ],
       );
       await request("imports/" + iid + "/delete", "POST", {});
       assert.equal(

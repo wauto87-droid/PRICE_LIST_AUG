@@ -393,7 +393,8 @@ export default function Lookup({
     resolvedHighlightedIndex >= 0
       ? filteredSuggestions[resolvedHighlightedIndex]
       : null;
-  const showCategoryFilter = !!selected && showRelatedMatches && !!results.length;
+  const showCategoryFilter =
+    !!selected && showRelatedMatches && !!results.length;
   function resetLookup() {
     setSelected(null);
     setQuery("");
@@ -846,43 +847,62 @@ export default function Lookup({
                       .join(" · ") || t("Catalog item", "صنف كتالوج")}
                   </span>
                 </div>
-                <div
-                  className="selling-levels"
-                  role="group"
-                  aria-label={t("Price option", "خيار السعر")}
-                >
-                  {visibleLevels(selected).map((l) => (
-                    <button
-                      key={l.code}
-                      type="button"
-                      className={
-                        "selling-level" +
-                        (sellingLevel === l.code ? " selected" : "")
-                      }
-                      aria-pressed={sellingLevel === l.code}
-                      onClick={() => chooseLevel(l.code)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          chooseLevel(l.code);
-                        }
-                      }}
-                    >
-                      <span>
-                        {levelLabel(l.code, t)}{" "}
-                        {sellingLevel === l.code ? "✓" : ""}
+                <section className="selling-level-selector">
+                  <div className="selling-level-selector-head">
+                    <div>
+                      <span className="eyebrow">
+                        {t("SELECT SELLING LEVEL", "اختر مستوى البيع")}
                       </span>
-                      {l.code === (selected.defaultLevel ?? "END_CUSTOMER") && (
-                        <small>{t("Main price", "السعر الرئيسي")}</small>
-                      )}
-                      <strong>{l.masterExcl}</strong>
-                      <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
-                      <small>
-                        {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
-                      </small>
-                    </button>
-                  ))}
-                </div>
+                      <p>
+                        {t(
+                          "Base price options — not the final customer price",
+                          "خيارات السعر الأساسي — وليست السعر النهائي للعميل",
+                        )}
+                      </p>
+                    </div>
+                    <span className="pill">
+                      {visibleLevels(selected).length} {t("available", "متاح")}
+                    </span>
+                  </div>
+                  <div
+                    className="selling-levels"
+                    role="group"
+                    aria-label={t("Price option", "خيار السعر")}
+                  >
+                    {visibleLevels(selected).map((l) => (
+                      <button
+                        key={l.code}
+                        type="button"
+                        className={
+                          "selling-level" +
+                          (sellingLevel === l.code ? " selected" : "")
+                        }
+                        aria-pressed={sellingLevel === l.code}
+                        onClick={() => chooseLevel(l.code)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            chooseLevel(l.code);
+                          }
+                        }}
+                      >
+                        <span>
+                          {levelLabel(l.code, t)}{" "}
+                          {sellingLevel === l.code ? "✓" : ""}
+                        </span>
+                        {l.code ===
+                          (selected.defaultLevel ?? "END_CUSTOMER") && (
+                          <small>{t("Main price", "السعر الرئيسي")}</small>
+                        )}
+                        <strong>{l.masterExcl}</strong>
+                        <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
+                        <small>
+                          {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               </div>
               <div className="lookup-selected-side">
                 <div className="field-pair lookup-compact-fields">
@@ -926,11 +946,11 @@ export default function Lookup({
                     {online
                       ? t(
                           previewOnly
-                            ? "PREVIEW PRICE — VALIDATED ON ADD"
-                            : "FINAL PRICE",
+                            ? "FINAL CUSTOMER PRICE PREVIEW — VALIDATED ON ADD"
+                            : "FINAL CUSTOMER PRICE",
                           previewOnly
-                            ? "سعر معاينة — يتم التحقق عند الإضافة"
-                            : "السعر النهائي",
+                            ? "معاينة السعر النهائي للعميل — يتم التحقق عند الإضافة"
+                            : "السعر النهائي للعميل",
                         ) +
                         " · " +
                         levelLabel(sellingLevel, t)
@@ -938,6 +958,12 @@ export default function Lookup({
                           "OFFLINE ESTIMATE — NOT VALIDATED",
                           "تقدير دون اتصال — غير معتمد",
                         )}
+                  </div>
+                  <div className="customer-price-guidance">
+                    {t(
+                      "Customer-facing price — communicate this selected result",
+                      "سعر العميل — استخدم هذه النتيجة المحددة عند إبلاغ العميل",
+                    )}
                   </div>
                   {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
                     <p className="muted">
@@ -1028,7 +1054,9 @@ export default function Lookup({
                     </p>
                   )}
                 </div>
-                {requestFeedback && <div className="notice">{requestFeedback}</div>}
+                {requestFeedback && (
+                  <div className="notice">{requestFeedback}</div>
+                )}
                 <div className="lookup-action-row">
                   {displayPrice?.minimumReached && (
                     <button

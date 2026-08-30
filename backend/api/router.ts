@@ -16,6 +16,7 @@ import * as imports from "../imports/service";
 import * as salesChecks from "../sales-checks/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
+import { quotationPdfDisposition } from "../pdf/filename";
 const response = (
   data: unknown,
   status = 200,
@@ -476,7 +477,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         [id],
       );
       assert(job, 404, "Document not found");
-      await quotes.getQuote(db, actor, job.payload.quoteId);
+      const quote = await quotes.getQuote(db, actor, job.payload.quoteId);
       if (action === "download") {
         assert(job.status === "DONE", 409, "PDF is not ready");
         return new Response(
@@ -490,7 +491,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           {
             headers: {
               "Content-Type": "application/pdf",
-              "Content-Disposition": 'attachment; filename="AMT-quotation.pdf"',
+              "Content-Disposition": quotationPdfDisposition(
+                job.payload.snapshot ?? quote,
+              ),
               "Cache-Control": "no-store",
             },
           },
