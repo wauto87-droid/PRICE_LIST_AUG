@@ -9,10 +9,12 @@ const autoMap = (columns: string[], names: string[]) =>
 
 export default function DeliveryQuoteImport({
   t,
+  user,
   online,
   onImported,
 }: {
   t: Translate;
+  user: any;
   online: boolean;
   onImported: (quote: any) => void;
 }) {
@@ -22,6 +24,7 @@ export default function DeliveryQuoteImport({
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("all");
+  const [tab, setTab] = useState<"IMPORT" | "OUTPUTS" | "ADMIN">("OUTPUTS");
   const [mapping, setMapping] = useState({
     date: "",
     docNo: "",
@@ -75,6 +78,9 @@ export default function DeliveryQuoteImport({
   const selectedIds = Object.entries(selected)
     .filter(([, value]) => value)
     .map(([id]) => id);
+  const isAdmin = user.permissions.includes("QUOTE_VIEW_ALL");
+  const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
+  const completedJobs = jobs.filter((item) => item.quote_id);
 
   return (
     <section className="card">
@@ -93,27 +99,132 @@ export default function DeliveryQuoteImport({
         </div>
       </div>
       <div className="actions wrap">
-        <input
-          type="file"
-          accept=".xls,.xlsx,.csv"
-          disabled={!online || busy}
-          onChange={(e) =>
-            void run(async () => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              const form = new FormData();
-              form.set("file", file);
-              const created: any = await api("delivery-quote-imports", "POST", form);
-              await open(created.id);
-            })
-          }
-        />
-        {jobs.map((item) => (
-          <button key={item.id} onClick={() => void open(item.id)}>
-            {item.filename} · {item.status}
+        {[
+          ["OUTPUTS", "Converted quotations", "عروض الأسعار المحولة"],
+          ["IMPORT", "Upload / review files", "رفع / مراجعة الملفات"],
+          ...(isAdmin
+            ? [["ADMIN", "Admin source files", "ملفات المصدر للإدارة"]]
+            : []),
+        ].map(([key, en, ar]) => (
+          <button
+            key={key}
+            className={tab === key ? "primary" : ""}
+            onClick={() => setTab(key as typeof tab)}
+          >
+            {t(en, ar)}
           </button>
         ))}
       </div>
+      {tab === "IMPORT" && (
+        <div className="actions wrap">
+          <input
+            type="file"
+            accept=".xls,.xlsx,.csv"
+            disabled={!online || busy}
+            onChange={(e) =>
+              void run(async () => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const form = new FormData();
+                form.set("file", file);
+                const created: any = await api("delivery-quote-imports", "POST", form);
+                setTab("IMPORT");
+                await open(created.id);
+              })
+            }
+          />
+          {activeJobs.map((item) => (
+            <button key={item.id} onClick={() => void open(item.id)}>
+              {item.filename} · {item.status}
+            </button>
+          ))}
+          {!activeJobs.length && (
+            <div className="muted">
+              {t(
+                "No delivery-note files are waiting for mapping or review.",
+                "لا توجد ملفات إذن تسليم بانتظار الربط أو المراجعة.",
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {tab === "OUTPUTS" && (
+        <div className="quantity-history-list">
+          {completedJobs.length ? (
+            completedJobs.map((item) => (
+              <article className="quantity-history-card" key={item.id}>
+                <div>
+                  <strong>{item.filename}</strong>
+                  <small>
+                    {new Date(item.updated_at || item.created_at).toLocaleString()} ·{" "}
+                    {item.status}
+                  </small>
+                </div>
+                <div className="actions wrap">
+                  <button onClick={() => void open(item.id)}>
+                    {t("Open import", "فتح الاستيراد")}
+                  </button>
+                  <button
+                    className="primary"
+                    onClick={() =>
+                      void run(async () => {
+                        const quote = await api(`quotations/${item.quote_id}`);
+                        onImported(quote);
+                      })
+                    }
+                  >
+                    {t("Open quotation", "فتح عرض السعر")}
+                  </button>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">
+              {t(
+                "No converted quotations yet. Upload a delivery note to create one.",
+                "لا توجد عروض أسعار محولة بعد. ارفع إذن تسليم لإنشائه.",
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {tab === "ADMIN" && isAdmin && (
+        <div className="quantity-history-list">
+          {jobs.length ? (
+            jobs.map((item) => (
+              <article className="quantity-history-card" key={item.id}>
+                <div>
+                  <strong>{item.filename}</strong>
+                  <small>
+                    {new Date(item.created_at).toLocaleString()} · {item.status}
+                  </small>
+                </div>
+                <div className="actions wrap">
+                  <button onClick={() => void open(item.id)}>
+                    {t("Open source", "فتح المصدر")}
+                  </button>
+                  <button
+                    className="danger"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        await api(`delivery-quote-imports/${item.id}`, "DELETE");
+                        if (job?.id === item.id) setJob(null);
+                      })
+                    }
+                  >
+                    {t("Delete file", "حذف الملف")}
+                  </button>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">
+              {t("No source files found.", "لا توجد ملفات مصدر.")}
+            </div>
+          )}
+        </div>
+      )}
       {job?.summary?.warnings?.length ? (
         <div className="notice">
           {job.summary.warnings.join(" ")}

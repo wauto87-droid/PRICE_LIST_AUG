@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
@@ -8,6 +8,11 @@ import CustomLineForm from "./CustomLineForm";
 import DeliveryQuoteImport from "./DeliveryQuoteImport";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import { humanizeCustomLineError } from "./custom-line-errors";
+import {
+  cartLineHasBlockingError,
+  catalogLivePricingInput,
+  livePricingSignature,
+} from "./cart-live-pricing";
 
 const sanitizeCustomInput = (input: any) => {
   if (!input || input.type !== "CUSTOM") return input;
@@ -37,13 +42,30 @@ export default function Cart({
   const [busy, setBusy] = useState(false);
   const [suggestedCustomPart, setSuggestedCustomPart] = useState("");
   const [options, setOptions] = useState<Record<string, any[]>>({});
+  const [repricingRows, setRepricingRows] = useState<Record<number, boolean>>({});
+  const cartRef = useRef(cart);
+  const pricingTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const pricingSignatures = useRef<Record<number, string>>({});
+  const pricingGenerations = useRef<Record<number, number>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
-  const hasBlockingErrors = cart.lines.some(
-    (line: any) => !line.input || (!line.input?.type && !line.productId),
+  const hasBlockingErrors = cart.lines.some((line: any) =>
+    cartLineHasBlockingError(line),
   );
   const sum = cart.lines.every((l: any) => l.price)
     ? totals(cart.lines.map((l: any) => l.price))
     : null;
+  cartRef.current = cart;
+
+  const setCartLine = (index: number, build: (line: any) => any) => {
+    const current = cartRef.current;
+    if (!current.lines[index]) return;
+    const lines = current.lines.map((line: any, i: number) =>
+      i === index ? build(line) : line,
+    );
+    const next = { ...current, lines };
+    cartRef.current = next;
+    setCart(next);
+  };
 
   async function loadLevels(productId: string) {
     try {
@@ -55,11 +77,13 @@ export default function Cart({
   }
 
   function change(index: number, key: string, value: string) {
+    setError("");
     const lines = cart.lines.map((l: any, i: number) =>
       i === index
         ? {
             ...l,
             pending: true,
+            livePriceError: "",
             input:
               l.input?.type === "CUSTOM"
                 ? { ...sanitizeCustomInput(l.input), [key]: value }
@@ -69,6 +93,82 @@ export default function Cart({
     );
     setCart({ ...cart, lines });
   }
+
+  useEffect(() => {
+    for (const key of Object.keys(pricingTimers.current)) {
+      const index = Number(key);
+      if (index < cart.lines.length) continue;
+      clearTimeout(pricingTimers.current[index]);
+      delete pricingTimers.current[index];
+      delete pricingSignatures.current[index];
+      delete pricingGenerations.current[index];
+    }
+    if (!online) return;
+    cart.lines.forEach((line: any, index: number) => {
+      const nextInput = catalogLivePricingInput(line);
+      if (!line.pending || !nextInput) {
+        if (pricingTimers.current[index]) {
+          clearTimeout(pricingTimers.current[index]);
+          delete pricingTimers.current[index];
+        }
+        delete pricingSignatures.current[index];
+        setRepricingRows((current) =>
+          current[index] ? { ...current, [index]: false } : current,
+        );
+        return;
+      }
+      const signature = livePricingSignature(line);
+      if (pricingSignatures.current[index] === signature) return;
+      if (pricingTimers.current[index]) clearTimeout(pricingTimers.current[index]);
+      pricingSignatures.current[index] = signature;
+      pricingTimers.current[index] = setTimeout(() => {
+        const generation = (pricingGenerations.current[index] ?? 0) + 1;
+        pricingGenerations.current[index] = generation;
+        setRepricingRows((current) => ({ ...current, [index]: true }));
+        void api("pricing", "POST", nextInput)
+          .then((price) => {
+            const current = cartRef.current.lines[index];
+            if (!current) return;
+            if (
+              pricingGenerations.current[index] !== generation ||
+              livePricingSignature(current) !== signature
+            )
+              return;
+            setCartLine(index, (existing) => ({
+              ...existing,
+              price,
+              pending: false,
+              offline: false,
+              livePriceError: "",
+            }));
+            setError("");
+          })
+          .catch((e) => {
+            const current = cartRef.current.lines[index];
+            if (
+              !current ||
+              pricingGenerations.current[index] !== generation ||
+              livePricingSignature(current) !== signature
+            )
+              return;
+            const message = humanizeCustomLineError((e as Error).message);
+            setCartLine(index, (existing) => ({
+              ...existing,
+              livePriceError: message,
+            }));
+            setError(message);
+          })
+          .finally(() => {
+            if (pricingGenerations.current[index] !== generation) return;
+            setRepricingRows((current) => ({ ...current, [index]: false }));
+          });
+      }, 350);
+    });
+    return () => {
+      for (const timer of Object.values(pricingTimers.current)) clearTimeout(timer);
+      pricingTimers.current = {};
+    };
+  }, [cart.lines, online]);
 
   async function reprice() {
     setBusy(true);
@@ -162,6 +262,7 @@ export default function Cart({
     <section className="card">
       <DeliveryQuoteImport
         t={t}
+        user={user}
         online={online}
         onImported={(q) => {
           setCart({
@@ -372,6 +473,9 @@ export default function Cart({
                         </select>
                       </label>
                     )}
+                    {!!l.livePriceError && (
+                      <small className="sales-check-error">{l.livePriceError}</small>
+                    )}
                   </td>
                   <td>
                     <input
@@ -418,12 +522,26 @@ export default function Cart({
                     {l.input?.type === "CUSTOM" ? (
                       <small>{l.pending ? "—" : l.price?.finalExcl}</small>
                     ) : l.pending ? (
-                      "—"
+                      <small>
+                        {repricingRows[i]
+                          ? t("Refreshing…", "جارٍ التحديث…")
+                          : "—"}
+                      </small>
                     ) : (
                       (l.price?.finalExcl ?? "—")
                     )}
                   </td>
-                  <td>{l.pending ? "—" : (l.price?.total ?? "—")}</td>
+                  <td>
+                    {l.pending ? (
+                      <small>
+                        {repricingRows[i]
+                          ? t("Refreshing…", "جارٍ التحديث…")
+                          : "—"}
+                      </small>
+                    ) : (
+                      l.price?.total ?? "—"
+                    )}
+                  </td>
                   <td>
                     <div className="actions">
                       <button
@@ -511,8 +629,8 @@ export default function Cart({
       <p className="muted">
         {online
           ? t(
-              "Customer details are optional. Master product prices are never changed by cart discounts.",
-              "بيانات العميل اختيارية. خصومات السلة لا تغير أسعار الكتالوج.",
+              "Customer details are optional. Catalog discounts now refresh automatically; Recalculate remains an optional manual check.",
+              "بيانات العميل اختيارية. خصومات أصناف الكتالوج تتحدث تلقائياً، وتبقى إعادة الحساب فحصاً اختيارياً.",
             )
           : t(
               "Offline quotation — changes remain on this device until you reconnect and save.",
