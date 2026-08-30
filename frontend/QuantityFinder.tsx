@@ -12,6 +12,7 @@ const running = new Set(["UPLOADED", "PROCESSING"]);
 type MappingState = {
   partNumber: string;
   quantity: string;
+  returnQuantity: string;
   description: string;
   unitPrice: string;
   lineTotal: string;
@@ -20,6 +21,7 @@ type MappingState = {
 const blankMapping = (): MappingState => ({
   partNumber: "",
   quantity: "",
+  returnQuantity: "",
   description: "",
   unitPrice: "",
   lineTotal: "",
@@ -32,6 +34,12 @@ const mappingFields: Array<{
 }> = [
   { key: "partNumber", en: "Part Number", ar: "رقم الصنف", required: true },
   { key: "quantity", en: "Quantity", ar: "الكمية", required: true },
+  {
+    key: "returnQuantity",
+    en: "Return quantity (optional)",
+    ar: "كمية المرتجع (اختياري)",
+    required: false,
+  },
   { key: "description", en: "Description", ar: "الوصف", required: false },
   { key: "unitPrice", en: "Unit Price", ar: "سعر الوحدة", required: false },
   { key: "lineTotal", en: "Line Total", ar: "الإجمالي", required: false },
@@ -69,6 +77,12 @@ export default function QuantityFinder({ t }: { t: Translate }) {
               "partreference",
             ]),
             quantity: autoMap(next.columns || [], ["qty", "quantity"]),
+            returnQuantity: autoMap(next.columns || [], [
+              "returnqty",
+              "returnedqty",
+              "returnquantity",
+              "returns",
+            ]),
             description: autoMap(next.columns || [], [
               "description",
               "itemdescription",
@@ -242,8 +256,8 @@ export default function QuantityFinder({ t }: { t: Translate }) {
           />
           <p className="muted">
             {t(
-              "You can also map description, unit price, and line total columns for deeper comparison.",
-              "يمكنك أيضاً ربط أعمدة الوصف وسعر الوحدة والإجمالي لتحليل أعمق.",
+              "You can also map return quantity, description, unit price, and line total columns for deeper comparison.",
+              "يمكنك أيضاً ربط أعمدة كمية المرتجع والوصف وسعر الوحدة والإجمالي لتحليل أعمق.",
             )}
           </p>
         </section>
@@ -378,6 +392,9 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                         version: report.version,
                         partNumber: mapping.partNumber,
                         quantity: mapping.quantity,
+                        ...(mapping.returnQuantity
+                          ? { returnQuantity: mapping.returnQuantity }
+                          : {}),
                         ...(mapping.description
                           ? { description: mapping.description }
                           : {}),
@@ -526,6 +543,26 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                 </div>
                 <div className="sales-check-table-wrap quantity-finder-table-wrap">
                   <table className="sales-check-table quantity-finder-table">
+                    <colgroup>
+                      {view === "GROUPS" ? (
+                        <>
+                          <col className="compare-col" />
+                          <col className="part-col" />
+                          <col className="metric-col" />
+                          <col className="metric-col" />
+                          <col className="metric-col" />
+                          <col className="occurrence-col" />
+                          <col className="actions-col" />
+                        </>
+                      ) : (
+                        <>
+                          <col className="row-col" />
+                          <col className="part-col" />
+                          <col className="metric-col" />
+                          <col className="status-col" />
+                        </>
+                      )}
+                    </colgroup>
                     <thead>
                       <tr>
                         {(view === "GROUPS"
@@ -540,7 +577,20 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                             ]
                           : ["Row", "Part Number", "Quantity", "Reason"]
                         ).map((h) => (
-                          <th key={h}>{h}</th>
+                          <th
+                            key={h}
+                            className={
+                              ["Sold", "Returned", "Net", "Occurrences"].includes(h)
+                                ? "number-head"
+                                : h === "Compare"
+                                  ? "compare-head"
+                                  : h === "Actions"
+                                    ? "actions-head"
+                                    : undefined
+                            }
+                          >
+                            {h}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -548,29 +598,38 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                       {report.rows.map((row: any) =>
                         view === "GROUPS" ? (
                           <tr key={row.id}>
-                            <td data-label="Compare">
+                            <td data-label="Compare" className="compare-cell">
                               <input
                                 type="checkbox"
                                 checked={comparison.includes(row.source_part)}
                                 onChange={() => toggleCompare(row.source_part)}
                               />
                             </td>
-                            <td data-label="Part Number (exact)" className="part-cell">
+                            <td
+                              data-label="Part Number (exact)"
+                              className="part-cell quantity-part-cell"
+                            >
                               {row.source_part}
                             </td>
-                            <td data-label="Sold" className="number-cell">
+                            <td data-label="Sold" className="number-cell quantity-metric-cell">
                               {row.sold_quantity}
                             </td>
-                            <td data-label="Returned" className="number-cell">
+                            <td
+                              data-label="Returned"
+                              className="number-cell quantity-metric-cell"
+                            >
                               {row.returned_quantity}
                             </td>
-                            <td data-label="Net" className="number-cell">
+                            <td data-label="Net" className="number-cell quantity-metric-cell">
                               {row.net_quantity}
                             </td>
-                            <td data-label="Occurrences" className="number-cell">
+                            <td
+                              data-label="Occurrences"
+                              className="number-cell quantity-metric-cell"
+                            >
                               {row.occurrences}
                             </td>
-                            <td data-label="Actions">
+                            <td data-label="Actions" className="actions-cell">
                               <button
                                 onClick={() => {
                                   setSelectedGroup(row.source_part);
@@ -681,10 +740,22 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                         <tr>
                           <th>Row</th>
                           <th>Type</th>
-                          <th>Quantity</th>
+                          {report.mapping?.returnQuantity ? (
+                            <>
+                              <th className="number-head">Sold</th>
+                              <th className="number-head">Returned</th>
+                              <th className="number-head">Net</th>
+                            </>
+                          ) : (
+                            <th className="number-head">Quantity</th>
+                          )}
                           {showDetailColumns && <th>Description</th>}
-                          {report.mapping?.unitPrice && <th>Unit Price</th>}
-                          {report.mapping?.lineTotal && <th>Line Total</th>}
+                          {report.mapping?.unitPrice && (
+                            <th className="number-head">Unit Price</th>
+                          )}
+                          {report.mapping?.lineTotal && (
+                            <th className="number-head">Line Total</th>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
@@ -692,15 +763,39 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                           <tr key={row.row_number}>
                             <td data-label="Row">{row.row_number}</td>
                             <td data-label="Type">{row.direction}</td>
-                            <td data-label="Quantity">{row.absoluteQuantity}</td>
+                            {report.mapping?.returnQuantity ? (
+                              <>
+                                <td data-label="Sold" className="number-cell">
+                                  {row.soldQuantity}
+                                  <div className="muted">{row.soldSourceValue || "—"}</div>
+                                </td>
+                                <td data-label="Returned" className="number-cell">
+                                  {row.returnedQuantity}
+                                  <div className="muted">
+                                    {row.returnSourceValue || "—"}
+                                  </div>
+                                </td>
+                                <td data-label="Net" className="number-cell">
+                                  {row.netContribution}
+                                </td>
+                              </>
+                            ) : (
+                              <td data-label="Quantity" className="number-cell">
+                                {row.absoluteQuantity}
+                              </td>
+                            )}
                             {showDetailColumns && (
                               <td data-label="Description">{row.description || "—"}</td>
                             )}
                             {report.mapping?.unitPrice && (
-                              <td data-label="Unit Price">{row.unitPrice || "—"}</td>
+                              <td data-label="Unit Price" className="number-cell">
+                                {row.unitPrice || "—"}
+                              </td>
                             )}
                             {report.mapping?.lineTotal && (
-                              <td data-label="Line Total">{row.lineTotal || "—"}</td>
+                              <td data-label="Line Total" className="number-cell">
+                                {row.lineTotal || "—"}
+                              </td>
                             )}
                           </tr>
                         ))}

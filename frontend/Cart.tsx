@@ -9,6 +9,12 @@ import DeliveryQuoteImport from "./DeliveryQuoteImport";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import { humanizeCustomLineError } from "./custom-line-errors";
 
+const sanitizeCustomInput = (input: any) => {
+  if (!input || input.type !== "CUSTOM") return input;
+  const { override, reason, sellingLevel, ...safe } = input;
+  return safe;
+};
+
 export default function Cart({
   t,
   user,
@@ -56,7 +62,7 @@ export default function Cart({
             pending: true,
             input:
               l.input?.type === "CUSTOM"
-                ? { ...l.input, [key]: value }
+                ? { ...sanitizeCustomInput(l.input), [key]: value }
                 : { ...l.input, [key]: value, override: false, reason: "" },
           }
         : l,
@@ -112,16 +118,18 @@ export default function Cart({
         cart.id ? "PUT" : "POST",
         {
           customer: cart.customer,
-          lines: cart.lines.map((l: any) => ({
-            ...l.input,
-            ...(l.input?.type === "CUSTOM"
-              ? {}
+          lines: cart.lines.map((l: any) =>
+            l.input?.type === "CUSTOM"
+              ? sanitizeCustomInput(l.input)
               : {
+                  ...l.input,
                   type: l.input?.type ?? "CATALOG",
                   sellingLevel:
                     l.input.sellingLevel ?? l.sellingLevel ?? "END_CUSTOMER",
-                }),
-          })),
+                  override: false,
+                  reason: "",
+                },
+          ),
           ...(cart.id ? { version: cart.version } : { requestId }),
         },
       );

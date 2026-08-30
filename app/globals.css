@@ -1406,11 +1406,68 @@ strong + small {
   font-size: 12px;
 }
 .quantity-finder-table {
-  min-width: 980px;
+  min-width: 1040px;
+}
+.quantity-finder-table col.compare-col {
+  width: 52px;
+}
+.quantity-finder-table col.row-col {
+  width: 68px;
+}
+.quantity-finder-table col.part-col {
+  width: 260px;
+}
+.quantity-finder-table col.metric-col {
+  width: 150px;
+}
+.quantity-finder-table col.occurrence-col {
+  width: 120px;
+}
+.quantity-finder-table col.actions-col {
+  width: 138px;
+}
+.quantity-finder-table col.status-col {
+  width: 320px;
 }
 .quantity-finder-table th,
 .quantity-finder-table td {
   vertical-align: middle;
+}
+.quantity-finder-table th.number-head,
+.quantity-finder-table td.quantity-metric-cell,
+.quantity-finder-table td.number-cell {
+  text-align: right;
+}
+.quantity-finder-table th.compare-head,
+.quantity-finder-table td.compare-cell {
+  text-align: center;
+}
+.quantity-finder-table th.actions-head,
+.quantity-finder-table td.actions-cell {
+  text-align: center;
+}
+.quantity-finder-table .quantity-part-cell {
+  width: auto;
+}
+.quantity-finder-table td.actions-cell {
+  border-left: 1px solid #eef1f6;
+}
+.quantity-finder-table td.actions-cell button {
+  min-width: 94px;
+}
+.quantity-finder-table .muted {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.quantity-finder-table-wrap {
+  margin-top: 12px;
+}
+.quantity-finder-tabs + .sales-check-panel .actions.wrap,
+.quantity-finder-table-wrap + .actions.wrap {
+  align-items: center;
+  row-gap: 10px;
 }
 .quantity-finder-table td .status-badge {
   display: inline-flex;
@@ -2513,6 +2570,9 @@ body :is(h1, h2, h3, strong, b) {
   }
   .quantity-mapping-grid {
     grid-template-columns: 1fr;
+  }
+  .quantity-finder-table colgroup {
+    display: none;
   }
   .quantity-finder-table td:last-child {
     align-items: start;

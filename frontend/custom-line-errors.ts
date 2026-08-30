@@ -1,4 +1,6 @@
 export function humanizeCustomLineError(message: string) {
+  if (/unrecognized_keys/i.test(message) && /override|reason/i.test(message))
+    return "This custom item still contains old catalog-only pricing fields. Please save again.";
   if (/unitPriceExcl: Use a positive decimal, without commas/i.test(message))
     return "Enter unit price as a number like 12.5 or 100, without commas.";
   if (/quantity: Use a positive decimal, without commas/i.test(message))

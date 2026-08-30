@@ -121,6 +121,7 @@ export async function get(
     .object({
       partNumber: z.string().optional(),
       quantity: z.string().optional(),
+      returnQuantity: z.string().optional(),
       description: z.string().optional(),
       unitPrice: z.string().optional(),
       lineTotal: z.string().optional(),
@@ -136,10 +137,39 @@ export async function get(
         )
       ).rows.map((row) => {
         const amount = new Decimal(String(row.quantity ?? 0));
+        const soldSourceValue = reportMapping.quantity
+          ? String(row.raw?.[reportMapping.quantity] ?? "")
+          : "";
+        const returnSourceValue = reportMapping.returnQuantity
+          ? String(row.raw?.[reportMapping.returnQuantity] ?? "")
+          : "";
+        const soldAmount = reportMapping.returnQuantity
+          ? parseSignedDecimal(soldSourceValue) ?? new Decimal(0)
+          : amount.gt(0)
+            ? amount
+            : new Decimal(0);
+        const returnedAmount = reportMapping.returnQuantity
+          ? parseSignedDecimal(returnSourceValue)?.abs() ?? new Decimal(0)
+          : amount.lt(0)
+            ? amount.abs()
+            : new Decimal(0);
         return {
           ...row,
-          direction: amount.lt(0) ? "RETURNED" : "SOLD",
+          direction: reportMapping.returnQuantity
+            ? soldAmount.gt(0) && returnedAmount.gt(0)
+              ? "MIXED"
+              : returnedAmount.gt(0)
+                ? "RETURNED"
+                : "SOLD"
+            : amount.lt(0)
+              ? "RETURNED"
+              : "SOLD",
           absoluteQuantity: amount.abs().toFixed(6),
+          soldSourceValue,
+          returnSourceValue,
+          soldQuantity: soldAmount.toFixed(6),
+          returnedQuantity: returnedAmount.toFixed(6),
+          netContribution: soldAmount.sub(returnedAmount).toFixed(6),
           description: reportMapping.description
             ? String(row.raw?.[reportMapping.description] ?? "")
             : "",
@@ -203,6 +233,7 @@ export async function analyze(
       version: z.coerce.number().int(),
       partNumber: z.string().min(1),
       quantity: z.string().min(1),
+      returnQuantity: z.string().min(1).optional(),
       description: z.string().min(1).optional(),
       unitPrice: z.string().min(1).optional(),
       lineTotal: z.string().min(1).optional(),
@@ -232,6 +263,7 @@ export async function analyze(
       "Select columns from this file",
     );
     for (const optional of [
+      data.returnQuantity,
       data.description,
       data.unitPrice,
       data.lineTotal,
@@ -269,6 +301,14 @@ export async function analyze(
   });
 }
 const quantityText = (value: unknown) => String(value ?? "");
+const decimalPattern = /^-?\d+(?:\.\d+)?$/;
+const parseSignedDecimal = (value: unknown) => {
+  const text = quantityText(value).trim();
+  if (!text || !decimalPattern.test(text)) return null;
+  const amount = new Decimal(text);
+  if (!amount.isFinite() || amount.decimalPlaces() > 6) return null;
+  return amount;
+};
 export async function processAnalysis(
   db: DB,
   reportId: string,
@@ -282,6 +322,7 @@ export async function processAnalysis(
     .object({
       partNumber: z.string(),
       quantity: z.string(),
+      returnQuantity: z.string().optional(),
       description: z.string().optional(),
       unitPrice: z.string().optional(),
       lineTotal: z.string().optional(),
@@ -303,14 +344,41 @@ export async function processAnalysis(
   for (let index = 0; index < rows.length; index++) {
     const row: any = rows[index],
       part = quantityText(row.raw[mapping.partNumber]),
-      rawQuantity = quantityText(row.raw[mapping.quantity]);
+      rawQuantity = quantityText(row.raw[mapping.quantity]),
+      rawReturnQuantity = mapping.returnQuantity
+        ? quantityText(row.raw[mapping.returnQuantity])
+        : "";
     let status = "VALID",
       error: string | null = null,
-      amount: Decimal | null = null;
+      amount: Decimal | null = null,
+      soldAmount = new Decimal(0),
+      returnedAmount = new Decimal(0);
     if (part === "") {
       status = "INVALID";
       error = "Part number is blank";
-    } else if (!/^-?\d+(?:\.\d+)?$/.test(rawQuantity)) {
+    } else if (mapping.returnQuantity) {
+      const soldValue = parseSignedDecimal(rawQuantity);
+      const returnValue = parseSignedDecimal(rawReturnQuantity);
+      if (soldValue == null) {
+        status = "INVALID";
+        error = "Sold quantity is not a valid decimal without commas";
+      } else if (returnValue == null) {
+        status = "INVALID";
+        error = "Return quantity is not a valid decimal without commas";
+      } else {
+        soldAmount = soldValue;
+        returnedAmount = returnValue.abs();
+        if (soldAmount.lt(0)) {
+          status = "INVALID";
+          error = "Sold quantity cannot be negative when a return column is mapped";
+        } else if (soldAmount.isZero() && returnedAmount.isZero()) {
+          status = "INVALID";
+          error = "Sold and return quantities cannot both be zero";
+        } else {
+          amount = soldAmount.sub(returnedAmount);
+        }
+      }
+    } else if (!decimalPattern.test(rawQuantity)) {
       status = "INVALID";
       error = "Quantity is not a valid decimal without commas";
     } else {
@@ -331,7 +399,10 @@ export async function processAnalysis(
         occurrences: 0,
         firstRow: row.row_number,
       };
-      if (amount.gt(0)) group.sold = group.sold.add(amount);
+      if (mapping.returnQuantity) {
+        group.sold = group.sold.add(soldAmount);
+        group.returned = group.returned.add(returnedAmount);
+      } else if (amount.gt(0)) group.sold = group.sold.add(amount);
       else group.returned = group.returned.add(amount.abs());
       group.occurrences++;
       groups.set(part, group);

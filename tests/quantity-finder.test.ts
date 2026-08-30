@@ -176,3 +176,116 @@ test("Quantity Finder groups exact source text and separates returns and invalid
   await fs.rm(process.env.UPLOAD_DIR, { recursive: true, force: true });
   await db.close?.();
 });
+
+test("Quantity Finder supports a mapped return quantity column and drilldown values", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "quantity-finder-return-token-long";
+  process.env.UPLOAD_DIR = path.join(
+    process.cwd(),
+    ".data",
+    "quantity-return-test-" + randomUUID(),
+  );
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin",
+    password: "abcd",
+    name: "Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  const id = randomUUID();
+  await db.query(
+    "INSERT INTO quantity_reports(id,filename,file_path,status,owner_id,columns,summary) VALUES($1,'returns.xlsx','fixture-returns','AWAITING_MAPPING',$2,$3,$4)",
+    [
+      id,
+      actor.id,
+      json(["Part Number", "Sold Qty", "Return Qty", "Description"]),
+      json({ totalRows: 5 }),
+    ],
+  );
+  const source = [
+    { p: "ABC", s: "5", r: "0", d: "Sold row" },
+    { p: "ABC", s: "0", r: "2", d: "Return row" },
+    { p: "ABC", s: "3", r: "-1", d: "Negative return source" },
+    { p: "XYZ", s: "0", r: "0", d: "Zero row" },
+    { p: "XYZ", s: "4", r: "bad", d: "Invalid return" },
+  ];
+  for (let i = 0; i < source.length; i++)
+    await db.query(
+      "INSERT INTO quantity_report_rows(id,report_id,row_number,raw) VALUES($1,$2,$3,$4)",
+      [
+        randomUUID(),
+        id,
+        i + 1,
+        json({
+          "Part Number": source[i].p,
+          "Sold Qty": source[i].s,
+          "Return Qty": source[i].r,
+          Description: source[i].d,
+        }),
+      ],
+    );
+  await analyze(db, actor, id, {
+    version: 1,
+    partNumber: "Part Number",
+    quantity: "Sold Qty",
+    returnQuantity: "Return Qty",
+    description: "Description",
+  });
+  await processAnalysis(db, id, actor.id);
+  const result: any = await get(db, actor, id, 0, 50, "GROUPS", "", "PART_ASC");
+  assert.equal(result.summary.groupCount, 1);
+  assert.equal(result.summary.soldQuantity, "8");
+  assert.equal(result.summary.returnedQuantity, "3");
+  assert.equal(result.summary.netQuantity, "5");
+  const abc = result.rows.find((row: any) => row.source_part === "ABC");
+  assert.deepEqual(
+    [
+      abc.sold_quantity,
+      abc.returned_quantity,
+      abc.net_quantity,
+      abc.occurrences,
+    ],
+    ["8.000000", "3.000000", "5.000000", 3],
+  );
+  const invalid: any = await get(db, actor, id, 0, 50, "INVALID");
+  assert.equal(invalid.resultCount, 2);
+  assert.match(invalid.rows[0].error, /both be zero/i);
+  assert.match(invalid.rows[1].error, /return quantity/i);
+  const detail: any = await get(
+    db,
+    actor,
+    id,
+    0,
+    50,
+    "GROUPS",
+    "",
+    "PART_ASC",
+    "ABC",
+  );
+  assert.equal(detail.groupRows.length, 3);
+  assert.equal(detail.groupRows[0].soldQuantity, "5.000000");
+  assert.equal(detail.groupRows[0].returnedQuantity, "0.000000");
+  assert.equal(detail.groupRows[1].soldQuantity, "0.000000");
+  assert.equal(detail.groupRows[1].returnedQuantity, "2.000000");
+  assert.equal(detail.groupRows[1].direction, "RETURNED");
+  assert.equal(detail.groupRows[2].returnSourceValue, "-1");
+  assert.equal(detail.groupRows[2].returnedQuantity, "1.000000");
+  assert.equal(detail.groupRows[2].netContribution, "2.000000");
+  await db.query(
+    "UPDATE jobs SET status='DONE' WHERE payload->>'reportId'=$1 AND kind='QUANTITY_ANALYZE'",
+    [id],
+  );
+  await fs.writeFile("fixture-returns", "");
+  await remove(db, actor, id);
+  await fs.rm("fixture-returns", { force: true });
+  await fs.rm(process.env.UPLOAD_DIR, { recursive: true, force: true });
+  await db.close?.();
+});
