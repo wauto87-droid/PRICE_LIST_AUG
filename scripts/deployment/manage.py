@@ -39,6 +39,7 @@ class Diagnostics:
         self.secrets = set()
         self.private_block = False
         self.tail = deque(maxlen=12)
+        self.stage_started = None
 
     def protect(self, values):
         for key, value in values.items():
@@ -69,8 +70,12 @@ class Diagnostics:
         self.tail.append(safe)
 
     def stage(self, name):
+        now = time.monotonic()
+        if self.stage_started is not None:
+            self.emit(f'    Completed previous stage in {now - self.stage_started:.1f}s')
         self.number += 1
         self.stage_name = name
+        self.stage_started = now
         self.tail.clear()
         self.emit(f'==> [{self.number}] {name}')
 
@@ -322,6 +327,23 @@ def check_memory(available_kib, command):
     )
     require(available_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available RAM; no other service will be stopped')
 
+def limited_command(args, cpu_quota='100%', memory_max='2G'):
+    """Bound maintenance to one core and low I/O priority on a systemd host."""
+    return ['systemd-run', '--scope', '--quiet', '--wait', '--collect',
+            '-p', f'CPUQuota={cpu_quota}', '-p', f'MemoryMax={memory_max}',
+            '-p', f'MemorySwapMax={memory_max}', '-p', 'CPUWeight=10',
+            '-p', 'IOWeight=10', '--', 'nice', '-n', '10',
+            'ionice', '-c2', '-n7', *args]
+
+def cpu_steal_percent(first, second):
+    def fields(line):
+        values = [int(value) for value in line.split()[1:]]
+        return sum(values), values[7] if len(values) > 7 else 0
+    total_a, steal_a = fields(first)
+    total_b, steal_b = fields(second)
+    elapsed = total_b - total_a
+    return 0.0 if elapsed <= 0 else max(0.0, 100 * (steal_b - steal_a) / elapsed)
+
 def parse_public_url(value):
     require(isinstance(value, str) and value == value.strip(), 'Public URL has surrounding whitespace')
     parsed = urlsplit(value)
@@ -469,6 +491,9 @@ class Deployment:
 
     def engine(self, *args, **kwargs):
         return run(['docker', *args], **kwargs)
+
+    def limited_engine(self, *args, **kwargs):
+        return run(limited_command(['docker', *args], cpu_quota='50%', memory_max='1G'), **kwargs)
 
     def runtime(self):
         if self.args.runtime:
@@ -628,7 +653,7 @@ class Deployment:
                 runtime_hint = app_runtime(read_env(self.envfile))
         runtime_hint = runtime_hint or ('pm2' if self.args.command == 'install' else 'compose')
         if self.args.command in ('install', 'upgrade', 'start', 'backup-job') and runtime_hint == 'pm2':
-            for tool in ['node', 'python3', 'pm2', 'corepack', 'pg_dump', 'pg_restore', 'tesseract', 'pdftotext']:
+            for tool in ['node', 'python3', 'pm2', 'corepack', 'pg_dump', 'pg_restore', 'tesseract', 'pdftotext', 'systemd-run', 'nice', 'ionice']:
                 require(shutil.which(tool), f'Missing prerequisite for PM2 runtime: {tool}. No packages were installed')
             node_version = parse_semver(decoded(run(['node', '--version'])))
             require(node_version >= MIN_PM2_NODE,
@@ -668,7 +693,7 @@ class Deployment:
                         '-v', f'{PROJECT}_{volume}:/data', DB_IMAGE, 'chown', '1000:1000', '/data')
 
     @contextlib.contextmanager
-    def locked(self):
+    def locked(self, skip_if_busy=False):
         import fcntl
         lock = Path('/run/lock/amt-pricelist-deploy.lock')
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -677,8 +702,11 @@ class Deployment:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
+                if skip_if_busy:
+                    yield False
+                    return
                 raise DeployError('Another AMT deployment/rotation is running') from None
-            yield
+            yield True
         finally:
             os.close(fd)
 
@@ -825,6 +853,9 @@ class Deployment:
         self.port(int(self.env['APP_PORT']))  # Immediate fail-closed recheck; never kill a listener.
         if self.native_runtime():
             env = self.native_runtime_env()
+            # PM2 exclusively owns AMT app/worker processes. Keep only the
+            # dedicated PostgreSQL container from the legacy Compose runtime.
+            self.compose('rm', '-s', '-f', 'app', 'worker', 'backup', check=False)
             run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=env)
             run(['pm2', 'start', self.native_paths()['ecosystem'], '--only', ','.join(PM2_PROCESSES), '--update-env'],
                 timeout=300, live=True, env=env)
@@ -900,10 +931,10 @@ class Deployment:
         atomic(target / 'private.env', env_text(self.env))
         with (target / 'database.dump').open('xb') as stream:
             script = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec pg_dump -h 127.0.0.1 -U "$1" -d "$2" -Fc --no-owner --no-acl'
-            self.engine('exec', '-i', self.db_id(), 'sh', '-c', script, 'amt', self.env['POSTGRES_USER'], self.env['POSTGRES_DB'],
+            self.limited_engine('exec', '-i', self.db_id(), 'sh', '-c', script, 'amt', self.env['POSTGRES_USER'], self.env['POSTGRES_DB'],
                         data=(self.env['POSTGRES_PASSWORD'] + '\n').encode(), output=stream, timeout=900)
         with (target / 'uploads.tar').open('xb') as stream:
-            self.engine('run', '--rm', '--network', 'none', '--label', 'amt.recovery=backup', '-v', f'{PROJECT}_uploads:/data:ro', DB_IMAGE,
+            self.limited_engine('run', '--rm', '--network', 'none', '--label', 'amt.recovery=backup', '-v', f'{PROJECT}_uploads:/data:ro', DB_IMAGE,
                         'tar', '-C', '/data', '-cf', '-', '.', output=stream, timeout=900)
         highwater = decoded(self.database("SELECT last_value::text || ':' || is_called::text FROM quotation_serial_seq;"))
         counts = decoded(self.database("SELECT json_build_object('products',(SELECT count(*) FROM products),'quotations',(SELECT count(*) FROM quotations),'users',(SELECT count(*) FROM users))::text;"))
@@ -1021,17 +1052,23 @@ class Deployment:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.stage('Install host dependencies for PM2 runtime')
         run(['corepack', 'enable'], timeout=120, env=self.native_env(release=release), cwd=release)
-        run(['corepack', 'pnpm', 'install', '--frozen-lockfile'], timeout=3600, live=True,
+        run(limited_command(['corepack', 'pnpm', 'install', '--frozen-lockfile']), timeout=3600, live=True,
             env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
         self.stage('Build PM2 release assets')
-        run(['corepack', 'pnpm', 'build'], timeout=3600, live=True,
+        run(limited_command(['corepack', 'pnpm', 'build']), timeout=3600, live=True,
             env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
         self.stage('Prepare PM2 worker runtime')
         run(['python3', '-m', 'venv', paths['python']], timeout=300, env=self.native_env(release=release))
-        run([paths['python'] / 'bin' / 'pip', 'install', '--no-cache-dir', '-r', release / 'scripts' / 'requirements.txt'],
+        run(limited_command([paths['python'] / 'bin' / 'pip', 'install', '--no-cache-dir', '-r', release / 'scripts' / 'requirements.txt'], cpu_quota='50%', memory_max='1G'),
             timeout=1800, live=True, env=self.native_env(release=release))
-        run(['corepack', 'pnpm', 'exec', 'playwright', 'install', 'chromium'], timeout=1800, live=True,
-            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+        playwright_version = json.loads((release / 'node_modules' / 'playwright' / 'package.json').read_text())['version']
+        browser_marker = paths['browsers'] / '.amt-chromium-version'
+        if browser_marker.is_file() and browser_marker.read_text().strip() == playwright_version:
+            print(f'Reusing cached Playwright Chromium for version {playwright_version}.')
+        else:
+            run(limited_command(['corepack', 'pnpm', 'exec', 'playwright', 'install', 'chromium'], cpu_quota='50%', memory_max='1G'), timeout=1800, live=True,
+                env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+            atomic(browser_marker, playwright_version + '\n')
 
     def run_native_migrate(self):
         self.stage('Run database migrations')
@@ -1211,6 +1248,7 @@ class Deployment:
         if self.native_runtime():
             run(['systemctl', 'enable', self.backup_timer_name()])
             run(['systemctl', 'start', self.backup_timer_name()])
+            run(['systemctl', 'reset-failed', 'amt-pricelist.service', self.backup_service_name()], check=False)
         self.checkpoint('HEALTHY', current=release.name, previous=previous.name if previous else None)
         if first:
             atomic(journal, json.dumps({'commit': commit, 'candidate': release.name, 'completed': True}))
@@ -1526,11 +1564,26 @@ class Deployment:
                 timer_enabled = decoded(run(['systemctl', 'is-enabled', self.backup_timer_name()], check=False)) or 'unknown'
                 timer_active = decoded(run(['systemctl', 'is-active', self.backup_timer_name()], check=False)) or 'unknown'
                 print(f'Backup timer: {timer_enabled} / {timer_active}.')
+                timer_details = decoded(run(['systemctl', 'show', self.backup_timer_name(),
+                    '--property=NextElapseUSecRealtime', '--property=LastTriggerUSec', '--no-pager'], check=False))
+                if timer_details:
+                    print(timer_details)
+                backup_state = decoded(run(['systemctl', 'show', self.backup_service_name(),
+                    '--property=ActiveState', '--property=SubState', '--property=Result',
+                    '--property=ExecMainCode', '--property=ExecMainStatus', '--property=StatusErrno', '--no-pager'], check=False))
+                print('Backup service: ' + (backup_state.replace('\n', ', ') or 'unknown'))
+                latest = decoded(self.database("SELECT coalesce(json_build_object('status',status,'createdAt',created_at,'completedAt',completed_at,'durationSeconds',CASE WHEN completed_at IS NULL THEN NULL ELSE extract(epoch FROM completed_at-created_at)::int END,'sizeBytes',size_bytes,'error',error)::text,'none') FROM backups ORDER BY created_at DESC LIMIT 1;", check=False))
+                print(f'Latest application backup: {latest or "none"}')
             else:
                 print(decoded(self.compose('ps')))
             enabled = decoded(run(['systemctl', 'is-enabled', 'amt-pricelist.service'], check=False)) or 'unknown'
             active = decoded(run(['systemctl', 'is-active', 'amt-pricelist.service'], check=False)) or 'unknown'
             print(f'Auto-start on VPS reboot: {"enabled" if enabled == "enabled" else enabled}. Systemd state: {active}.')
+            app_state = decoded(run(['systemctl', 'show', 'amt-pricelist.service',
+                '--property=ActiveState', '--property=SubState', '--property=Result',
+                '--property=ExecMainCode', '--property=ExecMainStatus', '--property=StatusErrno', '--no-pager'], check=False))
+            print('AMT startup service: ' + (app_state.replace('\n', ', ') or 'unknown'))
+            self.resource_status()
             return
         details = []
         install_file = self.state / 'install.json'
@@ -1553,6 +1606,39 @@ class Deployment:
                 pass
         recovery_info = f" ({', '.join(details)})" if details else ""
         print(f"Installation incomplete; recovery state active{recovery_info}. Use 'install --resume' or 'recover-install' to complete.")
+
+    def resource_status(self):
+        memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+        available_mib = int(memory['MemAvailable'].split()[0]) / 1024
+        swap_total = int(memory['SwapTotal'].split()[0])
+        swap_free = int(memory['SwapFree'].split()[0])
+        disk = os.statvfs(self.root)
+        disk_free_gib = disk.f_bavail * disk.f_frsize / 1024**3
+        first = Path('/proc/stat').read_text().splitlines()[0]
+        time.sleep(.25)
+        second = Path('/proc/stat').read_text().splitlines()[0]
+        steal = cpu_steal_percent(first, second)
+        load = os.getloadavg()
+        lock = Path('/run/lock/amt-pricelist-deploy.lock')
+        maintenance = 'idle'
+        try:
+            import fcntl
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except BlockingIOError:
+                maintenance = 'active'
+            finally:
+                os.close(fd)
+        except OSError:
+            maintenance = 'unknown'
+        print(f'AMT maintenance lock: {maintenance}.')
+        print(f'Resources: load {load[0]:.2f}/{load[1]:.2f}/{load[2]:.2f}; '
+              f'available memory {available_mib:.0f} MiB; swap used {(swap_total - swap_free) / 1024:.0f} MiB; '
+              f'root free {disk_free_gib:.1f} GiB; CPU steal {steal:.1f}%.')
+        if steal > 10:
+            print('WARNING: CPU steal is above 10%; the VPS host is withholding CPU time. Escalate this evidence to the hosting provider.')
 
     def setup_token(self):
         self.load_environment()
@@ -1596,14 +1682,19 @@ class Deployment:
             print('Dry run: inspected only. No fetch, files, containers, migrations, secrets or system services changed.')
             return
         require(self.args.command in ['start', 'stop', 'setup-token', 'backup-job'] or self.args.access_verified, 'Confirm SSH-key verification and separate root-password rotation with --access-verified')
-        with self.locked():
+        command = self.args.command
+        with self.locked(skip_if_busy=command == 'backup-job') as acquired:
+            if acquired is False:
+                self.log_ready()
+                self.event('BACKUP_SKIPPED', reason='AMT maintenance already active')
+                print('Scheduled backup skipped: AMT maintenance is already active. The daily timer will retry at its next run.')
+                return
             if self.root.exists():
                 self.log_ready()
             if self.root.exists() and (self.state / 'rotation.json').exists():
                 require(self.args.command == 'rotate-secrets' and self.args.resume, 'Interrupted rotation: only rotate-secrets --resume is permitted')
             before = {c['Id']: c.get('State', {}).get('Status') for c in self.inventory() if not self.owned(c)}
             try:
-                command = self.args.command
                 if command in ['install', 'upgrade']:
                     self.deploy(command == 'install')
                 elif command == 'rotate-secrets':
@@ -1677,7 +1768,7 @@ def arguments(argv=None):
     require(not args.url or args.command == 'set-public-url', '--url is valid only with set-public-url')
     if args.command == 'set-public-url' and not args.url and sys.stdin.isatty():
         args.url = input('Public URL (including /amt_price_list): ').strip()
-    if not args.dry_run and args.command not in ['status', 'start', 'stop', 'setup-token']:
+    if not args.dry_run and args.command not in ['status', 'start', 'stop', 'setup-token', 'backup-job']:
         if args.recover_install and not args.yes:
             approved = (sys.stdin.isatty() and
                         input('Recover the interrupted AMT install now? Confirm your SSH-key VPS access still works. (y/N): ').lower() == 'y')

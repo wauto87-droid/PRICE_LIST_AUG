@@ -18,13 +18,14 @@ const url = new URL(dbUrl);
 const queryHost = url.searchParams.get("host");
 const env = {
   ...process.env,
-  PGHOST: (queryHost && queryHost.startsWith("/")) ? queryHost : url.hostname,
+  PGHOST: queryHost && queryHost.startsWith("/") ? queryHost : url.hostname,
   PGPORT: url.port || "5432",
   PGUSER: decodeURIComponent(url.username),
   PGPASSWORD: decodeURIComponent(url.password),
   PGDATABASE: url.pathname.slice(1),
 };
 let running = true;
+let failed = false;
 const once = process.argv.includes("--once");
 async function cycle() {
   try {
@@ -67,6 +68,7 @@ async function cycle() {
           [backup.id, filename, stat.size],
         );
       } catch (e) {
+        failed = true;
         console.error("Backup failed", backup.id, (e as Error).message);
         await db.query(
           "UPDATE backups SET status='FAILED',error='Backup failed; check backup service logs' WHERE id=$1",
@@ -94,6 +96,7 @@ async function cycle() {
       "UPDATE backups SET status='FAILED',error='Interrupted backup; request a new backup' WHERE status='RUNNING' AND created_at<now()-interval '30 minutes'",
     );
   } catch (e) {
+    failed = true;
     console.error("Backup service error", (e as Error).message);
   }
 }
@@ -108,4 +111,4 @@ if (once) {
     await new Promise((r) => setTimeout(r, 15000));
   }
 }
-process.exit(0);
+process.exit(failed ? 1 : 0);

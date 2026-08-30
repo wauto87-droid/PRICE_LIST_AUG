@@ -78,6 +78,20 @@ systemctl is-enabled amt-pricelist-backup.timer
 pm2 status
 ```
 
+PM2 exclusively owns the AMT app and worker. The upgrade removes legacy
+AMT-owned app, worker, and backup containers while retaining the isolated
+PostgreSQL container. It never changes unrelated Compose projects or PM2 apps.
+
+The automatic database backup runs daily at 02:00 Asia/Riyadh with low CPU and
+I/O priority. A backup that collides with an AMT deployment is recorded as
+skipped and retried by the next daily timer run. `bash deploy.sh status` reports
+the next run, latest backup, maintenance lock, resource capacity, and CPU steal.
+
+Native dependency installation and builds run in a systemd scope capped to one
+CPU core and 2 GiB memory at low I/O priority. If status reports sustained CPU
+steal above 10% while AMT maintenance is idle, capture the output and escalate
+it to the VPS provider; CPU steal is host contention, not application load.
+
 `amt-pricelist.service` remains the authoritative auto-start mechanism after a
 VPS reboot. Do not replace it with ad hoc `@reboot`, `nohup`, or standalone
 `pm2 startup` workarounds.

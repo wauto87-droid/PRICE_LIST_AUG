@@ -9,4 +9,9 @@ User=root
 UMask=0077
 ExecStart=/usr/bin/python3 /opt/shop-pricelist/current/scripts/deployment/manage.py backup-job --yes
 TimeoutStartSec=1800
-
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+CPUQuota=50%
+MemoryMax=1G

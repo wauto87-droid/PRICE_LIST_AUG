@@ -2,8 +2,8 @@
 Description=AMT Price List backup timer
 
 [Timer]
-OnBootSec=5m
-OnUnitActiveSec=15m
+OnCalendar=*-*-* 02:00:00 Asia/Riyadh
+Persistent=true
 AccuracySec=1m
 Unit=amt-pricelist-backup.service
 

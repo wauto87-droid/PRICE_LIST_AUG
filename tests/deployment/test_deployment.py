@@ -113,6 +113,23 @@ class SafetyTests(unittest.TestCase):
         for command in ('status', 'stop', 'backup', 'rotate-secrets', 'setup-token', 'cleanup'):
             m.check_memory(0, command)
 
+    def test_resource_limited_command_caps_one_core_and_io_priority(self):
+        command = m.limited_command(['corepack', 'pnpm', 'build'])
+        self.assertEqual(command[:4], ['systemd-run', '--scope', '--quiet', '--wait'])
+        self.assertIn('CPUQuota=100%', command)
+        self.assertIn('MemoryMax=2G', command)
+        self.assertIn('IOWeight=10', command)
+        self.assertEqual(command[-7:], ['nice', '-n', '10', 'ionice', '-c2', '-n7', 'corepack', 'pnpm', 'build'][-7:])
+
+    def test_cpu_steal_percent(self):
+        self.assertEqual(m.cpu_steal_percent('cpu  10 0 10 80 0 0 0 0', 'cpu  20 0 20 100 0 0 0 40'), 50.0)
+
+    def test_backup_timer_is_daily_riyadh_and_persistent(self):
+        timer = (ROOT / 'docker/amt-pricelist-backup.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* 02:00:00 Asia/Riyadh', timer)
+        self.assertIn('Persistent=true', timer)
+        self.assertNotIn('OnUnitActiveSec', timer)
+
     def test_sequential_bounded_native_builds(self):
         d = self.deployment()
         with patch.object(m, 'run', return_value=result()) as run:
@@ -321,6 +338,24 @@ class SafetyTests(unittest.TestCase):
         with self.assertRaises(m.DeployError):
             d.start()
         d.compose.assert_not_called()
+
+    def test_pm2_start_removes_only_legacy_amt_runtime_containers(self):
+        d = self.deployment()
+        d.args.runtime = 'pm2'
+        d.env = m.new_env(18188, runtime='pm2')
+        d.release = ROOT
+        d.ownership = Mock()
+        d.port = Mock()
+        d.compose = Mock(return_value=result())
+        d.native_runtime_env = Mock(return_value={})
+        d.healthy = Mock()
+        with patch.object(m, 'run', return_value=result()) as run:
+            d.start()
+        d.compose.assert_called_once_with('rm', '-s', '-f', 'app', 'worker', 'backup', check=False)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(['pm2', 'delete', *m.PM2_PROCESSES], commands)
+        self.assertTrue(any(command[:2] == ['pm2', 'start'] for command in commands))
+        d.healthy.assert_called_once()
 
     def test_port_accepts_saved_port_held_by_amt_pm2_app(self):
         d = self.deployment()
@@ -1235,8 +1270,9 @@ www.softwaresolver.online {
             d.compose = Mock(return_value=result('NAME                IMAGE               COMMAND             SERVICE             CREATED             STATUS              PORTS\namt-pricelist-app   ...                 ...                 app                 ...                 Up                  127.0.0.1:18180->3000/tcp'))
             d.load_environment = Mock()
             output = io.StringIO()
+            d.resource_status = Mock()
             with contextlib.redirect_stdout(output), patch.object(Path, 'resolve', resolve_override), \
-                    patch.object(m, 'run', side_effect=[result('enabled'), result('active')]):
+                    patch.object(m, 'run', side_effect=[result('enabled'), result('active'), result('ActiveState=active\nSubState=exited\nResult=success')]):
                 d.status()
             self.assertIn('amt-pricelist-app', output.getvalue())
             self.assertIn('Auto-start on VPS reboot: enabled. Systemd state: active.', output.getvalue())
@@ -1313,6 +1349,26 @@ www.softwaresolver.online {
             d.execute()
             d.current.assert_called_once()
             d.run_backup_job.assert_called_once()
+
+    def test_scheduled_backup_busy_lock_is_clean_skip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = m.arguments(['backup-job', '--yes'])
+            d = m.Deployment(args)
+            d.preflight = Mock()
+            d.current = Mock()
+            d.root = Path(temp)
+            d.state = d.root / 'state'
+            d.state.mkdir(exist_ok=True)
+            d.run_backup_job = Mock()
+            d.inventory = Mock(return_value=[])
+            d.locked = Mock(return_value=contextlib.nullcontext(False))
+            d.log_ready = Mock()
+            d.event = Mock()
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                d.execute()
+            d.run_backup_job.assert_not_called()
+            d.event.assert_called_once_with('BACKUP_SKIPPED', reason='AMT maintenance already active')
+            self.assertIn('Scheduled backup skipped', output.getvalue())
 
     def test_refresh_proxy_updates_upstream_and_reloads_caddy(self):
         with tempfile.TemporaryDirectory() as temp:
