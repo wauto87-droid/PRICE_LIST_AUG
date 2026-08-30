@@ -348,23 +348,10 @@ h3 {
 .lookup-filters {
   margin-top: 14px;
 }
-.lookup-search-shell {
-  position: sticky;
-  top: 18px;
-  z-index: 12;
-  margin: -4px -4px 18px;
-  padding: 4px;
-}
 .lookup-search-panel {
   display: grid;
   gap: 16px;
-  margin-bottom: 0;
-  padding: 18px 18px 16px;
-  border: 1px solid #efe3e6;
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, #fff7f8 100%);
-  box-shadow: 0 10px 24px rgba(29, 33, 43, 0.06);
-  backdrop-filter: blur(8px);
+  margin-bottom: 18px;
 }
 .lookup-title-row {
   display: flex;
@@ -431,12 +418,19 @@ h3 {
   font-size: 12px;
 }
 .lookup-selected-hint {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   padding: 10px 12px;
   border: 1px solid #f0d9de;
   border-radius: 14px;
   background: #fffdfd;
+}
+.lookup-selected-hint > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 .lookup-selected-hint strong {
   color: var(--red);
@@ -1867,11 +1861,6 @@ fieldset label {
   .lookup-layout {
     grid-template-columns: 1fr;
   }
-  .lookup-search-shell {
-    position: static;
-    margin: 0 0 18px;
-    padding: 0;
-  }
   .lookup-title-row,
   .lookup-search-meta {
     display: grid;
@@ -1976,9 +1965,8 @@ fieldset label {
     padding: 21px 18px;
     border-radius: 17px;
   }
-  .lookup-search-panel {
-    padding: 16px 15px 14px;
-    border-radius: 17px;
+  .lookup-selected-hint {
+    display: grid;
   }
   .search-box input {
     font-size: 15px;
