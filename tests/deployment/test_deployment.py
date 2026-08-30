@@ -115,7 +115,8 @@ class SafetyTests(unittest.TestCase):
 
     def test_resource_limited_command_caps_one_core_and_io_priority(self):
         command = m.limited_command(['corepack', 'pnpm', 'build'])
-        self.assertEqual(command[:4], ['systemd-run', '--scope', '--quiet', '--wait'])
+        self.assertEqual(command[:4], ['systemd-run', '--scope', '--quiet', '--collect'])
+        self.assertNotIn('--wait', command)
         self.assertIn('CPUQuota=100%', command)
         self.assertIn('MemoryMax=2G', command)
         self.assertIn('IOWeight=10', command)

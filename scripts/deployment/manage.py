@@ -329,7 +329,7 @@ def check_memory(available_kib, command):
 
 def limited_command(args, cpu_quota='100%', memory_max='2G'):
     """Bound maintenance to one core and low I/O priority on a systemd host."""
-    return ['systemd-run', '--scope', '--quiet', '--wait', '--collect',
+    return ['systemd-run', '--scope', '--quiet', '--collect',
             '-p', f'CPUQuota={cpu_quota}', '-p', f'MemoryMax={memory_max}',
             '-p', f'MemorySwapMax={memory_max}', '-p', 'CPUWeight=10',
             '-p', 'IOWeight=10', '--', 'nice', '-n', '10',
