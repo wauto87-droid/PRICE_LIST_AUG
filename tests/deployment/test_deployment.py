@@ -171,6 +171,37 @@ class SafetyTests(unittest.TestCase):
             m.arguments(['install', '--dry-run', '--build-network=untrusted'])
         self.assertEqual(error.exception.code, 2)
 
+    def test_upgrade_secret_rotation_is_explicit_only(self):
+        self.assertFalse(m.arguments(['upgrade', '--dry-run']).rotate)
+        self.assertTrue(m.arguments(['upgrade', '--dry-run', '--rotate']).rotate)
+
+    def test_native_build_fingerprint_tracks_application_not_deployment_docs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            (release / 'app').mkdir()
+            (release / 'app' / 'page.tsx').write_text('export default 1')
+            (release / 'package.json').write_text('{"name":"amt"}')
+            first = m.native_build_fingerprint(release)
+            (release / 'docs').mkdir()
+            (release / 'docs' / 'operations.md').write_text('changed deployment documentation')
+            self.assertEqual(m.native_build_fingerprint(release), first)
+            (release / 'app' / 'page.tsx').write_text('export default 2')
+            self.assertNotEqual(m.native_build_fingerprint(release), first)
+
+    def test_clone_tree_cache_copy_is_isolated_and_build_clone_can_hardlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            (source / 'artifact').write_text('verified')
+            cache = root / 'cache'
+            m.clone_tree(source, cache)
+            (cache / 'artifact').write_text('changed')
+            self.assertEqual((source / 'artifact').read_text(), 'verified')
+            build = root / 'build'
+            m.clone_tree(source, build, hardlink=True)
+            self.assertEqual((build / 'artifact').read_text(), 'verified')
+
     def test_recover_install_defaults_to_safe_one_command_settings(self):
         args = m.arguments(['recover-install', '--dry-run'])
         self.assertEqual(args.command, 'install')

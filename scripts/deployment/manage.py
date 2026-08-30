@@ -27,6 +27,50 @@ from collections import deque
 
 REPORT = None
 
+# Inputs which can change the installed JavaScript dependency graph or the
+# production application bundle. Deployment/docs-only commits intentionally do
+# not invalidate a previously verified Next.js build.
+NATIVE_BUILD_DIRECTORIES = ('app', 'assets', 'backend', 'frontend', 'public', 'shared')
+NATIVE_BUILD_FILES = (
+    'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'next.config.ts',
+    'next-env.d.ts', 'tsconfig.json',
+)
+
+def native_build_fingerprint(release):
+    """Hash build inputs without depending on Git metadata in an archive."""
+    release = Path(release)
+    files = []
+    for name in NATIVE_BUILD_FILES:
+        path = release / name
+        if path.is_file():
+            files.append(path)
+    for name in NATIVE_BUILD_DIRECTORIES:
+        directory = release / name
+        if directory.is_dir():
+            files.extend(path for path in directory.rglob('*') if path.is_file() and not path.is_symlink())
+    scripts = release / 'scripts'
+    if scripts.is_dir():
+        files.extend(path for path in scripts.rglob('*.ts') if path.is_file() and not path.is_symlink())
+    digest = hashlib.sha256()
+    for path in sorted(set(files), key=lambda item: item.relative_to(release).as_posix()):
+        relative = path.relative_to(release).as_posix().encode()
+        digest.update(len(relative).to_bytes(4, 'big'))
+        digest.update(relative)
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+def clone_tree(source, destination, *, hardlink=False):
+    """Copy a release tree, using space-efficient hardlinks when safe."""
+    def link_or_copy(src, dst):
+        if hardlink:
+            try:
+                os.link(src, dst)
+                return dst
+            except OSError:
+                pass
+        return shutil.copy2(src, dst)
+    shutil.copytree(source, destination, symlinks=True, copy_function=link_or_copy)
+
 class Diagnostics:
     """Only explicitly public command output is streamed; all other output stays captured."""
     def __init__(self, verbose=False, heartbeat=10):
@@ -1022,12 +1066,13 @@ class Deployment:
             for s in ['app', 'migrate', 'worker', 'backup']
         }
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
-        atomic(release / 'release.json', json.dumps({'commit': commit, 'migrations': self.migration_files(release)}))
+        metadata = {'commit': commit, 'migrations': self.migration_files(release)}
         self.compose('config', '--quiet', release=release)
         if self.runtime() == 'pm2':
-            self.build_native_release(release)
+            metadata.update(self.build_native_release(release, self.release))
         else:
             self.build_release(release, commit)
+        atomic(release / 'release.json', json.dumps(metadata))
         return release
 
     def build_release(self, release, commit):
@@ -1046,17 +1091,34 @@ class Deployment:
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
                  '--tag', f'localhost/{PROJECT}-{target}:{commit}', '--file', release / 'Dockerfile', release], timeout=3600, live=True)
 
-    def build_native_release(self, release):
+    def build_native_release(self, release, previous=None):
         paths = self.native_paths(release)
         for directory in (paths['shared'], paths['browsers'], paths['logs']):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.stage('Install host dependencies for PM2 runtime')
-        run(['corepack', 'enable'], timeout=120, env=self.native_env(release=release), cwd=release)
-        run(limited_command(['corepack', 'pnpm', 'install', '--frozen-lockfile']), timeout=3600, live=True,
-            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
-        self.stage('Build PM2 release assets')
-        run(limited_command(['corepack', 'pnpm', 'build']), timeout=3600, live=True,
-            env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+        fingerprint = native_build_fingerprint(release)
+        reusable = (previous is not None and previous.is_dir() and
+                    (previous / '.next').is_dir() and (previous / 'node_modules').is_dir() and
+                    native_build_fingerprint(previous) == fingerprint)
+        reused_from = None
+        if reusable:
+            self.stage('Reuse verified PM2 application build')
+            clone_tree(previous / 'node_modules', release / 'node_modules', hardlink=True)
+            clone_tree(previous / '.next', release / '.next', hardlink=True)
+            reused_from = previous.name
+            print(f'Application build inputs are unchanged; reused verified assets from {previous.name}.')
+        else:
+            self.stage('Install host dependencies for PM2 runtime')
+            run(['corepack', 'enable'], timeout=120, env=self.native_env(release=release), cwd=release)
+            run(limited_command(['corepack', 'pnpm', 'install', '--frozen-lockfile']), timeout=3600, live=True,
+                env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
+            previous_cache = previous / '.next' / 'cache' if previous is not None else None
+            if previous_cache is not None and previous_cache.is_dir():
+                (release / '.next').mkdir(mode=0o700, exist_ok=True)
+                clone_tree(previous_cache, release / '.next' / 'cache')
+                print(f'Seeded incremental Next.js cache from {previous.name}.')
+            self.stage('Build PM2 release assets')
+            run(limited_command(['corepack', 'pnpm', 'build']), timeout=3600, live=True,
+                env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
         self.stage('Prepare PM2 worker runtime')
         run(['python3', '-m', 'venv', paths['python']], timeout=300, env=self.native_env(release=release))
         run(limited_command([paths['python'] / 'bin' / 'pip', 'install', '--no-cache-dir', '-r', release / 'scripts' / 'requirements.txt'], cpu_quota='50%', memory_max='1G'),
@@ -1069,6 +1131,7 @@ class Deployment:
             run(limited_command(['corepack', 'pnpm', 'exec', 'playwright', 'install', 'chromium'], cpu_quota='50%', memory_max='1G'), timeout=1800, live=True,
                 env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
             atomic(browser_marker, playwright_version + '\n')
+        return {'buildFingerprint': fingerprint, 'buildReusedFrom': reused_from}
 
     def run_native_migrate(self):
         self.stage('Run database migrations')
@@ -1779,8 +1842,6 @@ def arguments(argv=None):
                 args.access_verified = input('SSH-key access verified AND root password separately rotated? (y/N): ').lower() == 'y'
             if not args.yes:
                 require(sys.stdin.isatty() and input(f'Run AMT {args.command}? Brief app-only downtime may occur. (y/N): ').lower() == 'y', 'Cancelled; use --yes for non-interactive operation')
-        if args.command == 'upgrade' and not args.rotate and sys.stdin.isatty() and not args.yes:
-            args.rotate = input('Rotate AMT app secrets after upgrade? (y/N): ').lower() == 'y'
     return args
 
 def main():
