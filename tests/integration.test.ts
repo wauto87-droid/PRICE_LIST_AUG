@@ -753,6 +753,45 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       });
     },
   );
+  await t.test(
+    "Bulk remove minimum supports large matched selections and protected dashboard exposes cleanup batches",
+    async () => {
+      for (let i = 0; i < 260; i++)
+        await request("products", "POST", {
+          ...base,
+          partNumber: `MIN-BULK-${String(i).padStart(4, "0")}`,
+          description: `Bulk minimum removal ${i}`,
+          aliases: [],
+          minimumEnabled: true,
+          minimum: "75",
+        });
+      const protectedBatch = (
+        await request(
+          "admin/dashboard?minimumProtectedPage=0&minimumProtectedPageSize=50&minimumProtectedSelectionOffset=0",
+        )
+      ).data;
+      assert.equal(protectedBatch.minimumProtected.length, 50);
+      assert.equal(protectedBatch.minimumProtectedSelectionOffset, 0);
+      assert.equal(protectedBatch.minimumProtectedSelectionItems.length >= 260, true);
+      assert.equal(protectedBatch.minimumProtectedSelectionHasMore, false);
+      const matched = (await request("products?q=MIN-BULK")).data;
+      assert.equal(matched.selectableItems.length, 260);
+      await request("products/bulk", "POST", {
+        items: matched.selectableItems,
+        operation: "REMOVE_MINIMUM",
+        confirm: true,
+      });
+      const after = (await request("products?q=MIN-BULK")).data.items;
+      assert(after.every((item: any) => item.minimumEnabled === false));
+      assert(after.every((item: any) => item.minimum === "0.00"));
+      const protectedAfter = (
+        await request(
+          "products?protectedOnly=true&page=0&pageSize=50&q=MIN-BULK",
+        )
+      ).data;
+      assert.equal(protectedAfter.totalRows, 0);
+    },
+  );
   await t.test("Bulk archive and reactivate update product status", async () => {
     const before = (await request("products?q=LC1D")).data.items[0];
     await request("products/bulk", "POST", {

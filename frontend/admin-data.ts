@@ -16,6 +16,7 @@ export function validateAdminData(section: string, value: any) {
           "importErrors",
           "duplicateRows",
           "minimumProtected",
+          "minimumProtectedSelectionItems",
           "updatedTodayItems",
           "draftQuotations",
           "issuedTodayItems",
@@ -25,7 +26,10 @@ export function validateAdminData(section: string, value: any) {
         Number.isInteger(value.minimumProtectedPageSize) &&
         Number.isInteger(value.minimumProtectedTotalRows) &&
         Number.isInteger(value.minimumProtectedTotalPages) &&
-        typeof value.minimumProtectedHasMore === "boolean"
+        typeof value.minimumProtectedHasMore === "boolean" &&
+        Number.isInteger(value.minimumProtectedSelectionOffset) &&
+        typeof value.minimumProtectedSelectionHasMore === "boolean" &&
+        typeof value.minimumProtectedSelectionLimitReached === "boolean"
       : section === "roles"
         ? object &&
           Array.isArray(value.roles) &&

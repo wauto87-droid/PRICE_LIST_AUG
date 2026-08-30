@@ -693,7 +693,13 @@ export async function search(
   const selectionOffset = Math.max(options.selectionOffset ?? 0, 0);
   const activeClause = admin ? "true" : "p.active";
   const minimumClause = protectedOnly
-    ? "pp.minimum_enabled AND pp.minimum > 0"
+    ? `EXISTS (
+        SELECT 1
+        FROM product_pricing pp
+        WHERE pp.product_id = p.id
+          AND pp.minimum_enabled
+          AND pp.minimum > 0
+      )`
     : "true";
   const productWhere = `${activeClause} AND ${minimumClause}`;
   const mapRows = (rows: Record<string, any>[]) =>

@@ -144,6 +144,21 @@ const decisionLabel = (decision: string, t: Translate) => {
   if (decision === "SKIP") return t("Ignore / Skip", "تجاهل / تخطي");
   return decision;
 };
+const importProblemHint = (row: any, t: Translate) => {
+  const errors = Array.isArray(row?.errors) ? row.errors : [];
+  if (
+    errors.some((message: string) =>
+      /Unknown part number: Update Existing Only does not create products/i.test(
+        message,
+      ),
+    )
+  )
+    return t(
+      "This row is a new product, but the import is in Update Existing Only mode. Re-map or re-upload with Create & Update to import it.",
+      "هذا الصف يمثل صنفاً جديداً، لكن الاستيراد مضبوط على تحديث الموجود فقط. أعد الربط أو ارفع الملف مجدداً مع وضع إنشاء وتحديث لاستيراده.",
+    );
+  return "";
+};
 const applyRowUpdates = (
   rows: any[],
   ids: Set<string>,
@@ -456,6 +471,7 @@ export default function Imports({
       ? t("Repair items", "عناصر الإصلاح")
       : t("All rows", "كل الصفوف");
   const showRowList = !!job && reviewSection !== "summary";
+  const reviewEditable = job?.status === "AWAITING_REVIEW";
   const visibleRowIds: string[] = (job?.rows ?? []).map((row: any) => row.id);
   const selectedVisibleIds = visibleRowIds.filter(
     (id: string) => selectedRows[id],
@@ -467,7 +483,7 @@ export default function Imports({
   const someVisibleSelected =
     visibleRowIds.some((id: string) => selectedRows[id]) && !allVisibleSelected;
   const updateSelectedRows = (updates: { decision?: string; verified?: boolean }) => {
-    if (!job || !selectedVisibleCount) return;
+    if (!job || !reviewEditable || !selectedVisibleCount) return;
     setReviewDrafts((current) => ({
       ...current,
       ...Object.fromEntries(
@@ -1376,10 +1392,19 @@ export default function Imports({
                 </span>
               </div>
               <div className="import-selection-toolbar">
+                {!reviewEditable && (
+                  <span className="muted">
+                    {t(
+                      "These rows are read-only because this import was already completed. Review the problems here, then re-upload or remap the file to fix them.",
+                      "هذه الصفوف للقراءة فقط لأن هذا الاستيراد اكتمل بالفعل. راجع المشكلات هنا ثم أعد رفع الملف أو أعد ربطه لإصلاحها.",
+                    )}
+                  </span>
+                )}
                 <label className="check">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
+                    disabled={!reviewEditable}
                     ref={(input) => {
                       if (input) input.indeterminate = someVisibleSelected;
                     }}
@@ -1401,7 +1426,7 @@ export default function Imports({
                 </span>
                 <button
                   type="button"
-                  disabled={!selectedVisibleCount}
+                  disabled={!reviewEditable || !selectedVisibleCount}
                   onClick={() =>
                     setSelectedRows(
                       Object.fromEntries(
@@ -1416,13 +1441,13 @@ export default function Imports({
                 </button>
                 <button
                   type="button"
-                  disabled={!selectedVisibleCount}
+                  disabled={!reviewEditable || !selectedVisibleCount}
                   onClick={() => setSelectedRows({})}
                 >
                   {t("Clear selection", "مسح التحديد")}
                 </button>
               </div>
-              {selectedVisibleCount > 0 && (
+              {reviewEditable && selectedVisibleCount > 0 && (
                 <div className="import-bulk-bar">
                   <span>
                     {selectedVisibleCount}{" "}
@@ -1487,6 +1512,7 @@ export default function Imports({
                         <input
                           type="checkbox"
                           checked={!!selectedRows[r.id]}
+                          disabled={!reviewEditable}
                           aria-label={`Select row ${r.row_number}`}
                           onChange={(e) =>
                             setSelectedRows((current) => ({
@@ -1586,10 +1612,13 @@ export default function Imports({
                         <small className="error-text">
                           {r.errors.join("; ")}
                         </small>
+                        {!!importProblemHint(r, t) && (
+                          <small className="muted">{importProblemHint(r, t)}</small>
+                        )}
                       </td>
                       <td data-label={t("Next action", "الإجراء التالي")}>
                         <select
-                          disabled={job.status !== "AWAITING_REVIEW"}
+                          disabled={!reviewEditable}
                           value={r.decision}
                           onChange={(e) => {
                             const decision = e.target.value;
@@ -1616,7 +1645,7 @@ export default function Imports({
                       <td data-label={t("Verified", "تم التحقق")}>
                         <input
                           type="checkbox"
-                          disabled={job.status !== "AWAITING_REVIEW"}
+                          disabled={!reviewEditable}
                           checked={r.verified}
                           aria-label={"Verify row " + r.row_number}
                           onChange={(e) => {
@@ -1909,8 +1938,8 @@ export default function Imports({
                   <div className="notice warning">
                     <span>
                       {t(
-                        `This import finished with ${job.quickStats.invalidRows} skipped rows. Open Repair items to fix them quickly.`,
-                        `اكتمل هذا الاستيراد مع ${job.quickStats.invalidRows} صفوف متخطاة. افتح عناصر الإصلاح لتصحيحها بسرعة.`,
+                        `This import finished with ${job.quickStats.invalidRows} skipped rows. Open Repair items to review what was skipped and why.`,
+                        `اكتمل هذا الاستيراد مع ${job.quickStats.invalidRows} صفوف متخطاة. افتح عناصر الإصلاح لمراجعة ما تم تخطيه وسبب ذلك.`,
                       )}
                     </span>
                     <button
