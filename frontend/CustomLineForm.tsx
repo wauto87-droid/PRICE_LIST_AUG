@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { calculateCustom, customLineInput } from "@/backend/pricing/engine";
 import type { Translate } from "./api";
+import { api } from "./api";
 import { wheelSafeNumberInputProps } from "./number-input";
 const blank = (partNumber = "") => ({
   partNumber,
@@ -10,6 +11,7 @@ const blank = (partNumber = "") => ({
   quantity: "1",
   unitPriceExcl: "",
   discount: "0",
+  reusableItemId: undefined as string | undefined,
 });
 export default function CustomLineForm({
   t,
@@ -24,11 +26,48 @@ export default function CustomLineForm({
 }) {
   const [open, setOpen] = useState(false),
     [value, setValue] = useState(blank()),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [savedItems, setSavedItems] = useState<any[]>([]);
   useEffect(() => {
     if (!open && suggestedPart.trim())
       setValue((current) => ({ ...current, partNumber: suggestedPart.trim() }));
   }, [suggestedPart, open]);
+  useEffect(() => {
+    if (!open) return;
+    const queries = [value.partNumber.trim(), value.description.trim()].filter(
+      (query, index, all) => query && all.indexOf(query) === index,
+    );
+    const timer = setTimeout(
+      () =>
+        Promise.all(
+          (queries.length ? queries : [""]).map((query) =>
+            api("reusable-custom-items?q=" + encodeURIComponent(query)),
+          ),
+        )
+          .then((groups) =>
+            setSavedItems([
+              ...new Map(
+                groups.flat().map((item: any) => [item.id, item]),
+              ).values(),
+            ]),
+          )
+          .catch(() => setSavedItems([])),
+      250,
+    );
+    return () => clearTimeout(timer);
+  }, [open, value.partNumber, value.description]);
+  function useSaved(item: any) {
+    setValue({
+      partNumber: item.reference || "",
+      description: item.description,
+      unit: item.unit,
+      quantity: "1",
+      unitPriceExcl: String(item.suggestedUnitPrice),
+      discount: String(item.suggestedDiscount),
+      reusableItemId: item.id,
+    });
+    setError("");
+  }
   function add() {
     try {
       const input = customLineInput.parse({ type: "CUSTOM", ...value });
@@ -80,6 +119,29 @@ export default function CustomLineForm({
               ×
             </button>
           </div>
+          {!!savedItems.length && (
+            <div className="reusable-custom-results">
+              <strong>
+                {t("Reusable custom items", "الأصناف المخصصة المحفوظة")}
+              </strong>
+              {savedItems.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => useSaved(item)}
+                >
+                  <span>
+                    {item.reference || t("No reference", "بدون مرجع")} ·{" "}
+                    {item.description}
+                  </span>
+                  <small>
+                    {item.suggestedUnitPrice} · {item.suggestedDiscount}%
+                  </small>
+                  <b>{t("Use existing item", "استخدام الصنف الموجود")}</b>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="form-grid custom-line-fields">
             <label>
               {t("Part / reference (optional)", "الصنف / المرجع (اختياري)")}

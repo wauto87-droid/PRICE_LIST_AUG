@@ -18,22 +18,36 @@ const actions: Record<string, [string, string]> = {
   DRAFT_EDIT: ["Draft quotation updated", "تم تحديث مسودة عرض السعر"],
   QUOTATION_ISSUE: ["Quotation issued", "تم إصدار عرض السعر"],
   QUOTATION_DELETE: ["Draft quotation deleted", "تم حذف المسودة"],
+  REUSABLE_CUSTOM_CREATE: [
+    "Reusable custom item saved",
+    "تم حفظ صنف مخصص قابل لإعادة الاستخدام",
+  ],
+  REUSABLE_CUSTOM_USE: [
+    "Reusable custom item used",
+    "تم استخدام صنف مخصص محفوظ",
+  ],
+  REUSABLE_CUSTOM_EDIT: [
+    "Reusable custom item updated",
+    "تم تحديث صنف مخصص محفوظ",
+  ],
+  REUSABLE_CUSTOM_DELETE: [
+    "Reusable custom item deleted",
+    "تم حذف صنف مخصص محفوظ",
+  ],
+  REUSABLE_CUSTOM_CONVERT: [
+    "Reusable item added to Price List",
+    "تمت إضافة الصنف المحفوظ إلى قائمة الأسعار",
+  ],
   MIN_PRICE_OVERRIDE: [
     "Below-minimum price approved",
     "تم اعتماد سعر أقل من الحد الأدنى",
   ],
-  DISCOUNT_REQUEST_CREATE: [
-    "Discount request created",
-    "تم إنشاء طلب خصم",
-  ],
+  DISCOUNT_REQUEST_CREATE: ["Discount request created", "تم إنشاء طلب خصم"],
   DISCOUNT_REQUEST_APPROVE: [
     "Discount request approved",
     "تم اعتماد طلب الخصم",
   ],
-  DISCOUNT_REQUEST_REJECT: [
-    "Discount request rejected",
-    "تم رفض طلب الخصم",
-  ],
+  DISCOUNT_REQUEST_REJECT: ["Discount request rejected", "تم رفض طلب الخصم"],
   EXCEL_UPLOAD: ["Spreadsheet uploaded", "تم رفع جدول أسعار"],
   PDF_UPLOAD: ["PDF uploaded", "تم رفع ملف PDF"],
   EXCEL_IMPORT: ["Spreadsheet import completed", "اكتمل استيراد جدول الأسعار"],
@@ -140,6 +154,10 @@ const permissions: Record<string, [string, string]> = {
   AUDIT_VIEW: ["View activity log", "عرض سجل النشاط"],
   ADMIN_VIEW: ["Open administration", "فتح الإدارة"],
   EXPORT: ["Export spreadsheets", "تصدير الجداول"],
+  REUSABLE_CUSTOM_MANAGE: [
+    "Manage reusable custom items",
+    "إدارة الأصناف المخصصة المحفوظة",
+  ],
 };
 const object = (v: any): Record<string, any> =>
   v && typeof v === "object" && !Array.isArray(v) ? v : {};

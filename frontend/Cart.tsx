@@ -22,6 +22,7 @@ export default function Cart({
   onSaved: (q: any) => void;
 }) {
   const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
   const [options, setOptions] = useState<Record<string, any[]>>({});
   async function loadLevels(productId: string) {
@@ -49,6 +50,7 @@ export default function Cart({
   async function reprice() {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const lines = [];
       for (const line of cart.lines)
@@ -83,6 +85,7 @@ export default function Cart({
   async function save() {
     setBusy(true);
     setError("");
+    setNotice("");
     const requestId = cart.requestId || crypto.randomUUID();
     if (!cart.id && !cart.requestId) setCart({ ...cart, requestId });
     try {
@@ -111,6 +114,16 @@ export default function Cart({
         number: q.number,
         lines: q.lines,
       });
+      const reused = q.lines.filter(
+        (line: any) => line.reusableResolution === "EXISTING",
+      );
+      if (reused.length)
+        setNotice(
+          t(
+            `${reused.length} custom item${reused.length === 1 ? " was" : "s were"} linked to the existing reusable list without changing its saved price.`,
+            `${reused.length} من الأصناف المخصصة تم ربطها بالقائمة المحفوظة دون تغيير سعرها المحفوظ.`,
+          ),
+        );
       onSaved(q);
     } catch (e) {
       setError((e as Error).message);
@@ -396,6 +409,11 @@ export default function Cart({
       {error && (
         <div className="notice error" role="alert">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="notice success" role="status">
+          {notice}
         </div>
       )}
       <div className="actions footer-actions">

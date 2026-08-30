@@ -15,6 +15,7 @@ import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
 import * as salesChecks from "../sales-checks/service";
 import * as quantityFinder from "../quantity-finder/service";
+import * as reusableCustom from "../reusable-custom/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
@@ -468,6 +469,39 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
           return response({ id: job });
         }
+      }
+    }
+    if (root === "reusable-custom-items") {
+      if (!id && method === "GET") {
+        if (url.searchParams.get("admin") === "1")
+          return response(
+            await reusableCustom.list(
+              db,
+              actor,
+              url.searchParams.get("q") ?? "",
+              url.searchParams.get("status") ?? "ACTIVE",
+            ),
+          );
+        return response(
+          await reusableCustom.search(
+            db,
+            actor,
+            url.searchParams.get("q") ?? "",
+          ),
+        );
+      }
+      if (id) {
+        uuid(id);
+        if (!action && method === "PUT")
+          return response(
+            await reusableCustom.update(db, actor, id, await body(req)),
+          );
+        if (!action && method === "DELETE")
+          return response(await reusableCustom.remove(db, actor, id));
+        if (action === "convert" && method === "POST")
+          return response(
+            await reusableCustom.convert(db, actor, id, await body(req)),
+          );
       }
     }
     if (root === "documents" && id) {

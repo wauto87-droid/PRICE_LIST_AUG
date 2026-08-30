@@ -820,6 +820,33 @@ kbd {
 .custom-description {
   grid-column: span 2;
 }
+.reusable-custom-results {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.reusable-custom-results > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  text-align: start;
+  background: var(--surface);
+}
+.reusable-custom-results span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reusable-custom-results small {
+  color: var(--muted);
+}
+.reusable-custom-results b {
+  color: var(--accent);
+}
 .custom-line-badge {
   margin-inline-start: 8px;
   background: #fff1cc;
@@ -831,6 +858,9 @@ kbd {
   }
   .custom-description {
     grid-column: auto;
+  }
+  .reusable-custom-results > button {
+    grid-template-columns: 1fr;
   }
 }
 .lookup-action-row {

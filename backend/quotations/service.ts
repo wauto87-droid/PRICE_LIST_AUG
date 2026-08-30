@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
-import { assert } from "../core/errors";
+import { AppError, assert } from "../core/errors";
 import { audit, json } from "../core/audit";
 import {
   type Actor,
@@ -26,6 +26,7 @@ const catalogLineInput = lineInput.extend({
 const quotationLineInput = z.union([catalogLineInput, customLineInput]);
 import { getProduct, toInput } from "../products/service";
 import { allocateNumber } from "./settings";
+import { attachToSavedQuote } from "../reusable-custom/service";
 export const quoteInput = z
   .object({
     customer: z
@@ -71,17 +72,22 @@ export async function snapshot(
         const normalized = normalizePart(input.partNumber);
         const existing = await one(
           db,
-          `SELECT p.part_number FROM products p WHERE p.normalized_part=$1
+          `SELECT p.id,p.part_number FROM products p WHERE p.normalized_part=$1
            UNION ALL
-           SELECT p.part_number FROM product_aliases a JOIN products p ON p.id=a.product_id WHERE a.normalized=$1
+           SELECT p.id,p.part_number FROM product_aliases a JOIN products p ON p.id=a.product_id WHERE a.normalized=$1
            LIMIT 1`,
           [normalized],
         );
-        assert(
-          !existing,
-          409,
-          `Part reference matches catalog item ${existing?.part_number}. Use the catalog item instead`,
-        );
+        if (existing)
+          throw new AppError(
+            409,
+            `Part reference matches catalog item ${existing.part_number}. Use the catalog item instead`,
+            {
+              code: "CATALOG_MATCH",
+              productId: existing.id,
+              partNumber: existing.part_number,
+            },
+          );
       }
       const capturedVat = input.vat ?? settings.vat;
       const price = calculateCustom(input, capturedVat);
@@ -198,9 +204,11 @@ export async function saveDraft(
         );
       }
     }
+    let oldLines: any[] = [];
     if (id) {
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const old = await getQuote(tx, actor, id, true);
+      oldLines = old.lines;
       assert(old.status === "DRAFT", 409, "Issued quotations cannot be edited");
       assert(
         old.version === version,
@@ -208,7 +216,12 @@ export async function saveDraft(
         "Draft changed on another device. Reload before saving",
       );
     }
-    const lines = await snapshot(tx, actor, data.lines, settings);
+    const lines = await attachToSavedQuote(
+      tx,
+      actor,
+      await snapshot(tx, actor, data.lines, settings),
+      oldLines,
+    );
     const sum = totals(lines.map((l) => l.price));
     const quoteId = id ?? randomUUID();
     if (id)

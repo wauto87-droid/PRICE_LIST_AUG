@@ -23,6 +23,7 @@ import QuotationSettings from "./QuotationSettings";
 import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
 import SalesPriceCheck from "./SalesPriceCheck";
 import QuantityFinder from "./QuantityFinder";
+import ReusableCustomItems from "./ReusableCustomItems";
 import AdminDashboard from "./AdminDashboard";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
@@ -55,6 +56,12 @@ const sections = [
     "SALES_PRICE_CHECK",
   ],
   ["quantity-finder", "Quantity Finder", "تجميع الكميات", "QUANTITY_FINDER"],
+  [
+    "reusable-custom-items",
+    "Reusable Custom Items",
+    "الأصناف المخصصة المحفوظة",
+    "REUSABLE_CUSTOM_MANAGE",
+  ],
   ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
   ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
   ["users", "Users", "المستخدمون", "USER_MANAGE"],
@@ -192,6 +199,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         "discount-requests",
         "sales-price-check",
         "quantity-finder",
+        "reusable-custom-items",
       ].includes(section)
     )
       return;
@@ -618,6 +626,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               "discount-requests",
               "sales-price-check",
               "quantity-finder",
+              "reusable-custom-items",
             ].includes(section) && (
               <button disabled={busy} onClick={() => void load()}>
                 {t("Refresh", "تحديث")}
@@ -642,6 +651,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <SalesPriceCheck t={t} />
         ) : section === "quantity-finder" ? (
           <QuantityFinder t={t} />
+        ) : section === "reusable-custom-items" ? (
+          <ReusableCustomItems t={t} />
         ) : !data ? (
           <p>
             {error

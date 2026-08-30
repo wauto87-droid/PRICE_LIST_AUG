@@ -68,6 +68,7 @@ export const customLineInput = z
     unitPriceExcl: decimal,
     discount: percent.default("0"),
     vat: percent.optional(),
+    reusableItemId: z.string().uuid().optional(),
   })
   .strict();
 export type CustomLineInput = z.infer<typeof customLineInput>;
