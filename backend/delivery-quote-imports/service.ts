@@ -379,7 +379,7 @@ export async function mapRows(
     );
     assert(job.version === mapping.version, 409, "Import changed. Reload");
     const rows = (
-      await tx.query(
+      await tx.query<{ id: string; row_number: number; raw: any }>(
         "SELECT id,row_number,raw FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
         [id],
       )

@@ -201,7 +201,7 @@ export async function snapshot(
         assert(
           options.allowUnresolvedImportedCustom,
           409,
-          `Imported delivery row ${input.importMeta.rowNumber ?? ""}${input.importMeta.docNo ? ` (${input.importMeta.docNo})` : ""} still needs a unit price before issuing`,
+          `Imported delivery row ${input.importMeta?.rowNumber ?? ""}${input.importMeta?.docNo ? ` (${input.importMeta.docNo})` : ""} still needs a unit price before issuing`,
         );
         result.push({
           source: "CUSTOM",
@@ -537,7 +537,7 @@ export async function issue(
       ],
     );
     for (const line of lines)
-      if (line.source === "CATALOG" && line.price.overridden)
+      if (line.source === "CATALOG" && line.price?.overridden)
         await audit(
           tx,
           actor.id,
