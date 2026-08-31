@@ -8,6 +8,10 @@ import CustomLineForm from "./CustomLineForm";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import { humanizeCustomLineError } from "./custom-line-errors";
 import {
+  formatDeliveryDocNo,
+  formatDeliveryDate,
+} from "@/backend/pricing/normalize";
+import {
   cartLineHasBlockingError,
   catalogLivePricingInput,
   livePricingSignature,
@@ -17,7 +21,9 @@ const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
   line?.input?.importMeta?.source === "DELIVERY_NOTE"
     ? line.input.importMeta
-    : null;
+    : line?.importMeta?.source === "DELIVERY_NOTE"
+      ? line.importMeta
+      : null;
 const unresolvedImportedCustom = (line: any) =>
   line?.input?.type === "CUSTOM" &&
   importedDeliveryMeta(line) &&

@@ -244,6 +244,7 @@ export async function snapshot(
         description: input.description,
         unit: input.unit,
         quantityPrecision: 6,
+        importMeta,
         input: { ...input, vat: capturedVat, importMeta },
         price,
         timestamp: new Date().toISOString(),
@@ -263,6 +264,7 @@ export async function snapshot(
       quantityPrecision: p.quantityPrecision,
       productVersion: row.version,
       sellingLevel: calculation.sellingLevel,
+      importMeta: input.importMeta,
       input: {
         ...input,
         sellingLevel: calculation.sellingLevel,

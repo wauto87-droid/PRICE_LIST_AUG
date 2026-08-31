@@ -13,7 +13,11 @@ import {
   selectedLevel,
 } from "../pricing/engine";
 import { getProduct, toInput } from "../products/service";
-import { normalizeImportedDecimal } from "../pricing/normalize";
+import {
+  normalizeImportedDecimal,
+  formatDeliveryDocNo,
+  formatDeliveryDate,
+} from "../pricing/normalize";
 import { saveDraft, getQuote, publicQuote } from "../quotations/service";
 
 const quantityPattern = /^\d+(?:\.\d{1,6})?$/;
@@ -120,8 +124,8 @@ async function stageRow(
   mapping: z.infer<typeof mappingSchema>,
 ) {
   const customerName = String(raw[mapping.customerName] ?? "").trim();
-  const docNo = String(raw[mapping.docNo] ?? "").trim();
-  const docDate = String(raw[mapping.date] ?? "").trim();
+  const docNo = formatDeliveryDocNo(raw[mapping.docNo]);
+  const docDate = formatDeliveryDate(raw[mapping.date]);
   const partNumber = String(raw[mapping.partNumber] ?? "").trim();
   const description = String(raw[mapping.description] ?? "").trim();
   const quantity = normalizeMappedValue("quantity", raw[mapping.quantity]);
@@ -212,8 +216,8 @@ async function loadJob(tx: DB, actor: Actor, id: string, forUpdate = false) {
 
 function headerState(rows: any[]) {
   const customers = uniqueNonBlank(rows.map((row) => row.customerName));
-  const docNos = uniqueNonBlank(rows.map((row) => row.docNo));
-  const dates = uniqueNonBlank(rows.map((row) => row.docDate));
+  const docNos = uniqueNonBlank(rows.map((row) => formatDeliveryDocNo(row.docNo)));
+  const dates = uniqueNonBlank(rows.map((row) => formatDeliveryDate(row.docDate)));
   return {
     customerName: customers[0] ?? "",
     customerCount: customers.length,
@@ -574,14 +578,25 @@ export async function finalize(
         customer: toQuoteCustomer(header),
         lines: included.map((row) => {
           const baseInput = row.line_input || {};
+          const rawDocNo =
+            baseInput.importMeta?.docNo ??
+            row.doc_no ??
+            row.docNo ??
+            row.raw?.[job.mapping?.docNo];
+          const rawDocDate =
+            baseInput.importMeta?.docDate ??
+            row.doc_date ??
+            row.docDate ??
+            row.raw?.[job.mapping?.date];
+          const docNo = formatDeliveryDocNo(rawDocNo);
+          const docDate = formatDeliveryDate(rawDocDate);
           const importMeta = {
             source: "DELIVERY_NOTE" as const,
             ...(baseInput.importMeta ?? {}),
             rowId: row.id,
             rowNumber: row.row_number,
-            docNo: row.doc_no ?? row.docNo ?? row.raw?.[job.mapping?.docNo] ?? "",
-            docDate:
-              row.doc_date ?? row.docDate ?? row.raw?.[job.mapping?.date] ?? "",
+            docNo,
+            docDate,
             unresolved: false,
           };
           if (row.resolution === "MATCHED_CATALOG" || baseInput.productId) {

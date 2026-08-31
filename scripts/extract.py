@@ -48,6 +48,13 @@ def cell_text(header, cell):
         return '0'
     if value is None:
         return ''
+    if getattr(cell, 'is_date', False) or hasattr(value, 'strftime'):
+        try:
+            return value.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     if normalize_header(header) in IDENTIFIER_HEADERS:
         return format_identifier_value(value, getattr(cell, 'number_format', ''))
     return str(value)
@@ -85,7 +92,25 @@ elif source.suffix.lower() == '.xls':
     sheet = book.sheet_by_index(0)
     if sheet.ncols>100 or sheet.nrows>(max_rows + 1): raise ValueError(f'Maximum {max_rows:,} rows')
     headers = [str(v or f'Column {i+1}') for i,v in enumerate(sheet.row_values(0))]
-    for i in range(1,sheet.nrows): append(dict(zip(headers,map(str,sheet.row_values(i)))))
+    for i in range(1, sheet.nrows):
+        row_vals = []
+        for c in range(sheet.ncols):
+            cell_type = sheet.cell_type(i, c)
+            val = sheet.cell_value(i, c)
+            if cell_type == xlrd.XL_CELL_DATE:
+                try:
+                    dt = xlrd.xldate.xldate_as_datetime(val, book.datemode)
+                    row_vals.append(dt.strftime('%Y-%m-%d'))
+                except Exception:
+                    row_vals.append(str(val))
+            elif cell_type == xlrd.XL_CELL_NUMBER:
+                if isinstance(val, float) and val.is_integer():
+                    row_vals.append(str(int(val)))
+                else:
+                    row_vals.append(str(val))
+            else:
+                row_vals.append(str(val if val is not None else ''))
+        append(dict(zip(headers, row_vals)))
     warnings.append('Legacy XLS values may be cached formula results. Verify all prices.')
     book.release_resources()
 elif source.suffix.lower() == '.pdf':

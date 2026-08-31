@@ -403,3 +403,70 @@ test("Delivery-note quotation import preserves per-row updates and defaults empt
   await db.close?.();
 });
 
+test("Delivery-note quotation import normalizes Excel serial dates and doc numbers like 1586.0", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-quote-date-format-token-123456";
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin",
+    password: "abcd",
+    name: "Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  const jobId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'excel_dates.xlsx','fixture','AWAITING_MAPPING',$2,$3)",
+    [jobId, actor.id, json({ columns: ["Date", "Doc", "Customer", "Item", "Description", "Qty"] })],
+  );
+  const rowId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3)",
+    [
+      rowId,
+      jobId,
+      json({
+        Date: "46264.478310185186",
+        Doc: "1586.0",
+        Customer: "IEC OHOD MAJID",
+        Item: "MC-630a-AC220V",
+        Description: "MAGNETIC CONTACTOR 630A",
+        Qty: "3.0",
+      }),
+    ],
+  );
+  await mapRows(db, actor, jobId, {
+    version: 1,
+    date: "Date",
+    docNo: "Doc",
+    customerName: "Customer",
+    partNumber: "Item",
+    description: "Description",
+    quantity: "Qty",
+  });
+  let opened: any = await get(db, actor, jobId);
+  assert.equal(opened.rows.length, 1);
+  const r = opened.rows[0];
+  assert.equal(r.line_input.importMeta.docNo, "1586");
+  assert.equal(r.line_input.importMeta.docDate.startsWith("2026-08-3"), true);
+  await reviewRows(db, actor, jobId, {
+    version: opened.version,
+    rowIds: [rowId],
+    completed: true,
+  });
+  opened = await get(db, actor, jobId);
+  const quote: any = await finalize(db, actor, jobId, { version: opened.version });
+  assert.equal(quote.lines.length, 1);
+  assert.equal(quote.lines[0].importMeta.docNo, "1586");
+  assert.equal(quote.lines[0].importMeta.docDate.startsWith("2026-08-3"), true);
+  await db.close?.();
+});
+
+

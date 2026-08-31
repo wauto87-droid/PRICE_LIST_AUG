@@ -1,6 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import {
+  formatDeliveryDocNo,
+  formatDeliveryDate,
+} from "@/backend/pricing/normalize";
 
 const autoMap = (columns: string[], names: string[]) =>
   columns.find((column) =>
@@ -517,8 +521,8 @@ export default function DeliveryQuoteImport({
                         />
                       </td>
                       <td>{row.row_number}</td>
-                      <td>{raw[job.mapping?.date] || "—"}</td>
-                      <td>{raw[job.mapping?.docNo] || "—"}</td>
+                      <td>{formatDeliveryDate(row.doc_date ?? row.docDate ?? raw[job.mapping?.date]) || "—"}</td>
+                      <td>{formatDeliveryDocNo(row.doc_no ?? row.docNo ?? raw[job.mapping?.docNo]) || "—"}</td>
                       <td>
                         <strong>
                           {input.partNumber ||
