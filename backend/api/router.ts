@@ -883,8 +883,24 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       });
     }
     if (root === "delivery-quote-imports") {
-      if (!id && method === "GET")
+      if (!id && method === "GET") {
+        const scope = url.searchParams.get("scope");
+        if (scope)
+          return response(
+            await deliveryQuoteImports.history(db, actor, {
+              scope,
+              query: url.searchParams.get("query") ?? "",
+              status: url.searchParams.get("status") ?? "ALL",
+              datePreset: url.searchParams.get("datePreset") ?? "all",
+              from: url.searchParams.get("from") ?? "",
+              to: url.searchParams.get("to") ?? "",
+              sort: url.searchParams.get("sort") ?? "newest",
+              page: url.searchParams.get("page") ?? 0,
+              pageSize: url.searchParams.get("pageSize") ?? 20,
+            }),
+          );
         return response(await deliveryQuoteImports.list(db, actor));
+      }
       if (!id && method === "POST") {
         const bytes = await readLimited(
           req,

@@ -15,6 +15,8 @@ import {
   get,
   reviewRows,
   finalize,
+  history,
+  historyDateBounds,
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
 
@@ -466,6 +468,146 @@ test("Delivery-note quotation import normalizes Excel serial dates and doc numbe
   assert.equal(quote.lines.length, 1);
   assert.equal(quote.lines[0].importMeta.docNo, "1586");
   assert.equal(quote.lines[0].importMeta.docDate.startsWith("2026-08-3"), true);
+  await db.close?.();
+});
+
+test("Delivery-note history searches, filters, sorts and paginates on Riyadh dates", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-history-token-long-enough-123";
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "historyadmin",
+    password: "abcd",
+    name: "History Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "historyadmin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  for (let index = 0; index < 25; index++) {
+    const quoteId = randomUUID();
+    const jobId = randomUUID();
+    const number = `QT-${String(index + 1).padStart(4, "0")}`;
+    const customer = index === 7 ? "Literal Customer" : `Customer ${index}`;
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,$2,'DRAFT',$3,$4,'[]','{}')",
+      [quoteId, number, actor.id, json({ name: customer })],
+    );
+    await db.query(
+      `INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,header,summary,quote_id,created_at,updated_at)
+       VALUES($1,$2,'fixture','COMPLETED',$3,$4,$5,$6,$7::timestamptz,$7::timestamptz)`,
+      [
+        jobId,
+        index === 7 ? "100%_delivery.xlsx" : `delivery-${index}.xlsx`,
+        actor.id,
+        json({ customerName: customer, docNos: [`DN-${index}`] }),
+        json({ customerName: customer, docNos: [`DN-${index}`] }),
+        quoteId,
+        `2026-08-${String((index % 25) + 1).padStart(2, "0")}T12:00:00+03:00`,
+      ],
+    );
+  }
+  const first: any = await history(db, actor, {
+    scope: "converted",
+    page: 0,
+    pageSize: 20,
+    sort: "newest",
+  });
+  assert.equal(first.total, 25);
+  assert.equal(first.items.length, 20);
+  assert.equal(first.totalPages, 2);
+  assert.equal(first.items[0].quotation_number, "QT-0025");
+  const second: any = await history(db, actor, {
+    scope: "converted",
+    page: 1,
+    pageSize: 20,
+    sort: "newest",
+  });
+  assert.equal(second.items.length, 5);
+  const literal: any = await history(db, actor, {
+    scope: "converted",
+    query: "%_delivery",
+  });
+  assert.equal(literal.total, 1);
+  assert.equal(literal.items[0].customer_name, "Literal Customer");
+  const byReference: any = await history(db, actor, {
+    scope: "converted",
+    query: "DN-7",
+  });
+  assert.equal(byReference.total, 1);
+  const ranged: any = await history(db, actor, {
+    scope: "converted",
+    datePreset: "custom",
+    from: "2026-08-10",
+    to: "2026-08-12",
+    sort: "oldest",
+  });
+  assert.deepEqual(
+    ranged.items.map((item: any) => item.quotation_number),
+    ["QT-0010", "QT-0011", "QT-0012"],
+  );
+  const filenameSorted: any = await history(db, actor, {
+    scope: "converted",
+    sort: "filename_asc",
+  });
+  assert.equal(filenameSorted.items[0].filename, "100%_delivery.xlsx");
+  const customerSorted: any = await history(db, actor, {
+    scope: "converted",
+    sort: "customer_desc",
+  });
+  assert.equal(customerSorted.items[0].customer_name, "Literal Customer");
+  const quotationSorted: any = await history(db, actor, {
+    scope: "converted",
+    sort: "quotation_asc",
+  });
+  assert.equal(quotationSorted.items[0].quotation_number, "QT-0001");
+  const bounds = historyDateBounds(
+    "today",
+    "",
+    "",
+    new Date("2026-08-31T20:00:00Z"),
+  );
+  assert.equal(bounds.from, "2026-08-31T00:00:00+03:00");
+  assert.equal(bounds.toExclusive, "2026-09-01T00:00:00+03:00");
+  const staffId = randomUUID();
+  await db.query(
+    "INSERT INTO users(id,username,name,password_hash,role_id) SELECT $1,'historystaff','History Staff',password_hash,'STAFF' FROM users WHERE id=$2",
+    [staffId, actor.id],
+  );
+  const staffQuoteId = randomUUID();
+  await db.query(
+    "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'QT-STAFF','DRAFT',$2,$3,'[]','{}')",
+    [staffQuoteId, staffId, json({ name: "Staff Customer" })],
+  );
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,quote_id) VALUES($1,'staff.xlsx','fixture','COMPLETED',$2,$3)",
+    [randomUUID(), staffId, staffQuoteId],
+  );
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id) VALUES($1,'failed.xlsx','fixture','FAILED',$2)",
+    [randomUUID(), actor.id],
+  );
+  const staffActor = {
+    ...actor,
+    id: staffId,
+    role: "STAFF",
+    permissions: ["PRODUCT_VIEW", "QUOTE_CREATE", "QUOTE_EDIT", "QUOTE_ISSUE"],
+  };
+  const owned: any = await history(db, staffActor, { scope: "converted" });
+  assert.equal(owned.total, 1);
+  assert.equal(owned.items[0].quotation_number, "QT-STAFF");
+  await assert.rejects(() => history(db, staffActor, { scope: "admin" }), /permission/i);
+  const failed: any = await history(db, actor, {
+    scope: "admin",
+    status: "FAILED",
+  });
+  assert.equal(failed.total, 1);
+  assert.equal(failed.items[0].filename, "failed.xlsx");
   await db.close?.();
 });
 

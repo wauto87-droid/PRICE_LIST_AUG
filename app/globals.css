@@ -1477,6 +1477,64 @@ strong + small {
   margin-top: 6px;
   color: var(--muted);
 }
+.delivery-history {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.delivery-history-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fafafd;
+}
+.delivery-history-controls > button {
+  min-height: 44px;
+}
+.delivery-history-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.delivery-history-range label {
+  min-width: 180px;
+}
+.delivery-history-summary,
+.delivery-history-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.delivery-history-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(300px, 1.5fr) auto;
+  align-items: center;
+}
+.delivery-history-primary,
+.delivery-history-details {
+  min-width: 0;
+}
+.delivery-history-details {
+  display: grid;
+  gap: 4px;
+  color: #555b68;
+  font-size: 12px;
+}
+.delivery-history-details span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delivery-history-pagination {
+  justify-content: center;
+}
 .quantity-mapping-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
@@ -2862,6 +2920,16 @@ body :is(h1, h2, h3, strong, b) {
   }
   .quantity-history-card {
     flex-direction: column;
+  }
+  .delivery-history-controls,
+  .delivery-history-card {
+    grid-template-columns: 1fr;
+  }
+  .delivery-history-card {
+    align-items: stretch;
+  }
+  .delivery-history-card .actions {
+    width: 100%;
   }
   .quantity-mapping-grid {
     grid-template-columns: 1fr;

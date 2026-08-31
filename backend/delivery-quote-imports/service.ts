@@ -63,6 +63,97 @@ const finalizeSchema = z
   })
   .strict();
 
+const historyDateSchema = z
+  .string()
+  .refine((value) => !value || Boolean(isoDate(value)), "Enter a valid date");
+const historySchema = z
+  .object({
+    scope: z.enum(["converted", "admin"]),
+    query: z.string().max(100).default(""),
+    status: z
+      .enum([
+        "ALL",
+        "UPLOADED",
+        "PROCESSING",
+        "AWAITING_MAPPING",
+        "AWAITING_REVIEW",
+        "COMPLETED",
+        "FAILED",
+      ])
+      .default("ALL"),
+    datePreset: z
+      .enum(["all", "today", "last7", "last30", "month", "custom"])
+      .default("all"),
+    from: historyDateSchema.default(""),
+    to: historyDateSchema.default(""),
+    sort: z
+      .enum([
+        "newest",
+        "oldest",
+        "filename_asc",
+        "filename_desc",
+        "customer_asc",
+        "customer_desc",
+        "quotation_asc",
+        "quotation_desc",
+      ])
+      .default("newest"),
+    page: z.coerce.number().int().min(0).default(0),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  })
+  .strict();
+
+function isoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+    ? value
+    : "";
+}
+
+function shiftDate(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function riyadhToday(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function historyDateBounds(
+  preset: "all" | "today" | "last7" | "last30" | "month" | "custom",
+  from = "",
+  to = "",
+  now = new Date(),
+) {
+  let start = isoDate(from);
+  let end = isoDate(to);
+  if (!start && !end && preset !== "all" && preset !== "custom") {
+    const today = riyadhToday(now);
+    start =
+      preset === "last7"
+        ? shiftDate(today, -6)
+        : preset === "last30"
+          ? shiftDate(today, -29)
+          : preset === "month"
+            ? `${today.slice(0, 8)}01`
+            : today;
+    end = today;
+  }
+  return {
+    from: start ? `${start}T00:00:00+03:00` : null,
+    toExclusive: end ? `${shiftDate(end, 1)}T00:00:00+03:00` : null,
+  };
+}
+
 function permission(actor: Actor) {
   assert(
     has(actor, "QUOTE_CREATE") || has(actor, "QUOTE_EDIT"),
@@ -324,6 +415,101 @@ export async function list(db: DB, actor: Actor) {
       [actor.id, has(actor, "QUOTE_VIEW_ALL")],
     )
   ).rows;
+}
+
+export async function history(db: DB, actor: Actor, input: unknown) {
+  permission(actor);
+  const value = historySchema.parse(input);
+  assert(
+    !value.from || !value.to || value.from <= value.to,
+    400,
+    "From date must be on or before To date",
+  );
+  if (value.scope === "admin")
+    assert(
+      has(actor, "QUOTE_VIEW_ALL"),
+      403,
+      "You do not have permission to view all delivery-note source files",
+    );
+
+  const args: any[] = [];
+  const bind = (item: unknown) => {
+    args.push(item);
+    return `$${args.length}`;
+  };
+  const conditions = [
+    value.scope === "converted" ? "j.quote_id IS NOT NULL" : "true",
+  ];
+  if (!has(actor, "QUOTE_VIEW_ALL"))
+    conditions.push(`j.owner_id=${bind(actor.id)}`);
+  if (value.scope === "admin" && value.status !== "ALL")
+    conditions.push(`j.status=${bind(value.status)}`);
+
+  const search = value.query.trim();
+  if (search) {
+    const literal = search.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const pattern = bind(`%${literal}%`);
+    conditions.push(`(
+      j.filename ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(q.number,'') ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(j.header->>'customerName',j.summary->>'customerName',q.customer->>'name','') ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(j.header->'docNos',j.summary->'docNos','[]'::jsonb)::text ILIKE ${pattern} ESCAPE '\\'
+    )`);
+  }
+
+  const bounds = historyDateBounds(
+    value.datePreset,
+    value.from,
+    value.to,
+  );
+  const dateField = value.scope === "converted" ? "j.updated_at" : "j.created_at";
+  if (bounds.from) conditions.push(`${dateField}>=${bind(bounds.from)}::timestamptz`);
+  if (bounds.toExclusive)
+    conditions.push(`${dateField}<${bind(bounds.toExclusive)}::timestamptz`);
+
+  const customer =
+    "LOWER(COALESCE(j.header->>'customerName',j.summary->>'customerName',q.customer->>'name',''))";
+  const quotation = "LOWER(COALESCE(q.number,''))";
+  const sorts: Record<string, string> = {
+    newest: `${dateField} DESC, j.created_at DESC, j.id`,
+    oldest: `${dateField}, j.created_at, j.id`,
+    filename_asc: "LOWER(j.filename), j.created_at DESC, j.id",
+    filename_desc: "LOWER(j.filename) DESC, j.created_at DESC, j.id",
+    customer_asc: `${customer}, j.created_at DESC, j.id`,
+    customer_desc: `${customer} DESC, j.created_at DESC, j.id`,
+    quotation_asc: `${quotation}, j.created_at DESC, j.id`,
+    quotation_desc: `${quotation} DESC, j.created_at DESC, j.id`,
+  };
+  const where = conditions.join(" AND ");
+  const count = await one<{ total: number }>(
+    db,
+    `SELECT count(*)::int AS total
+     FROM delivery_quote_jobs j
+     LEFT JOIN quotations q ON q.id=j.quote_id
+     WHERE ${where}`,
+    args,
+  );
+  const total = count?.total ?? 0;
+  const pageSize = value.pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(value.page, totalPages - 1);
+  const limit = bind(pageSize);
+  const offset = bind(page * pageSize);
+  const items = (
+    await db.query(
+      `SELECT j.id,j.filename,j.status,j.summary,j.error,j.quote_id,j.version,
+              j.created_at,j.updated_at,q.number AS quotation_number,
+              COALESCE(j.header->>'customerName',j.summary->>'customerName',q.customer->>'name','') AS customer_name,
+              COALESCE(j.header->'docNos',j.summary->'docNos','[]'::jsonb) AS delivery_references
+       FROM delivery_quote_jobs j
+       LEFT JOIN quotations q ON q.id=j.quote_id
+       WHERE ${where}
+       ORDER BY ${sorts[value.sort]}
+       LIMIT ${limit} OFFSET ${offset}`,
+      args,
+    )
+  ).rows;
+  return { items, page, pageSize, total, totalPages };
 }
 
 export async function get(

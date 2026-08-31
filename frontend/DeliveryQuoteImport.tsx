@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import {
   formatDeliveryDocNo,
@@ -10,6 +10,27 @@ const autoMap = (columns: string[], names: string[]) =>
   columns.find((column) =>
     names.includes(column.toLowerCase().replace(/[^a-z0-9]/g, "")),
   ) || "";
+
+type HistoryScope = "converted" | "admin";
+type HistoryFilters = {
+  query: string;
+  status: string;
+  datePreset: string;
+  from: string;
+  to: string;
+  sort: string;
+  page: number;
+};
+const defaultHistoryFilters = (): HistoryFilters => ({
+  query: "",
+  status: "ALL",
+  datePreset: "all",
+  from: "",
+  to: "",
+  sort: "newest",
+  page: 0,
+});
+const emptyHistory = { items: [] as any[], page: 0, pageSize: 20, total: 0, totalPages: 1 };
 
 export default function DeliveryQuoteImport({
   t,
@@ -29,6 +50,12 @@ export default function DeliveryQuoteImport({
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("all");
   const [tab, setTab] = useState<"IMPORT" | "OUTPUTS" | "ADMIN">("OUTPUTS");
+  const [outputFilters, setOutputFilters] = useState(defaultHistoryFilters);
+  const [adminFilters, setAdminFilters] = useState(defaultHistoryFilters);
+  const [outputHistory, setOutputHistory] = useState(emptyHistory);
+  const [adminHistory, setAdminHistory] = useState(emptyHistory);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const historyGeneration = useRef({ converted: 0, admin: 0 });
   const [mapping, setMapping] = useState({
     date: "",
     docNo: "",
@@ -40,6 +67,31 @@ export default function DeliveryQuoteImport({
   });
 
   const loadJobs = () => api("delivery-quote-imports").then(setJobs);
+  const loadHistory = async (scope: HistoryScope, filters: HistoryFilters) => {
+    const generation = ++historyGeneration.current[scope];
+    setHistoryBusy(true);
+    try {
+      const params = new URLSearchParams({
+        scope,
+        query: filters.query.trim(),
+        status: scope === "admin" ? filters.status : "ALL",
+        datePreset: filters.datePreset,
+        sort: filters.sort,
+        page: String(filters.page),
+        pageSize: "20",
+      });
+      if (filters.datePreset === "custom") {
+        if (filters.from) params.set("from", filters.from);
+        if (filters.to) params.set("to", filters.to);
+      }
+      const result: any = await api(`delivery-quote-imports?${params}`);
+      if (generation !== historyGeneration.current[scope]) return;
+      if (scope === "converted") setOutputHistory(result);
+      else setAdminHistory(result);
+    } finally {
+      if (generation === historyGeneration.current[scope]) setHistoryBusy(false);
+    }
+  };
   const open = async (id: string, nextFilter = filter) => {
     const next: any = await api(
       `delivery-quote-imports/${id}?page=0&pageSize=100&filter=${encodeURIComponent(nextFilter)}`,
@@ -66,6 +118,24 @@ export default function DeliveryQuoteImport({
     void loadJobs().catch((e) => setError(e.message));
   }, []);
 
+  useEffect(() => {
+    if (tab !== "OUTPUTS") return;
+    const timer = window.setTimeout(
+      () => void loadHistory("converted", outputFilters).catch((e) => setError(e.message)),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [tab, outputFilters]);
+
+  useEffect(() => {
+    if (tab !== "ADMIN" || !user.permissions.includes("QUOTE_VIEW_ALL")) return;
+    const timer = window.setTimeout(
+      () => void loadHistory("admin", adminFilters).catch((e) => setError(e.message)),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [tab, adminFilters, user.permissions]);
+
   async function run(fn: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -84,7 +154,6 @@ export default function DeliveryQuoteImport({
     .map(([id]) => id);
   const isAdmin = user.permissions.includes("QUOTE_VIEW_ALL");
   const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
-  const completedJobs = jobs.filter((item) => item.quote_id);
   const headerSummary = job?.header || job?.summary || {};
   const visibleRowIds = (job?.rows || []).map((row: any) => row.id);
   const allVisibleSelected =
@@ -124,6 +193,225 @@ export default function DeliveryQuoteImport({
         : row.completed
         ? t("Complete", "مكتمل")
         : t("Needs work", "يحتاج عمل");
+  const setHistoryFilters = (
+    scope: HistoryScope,
+    patch: Partial<HistoryFilters>,
+  ) => {
+    const update = (current: HistoryFilters) => ({
+      ...current,
+      ...patch,
+      page: patch.page ?? 0,
+    });
+    if (scope === "converted") setOutputFilters(update);
+    else setAdminFilters(update);
+  };
+  const deliveryReferences = (item: any) =>
+    Array.isArray(item.delivery_references)
+      ? item.delivery_references.join(", ")
+      : "";
+  const renderHistory = (scope: HistoryScope) => {
+    const filters = scope === "converted" ? outputFilters : adminFilters;
+    const history = scope === "converted" ? outputHistory : adminHistory;
+    return (
+      <div className="delivery-history">
+        <div className="delivery-history-controls">
+          <label className="delivery-history-search">
+            {t("Search history", "البحث في السجل")}
+            <input
+              value={filters.query}
+              placeholder={t(
+                "Filename, quotation, customer or delivery reference",
+                "اسم الملف أو العرض أو العميل أو مرجع التسليم",
+              )}
+              onChange={(event) =>
+                setHistoryFilters(scope, { query: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            {t("Date", "التاريخ")}
+            <select
+              value={filters.datePreset}
+              onChange={(event) =>
+                setHistoryFilters(scope, { datePreset: event.target.value })
+              }
+            >
+              <option value="all">{t("All dates", "كل التواريخ")}</option>
+              <option value="today">{t("Today", "اليوم")}</option>
+              <option value="last7">{t("Last 7 days", "آخر 7 أيام")}</option>
+              <option value="last30">{t("Last 30 days", "آخر 30 يوماً")}</option>
+              <option value="month">{t("This month", "هذا الشهر")}</option>
+              <option value="custom">{t("Custom range", "نطاق مخصص")}</option>
+            </select>
+          </label>
+          {scope === "admin" && (
+            <label>
+              {t("Status", "الحالة")}
+              <select
+                value={filters.status}
+                onChange={(event) =>
+                  setHistoryFilters(scope, { status: event.target.value })
+                }
+              >
+                <option value="ALL">{t("All statuses", "كل الحالات")}</option>
+                <option value="UPLOADED">UPLOADED</option>
+                <option value="PROCESSING">PROCESSING</option>
+                <option value="AWAITING_MAPPING">AWAITING_MAPPING</option>
+                <option value="AWAITING_REVIEW">AWAITING_REVIEW</option>
+                <option value="COMPLETED">COMPLETED</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+            </label>
+          )}
+          <label>
+            {t("Sort", "الترتيب")}
+            <select
+              value={filters.sort}
+              onChange={(event) =>
+                setHistoryFilters(scope, { sort: event.target.value })
+              }
+            >
+              <option value="newest">{t("Newest first", "الأحدث أولاً")}</option>
+              <option value="oldest">{t("Oldest first", "الأقدم أولاً")}</option>
+              <option value="filename_asc">{t("Filename A–Z", "اسم الملف أ–ي")}</option>
+              <option value="filename_desc">{t("Filename Z–A", "اسم الملف ي–أ")}</option>
+              <option value="customer_asc">{t("Customer A–Z", "العميل أ–ي")}</option>
+              <option value="customer_desc">{t("Customer Z–A", "العميل ي–أ")}</option>
+              <option value="quotation_asc">{t("Quotation ascending", "رقم العرض تصاعدي")}</option>
+              <option value="quotation_desc">{t("Quotation descending", "رقم العرض تنازلي")}</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() =>
+              scope === "converted"
+                ? setOutputFilters(defaultHistoryFilters())
+                : setAdminFilters(defaultHistoryFilters())
+            }
+          >
+            {t("Clear filters", "مسح عوامل التصفية")}
+          </button>
+        </div>
+        {filters.datePreset === "custom" && (
+          <div className="delivery-history-range">
+            <label>
+              {t("From", "من")}
+              <input
+                type="date"
+                value={filters.from}
+                onChange={(event) =>
+                  setHistoryFilters(scope, { from: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              {t("To", "إلى")}
+              <input
+                type="date"
+                value={filters.to}
+                onChange={(event) =>
+                  setHistoryFilters(scope, { to: event.target.value })
+                }
+              />
+            </label>
+          </div>
+        )}
+        <div className="delivery-history-summary">
+          <span>
+            {history.total} {t("results", "نتيجة")}
+          </span>
+          {historyBusy && <span>{t("Loading…", "جارٍ التحميل…")}</span>}
+        </div>
+        <div className="quantity-history-list">
+          {history.items.length ? (
+            history.items.map((item: any) => (
+              <article className="quantity-history-card delivery-history-card" key={item.id}>
+                <div className="delivery-history-primary">
+                  <strong>{item.filename}</strong>
+                  <small>
+                    {new Date(
+                      scope === "converted" ? item.updated_at : item.created_at,
+                    ).toLocaleString()} · {item.status}
+                  </small>
+                </div>
+                <div className="delivery-history-details">
+                  <span>
+                    {t("Quotation", "عرض السعر")}: {item.quotation_number || "—"}
+                  </span>
+                  <span>
+                    {t("Customer", "العميل")}: {item.customer_name || "—"}
+                  </span>
+                  <span title={deliveryReferences(item)}>
+                    {t("Delivery reference", "مرجع التسليم")}: {deliveryReferences(item) || "—"}
+                  </span>
+                </div>
+                <div className="actions wrap">
+                  <button onClick={() => void open(item.id)}>
+                    {t(
+                      scope === "converted" ? "Open import" : "Open source",
+                      scope === "converted" ? "فتح الاستيراد" : "فتح المصدر",
+                    )}
+                  </button>
+                  {scope === "converted" ? (
+                    <button
+                      className="primary"
+                      onClick={() =>
+                        void run(async () => {
+                          const quote = await api(`quotations/${item.quote_id}`);
+                          onImported(quote);
+                        })
+                      }
+                    >
+                      {t("Open quotation", "فتح عرض السعر")}
+                    </button>
+                  ) : (
+                    <button
+                      className="danger"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await api(`delivery-quote-imports/${item.id}`, "DELETE");
+                          if (job?.id === item.id) setJob(null);
+                          await loadHistory("admin", adminFilters);
+                        })
+                      }
+                    >
+                      {t("Delete file", "حذف الملف")}
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">
+              {historyBusy
+                ? t("Loading history…", "جارٍ تحميل السجل…")
+                : t("No records match these filters.", "لا توجد سجلات تطابق عوامل التصفية.")}
+            </div>
+          )}
+        </div>
+        {history.totalPages > 1 && (
+          <div className="delivery-history-pagination">
+            <button
+              disabled={history.page <= 0 || historyBusy}
+              onClick={() => setHistoryFilters(scope, { page: history.page - 1 })}
+            >
+              {t("Previous", "السابق")}
+            </button>
+            <span>
+              {t("Page", "صفحة")} {history.page + 1} / {history.totalPages}
+            </span>
+            <button
+              disabled={history.page + 1 >= history.totalPages || historyBusy}
+              onClick={() => setHistoryFilters(scope, { page: history.page + 1 })}
+            >
+              {t("Next", "التالي")}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <section className="card">
@@ -191,83 +479,8 @@ export default function DeliveryQuoteImport({
           )}
         </div>
       )}
-      {tab === "OUTPUTS" && (
-        <div className="quantity-history-list">
-          {completedJobs.length ? (
-            completedJobs.map((item) => (
-              <article className="quantity-history-card" key={item.id}>
-                <div>
-                  <strong>{item.filename}</strong>
-                  <small>
-                    {new Date(item.updated_at || item.created_at).toLocaleString()} ·{" "}
-                    {item.status}
-                  </small>
-                </div>
-                <div className="actions wrap">
-                  <button onClick={() => void open(item.id)}>
-                    {t("Open import", "فتح الاستيراد")}
-                  </button>
-                  <button
-                    className="primary"
-                    onClick={() =>
-                      void run(async () => {
-                        const quote = await api(`quotations/${item.quote_id}`);
-                        onImported(quote);
-                      })
-                    }
-                  >
-                    {t("Open quotation", "فتح عرض السعر")}
-                  </button>
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="empty-state">
-              {t(
-                "No converted quotations yet. Upload a delivery note to create one.",
-                "لا توجد عروض أسعار محولة بعد. ارفع إذن تسليم لإنشائه.",
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      {tab === "ADMIN" && isAdmin && (
-        <div className="quantity-history-list">
-          {jobs.length ? (
-            jobs.map((item) => (
-              <article className="quantity-history-card" key={item.id}>
-                <div>
-                  <strong>{item.filename}</strong>
-                  <small>
-                    {new Date(item.created_at).toLocaleString()} · {item.status}
-                  </small>
-                </div>
-                <div className="actions wrap">
-                  <button onClick={() => void open(item.id)}>
-                    {t("Open source", "فتح المصدر")}
-                  </button>
-                  <button
-                    className="danger"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await api(`delivery-quote-imports/${item.id}`, "DELETE");
-                        if (job?.id === item.id) setJob(null);
-                      })
-                    }
-                  >
-                    {t("Delete file", "حذف الملف")}
-                  </button>
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="empty-state">
-              {t("No source files found.", "لا توجد ملفات مصدر.")}
-            </div>
-          )}
-        </div>
-      )}
+      {tab === "OUTPUTS" && renderHistory("converted")}
+      {tab === "ADMIN" && isAdmin && renderHistory("admin")}
       {job?.summary?.warnings?.length ? (
         <div className="notice">
           {job.summary.warnings.join(" ")}
