@@ -226,7 +226,7 @@ export async function attachToSavedQuote(
       );
   const newCounts = new Map<string, number>();
   for (const line of lines) {
-    if (line.source !== "CUSTOM") continue;
+    if (line.source !== "CUSTOM" || line.unresolved || !line.price) continue;
     let item = null;
     let resolution = "SELECTED";
     if (line.input.reusableItemId)

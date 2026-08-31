@@ -435,6 +435,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         }
         if (action === "print" && method === "GET") {
           const q = await quotes.getQuote(db, actor, id);
+          quotes.assertQuoteReadyForOutput(q);
           const logo =
             "data:image/svg+xml;base64," +
             (
@@ -449,6 +450,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         }
         if (action === "pdf" && method === "POST") {
           const q = await quotes.getQuote(db, actor, id);
+          quotes.assertQuoteReadyForOutput(q);
           const job = randomUUID();
           await db.query(
             "INSERT INTO jobs(id,kind,payload) VALUES($1,'QUOTE_PDF',$2)",

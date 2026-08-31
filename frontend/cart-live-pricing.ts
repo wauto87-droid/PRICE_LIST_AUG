@@ -1,6 +1,10 @@
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 
 const decimalField = (value: unknown) => String(value ?? "").trim();
+const importedUnresolvedCustom = (line: any) =>
+  line?.input?.type === "CUSTOM" &&
+  line?.input?.importMeta?.source === "DELIVERY_NOTE" &&
+  !decimalPattern.test(decimalField(line?.input?.unitPriceExcl));
 
 export function catalogLivePricingInput(line: any) {
   if (!line?.input || line.input?.type === "CUSTOM" || !line.productId)
@@ -24,6 +28,13 @@ export function catalogLivePricingInput(line: any) {
 export function cartLineHasBlockingError(line: any) {
   if (!line?.input) return true;
   if (line.input?.type === "CUSTOM") {
+    if (importedUnresolvedCustom(line))
+      return (
+        !String(line.input.description ?? "").trim() ||
+        !decimalPattern.test(decimalField(line.input.quantity)) ||
+        !decimalPattern.test(decimalField(line.input.discount || "0")) ||
+        Number(decimalField(line.input.discount || "0")) > 100
+      );
     return (
       !String(line.input.description ?? "").trim() ||
       !decimalPattern.test(decimalField(line.input.quantity)) ||

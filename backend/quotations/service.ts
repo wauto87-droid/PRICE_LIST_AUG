@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import Decimal from "decimal.js";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { AppError, assert } from "../core/errors";
@@ -15,15 +16,58 @@ import {
 import {
   lineInput,
   customLineInput,
+  decimal,
+  percent,
   calculate,
   calculateCustom,
   normalizePart,
   totals,
 } from "../pricing/engine";
+const deliveryImportMeta = z
+  .object({
+    source: z.literal("DELIVERY_NOTE"),
+    rowId: z.string().uuid().optional(),
+    rowNumber: z.coerce.number().int().positive().optional(),
+    docNo: z.string().max(200).default(""),
+    docDate: z.string().max(100).default(""),
+    unresolved: z.boolean().default(false),
+  })
+  .strict();
+
 const catalogLineInput = lineInput.extend({
   type: z.literal("CATALOG").optional(),
+  importMeta: deliveryImportMeta.optional(),
 });
-const quotationLineInput = z.union([catalogLineInput, customLineInput]);
+const savedCustomLineInput = customLineInput.extend({
+  importMeta: deliveryImportMeta.optional(),
+});
+const unresolvedImportedCustomLineInput = z
+  .object({
+    type: z.literal("CUSTOM"),
+    partNumber: z.string().trim().max(100).default(""),
+    description: z.string().trim().min(1).max(1000),
+    unit: z.string().trim().min(1).max(20).default("pcs"),
+    quantity: decimal,
+    unitPriceExcl: z.union([z.literal(""), z.undefined()]).default(""),
+    discount: percent.default("0"),
+    vat: percent.optional(),
+    reusableItemId: z.string().uuid().optional(),
+    importMeta: deliveryImportMeta.extend({
+      unresolved: z.literal(true),
+    }),
+  })
+  .strict();
+const quotationLineInput = z.union([
+  catalogLineInput,
+  savedCustomLineInput,
+  unresolvedImportedCustomLineInput,
+]);
+const quoteAdjustmentInput = z
+  .object({
+    targetTotal: z.union([decimal, z.literal("")]).default(""),
+  })
+  .strict()
+  .default({ targetTotal: "" });
 import { getProduct, toInput } from "../products/service";
 import { allocateNumber } from "./settings";
 import { attachToSavedQuote } from "../reusable-custom/service";
@@ -39,6 +83,7 @@ export const quoteInput = z
       })
       .strict(),
     lines: z.array(quotationLineInput).min(1).max(200),
+    adjustment: quoteAdjustmentInput.optional().default({ targetTotal: "" }),
   })
   .strict();
 // Pre-migration snapshots used the one original price, migrated to End Customer.
@@ -55,11 +100,84 @@ export const duplicateLineInput = (line: any) =>
   line.source === "CUSTOM" || line.input?.type === "CUSTOM"
     ? savedLineInput(line)
     : { ...savedLineInput(line), override: false, reason: "" };
+
+const unresolvedImportedCustom = (line: any) =>
+  line?.type === "CUSTOM" &&
+  line?.importMeta?.source === "DELIVERY_NOTE" &&
+  line?.importMeta?.unresolved &&
+  !String(line?.unitPriceExcl ?? "").trim();
+
+function computeTotals(lines: any[], targetTotalInput = "") {
+  const base = totals(lines.flatMap((line) => (line.price ? [line.price] : [])));
+  const unresolvedLines = lines.filter((line) => !line.price).length;
+  const targetRaw = String(targetTotalInput ?? "").trim();
+  if (!targetRaw)
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: "",
+      unresolvedLines,
+    };
+  if (unresolvedLines)
+    throw new AppError(
+      409,
+      "Enter prices for imported delivery rows before using a round-off total",
+    );
+  const baseTotal = new Decimal(base.total);
+  const target = new Decimal(targetRaw).toDecimalPlaces(2);
+  assert(
+    target.lte(baseTotal),
+    400,
+    "Round-off total cannot exceed the current quotation total",
+  );
+  const discount = baseTotal.sub(target).toDecimalPlaces(2);
+  if (discount.isZero())
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: target.toFixed(2),
+      unresolvedLines,
+    };
+  const subtotal = new Decimal(base.subtotal)
+    .mul(target.div(baseTotal))
+    .toDecimalPlaces(2);
+  const vat = target.sub(subtotal).toDecimalPlaces(2);
+  return {
+    subtotal: subtotal.toFixed(2),
+    vat: vat.toFixed(2),
+    total: target.toFixed(2),
+    lineSubtotal: base.subtotal,
+    lineVat: base.vat,
+    lineTotal: base.total,
+    quoteDiscount: discount.toFixed(2),
+    targetTotal: target.toFixed(2),
+    unresolvedLines,
+  };
+}
+
+export const quoteHasUnresolvedLines = (q: any) =>
+  Array.isArray(q?.lines) && q.lines.some((line: any) => !line?.price);
+
+export function assertQuoteReadyForOutput(q: any) {
+  assert(
+    !quoteHasUnresolvedLines(q),
+    409,
+    "Enter prices for imported delivery rows before printing or issuing this quotation",
+  );
+}
+
 export async function snapshot(
   db: DB,
   actor: Actor,
   lines: z.infer<typeof quotationLineInput>[],
   settings: any,
+  options: { allowUnresolvedImportedCustom?: boolean } = {},
 ) {
   const result = [];
   await lockActor(db, actor);
@@ -72,6 +190,32 @@ export async function snapshot(
   );
   for (const input of lines) {
     if (input.type === "CUSTOM") {
+      const capturedVat = input.vat ?? settings.vat;
+      const importMeta = input.importMeta
+        ? {
+            ...input.importMeta,
+            unresolved: unresolvedImportedCustom(input),
+          }
+        : undefined;
+      if (unresolvedImportedCustom(input)) {
+        assert(
+          options.allowUnresolvedImportedCustom,
+          409,
+          `Imported delivery row ${input.importMeta.rowNumber ?? ""}${input.importMeta.docNo ? ` (${input.importMeta.docNo})` : ""} still needs a unit price before issuing`,
+        );
+        result.push({
+          source: "CUSTOM",
+          partNumber: input.partNumber || "CUSTOM",
+          description: input.description,
+          unit: input.unit,
+          quantityPrecision: 6,
+          input: { ...input, vat: capturedVat, importMeta },
+          price: null,
+          unresolved: true,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
       if (input.partNumber) {
         const normalized = normalizePart(input.partNumber);
         const existing = await one(
@@ -93,7 +237,6 @@ export async function snapshot(
             },
           );
       }
-      const capturedVat = input.vat ?? settings.vat;
       const price = calculateCustom(input, capturedVat);
       result.push({
         source: "CUSTOM",
@@ -101,7 +244,7 @@ export async function snapshot(
         description: input.description,
         unit: input.unit,
         quantityPrecision: 6,
-        input: { ...input, vat: capturedVat },
+        input: { ...input, vat: capturedVat, importMeta },
         price,
         timestamp: new Date().toISOString(),
       });
@@ -120,7 +263,11 @@ export async function snapshot(
       quantityPrecision: p.quantityPrecision,
       productVersion: row.version,
       sellingLevel: calculation.sellingLevel,
-      input: { ...input, sellingLevel: calculation.sellingLevel },
+      input: {
+        ...input,
+        sellingLevel: calculation.sellingLevel,
+        importMeta: input.importMeta,
+      },
       price: calculation,
       internalPricing: {
         minimumEnabled: p.minimumEnabled,
@@ -134,6 +281,10 @@ export async function snapshot(
   return result;
 }
 function publicLine(line: any, actor: Actor) {
+  if (!line.price) {
+    const { internalPricing, ...safe } = line;
+    return { ...safe, price: null };
+  }
   const { maxDiscount, ...price } = line.price;
   const { internalPricing, ...safe } = line;
   return {
@@ -145,7 +296,16 @@ function publicLine(line: any, actor: Actor) {
   };
 }
 export function publicQuote(q: any, actor: Actor) {
-  return { ...q, lines: q.lines.map((l: any) => publicLine(l, actor)) };
+  return {
+    ...q,
+    totals: {
+      quoteDiscount: "0.00",
+      targetTotal: "",
+      unresolvedLines: 0,
+      ...(q.totals ?? {}),
+    },
+    lines: q.lines.map((l: any) => publicLine(l, actor)),
+  };
 }
 export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
   const q = await one(db, "SELECT * FROM quotations WHERE id=$1", [id]);
@@ -223,10 +383,12 @@ export async function saveDraft(
     const lines = await attachToSavedQuote(
       tx,
       actor,
-      await snapshot(tx, actor, data.lines, settings),
+      await snapshot(tx, actor, data.lines, settings, {
+        allowUnresolvedImportedCustom: true,
+      }),
       oldLines,
     );
-    const sum = totals(lines.map((l) => l.price));
+    const sum = computeTotals(lines, data.adjustment?.targetTotal);
     const quoteId = id ?? randomUUID();
     if (id)
       await tx.query(
@@ -286,6 +448,7 @@ const fingerprint = (q: any, lines: any[], actor: Actor, settings: any) =>
         id: q.id,
         version: q.version,
         lines: lines.map(({ timestamp, ...l }) => l),
+        targetTotal: q.totals?.targetTotal ?? "",
         permissions: actor.permissions,
         maxDiscount: actor.maxDiscount,
         settings,
@@ -311,13 +474,14 @@ export async function reviewIssue(
       actor,
       q.lines.map(savedLineInput),
       settings,
+      {},
     );
     return {
       token: fingerprint(q, lines, actor, settings),
       version: q.version,
       before: publicQuote(q, actor),
       after: lines.map((l) => publicLine(l, actor)),
-      totals: totals(lines.map((l) => l.price)),
+      totals: computeTotals(lines, q.totals?.targetTotal),
     };
   });
 }
@@ -342,6 +506,7 @@ export async function issue(
       actor,
       q.lines.map(savedLineInput),
       settings,
+      {},
     );
     assert(
       fingerprint(q, lines, actor, settings) === token,
@@ -365,7 +530,7 @@ export async function issue(
         id,
         allocated.number,
         json(lines),
-        json(totals(lines.map((l) => l.price))),
+        json(computeTotals(lines, q.totals?.targetTotal)),
         json({ ...settings, brandingAssets: { logo } }),
         json(customer),
         allocated.serial,

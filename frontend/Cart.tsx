@@ -13,6 +13,84 @@ import {
   livePricingSignature,
 } from "./cart-live-pricing";
 
+const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
+const importedDeliveryMeta = (line: any) =>
+  line?.input?.importMeta?.source === "DELIVERY_NOTE"
+    ? line.input.importMeta
+    : null;
+const unresolvedImportedCustom = (line: any) =>
+  line?.input?.type === "CUSTOM" &&
+  importedDeliveryMeta(line) &&
+  !decimalPattern.test(String(line?.input?.unitPriceExcl ?? "").trim());
+
+function computeCartTotals(lines: any[], targetTotalValue: string) {
+  const base = totals(lines.flatMap((line: any) => (line.price ? [line.price] : [])));
+  const unresolvedLines = lines.filter((line: any) => !line.price).length;
+  const rawTarget = String(targetTotalValue ?? "").trim();
+  if (!rawTarget)
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: "",
+      unresolvedLines,
+      error: "",
+    };
+  if (unresolvedLines)
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: rawTarget,
+      unresolvedLines,
+      error: "Enter prices for imported delivery rows before using a round-off total.",
+    };
+  if (!decimalPattern.test(rawTarget))
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: rawTarget,
+      unresolvedLines,
+      error: "Enter the round-off total as a number like 525 or 525.50.",
+    };
+  const currentTotal = Number(base.total || 0);
+  const targetTotal = Number(rawTarget);
+  if (targetTotal > currentTotal)
+    return {
+      ...base,
+      lineSubtotal: base.subtotal,
+      lineVat: base.vat,
+      lineTotal: base.total,
+      quoteDiscount: "0.00",
+      targetTotal: rawTarget,
+      unresolvedLines,
+      error: "Round-off total cannot be more than the current quotation total.",
+    };
+  const ratio = currentTotal === 0 ? 1 : targetTotal / currentTotal;
+  const subtotalValue = Number(base.subtotal || 0);
+  const adjustedSubtotal = (subtotalValue * ratio).toFixed(2);
+  const adjustedVat = (targetTotal - Number(adjustedSubtotal)).toFixed(2);
+  return {
+    subtotal: adjustedSubtotal,
+    vat: adjustedVat,
+    total: targetTotal.toFixed(2),
+    lineSubtotal: base.subtotal,
+    lineVat: base.vat,
+    lineTotal: base.total,
+    quoteDiscount: (currentTotal - targetTotal).toFixed(2),
+    targetTotal: targetTotal.toFixed(2),
+    unresolvedLines,
+    error: "",
+  };
+}
+
 const sanitizeCustomInput = (input: any) => {
   if (!input || input.type !== "CUSTOM") return input;
   const { override, reason, sellingLevel, ...safe } = input;
@@ -47,12 +125,12 @@ export default function Cart({
   const pricingSignatures = useRef<Record<number, string>>({});
   const pricingGenerations = useRef<Record<number, number>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
-  const hasBlockingErrors = cart.lines.some((line: any) =>
-    cartLineHasBlockingError(line),
-  );
-  const sum = cart.lines.every((l: any) => l.price)
-    ? totals(cart.lines.map((l: any) => l.price))
-    : null;
+  const targetTotalValue =
+    cart.adjustment?.targetTotal ?? cart.totals?.targetTotal ?? "";
+  const sum = computeCartTotals(cart.lines, targetTotalValue);
+  const hasBlockingErrors =
+    cart.lines.some((line: any) => cartLineHasBlockingError(line)) ||
+    !!sum.error;
   cartRef.current = cart;
 
   const setCartLine = (index: number, build: (line: any) => any) => {
@@ -77,19 +155,54 @@ export default function Cart({
 
   function change(index: number, key: string, value: string) {
     setError("");
-    const lines = cart.lines.map((l: any, i: number) =>
-      i === index
-        ? {
-            ...l,
-            pending: true,
-            livePriceError: "",
-            input:
-              l.input?.type === "CUSTOM"
-                ? { ...sanitizeCustomInput(l.input), [key]: value }
-                : { ...l.input, [key]: value, override: false, reason: "" },
+    const lines = cart.lines.map((l: any, i: number) => {
+      if (i !== index) return l;
+      if (l.input?.type === "CUSTOM") {
+        const input = {
+          ...sanitizeCustomInput(l.input),
+          [key]: value,
+        };
+        const quantity = String(input.quantity ?? "").trim();
+        const discount = String(input.discount ?? "0").trim();
+        const unitPrice = String(input.unitPriceExcl ?? "").trim();
+        const importMeta = importedDeliveryMeta({ input });
+        const canLeavePriceBlank =
+          importMeta?.source === "DELIVERY_NOTE" &&
+          !decimalPattern.test(unitPrice);
+        let price = null;
+        let livePriceError = "";
+        if (
+          String(input.description ?? "").trim() &&
+          decimalPattern.test(quantity) &&
+          decimalPattern.test(discount) &&
+          Number(discount) <= 100 &&
+          decimalPattern.test(unitPrice)
+        ) {
+          try {
+            price = calculateCustom(input, String(settings.vat));
+          } catch (e) {
+            livePriceError = humanizeCustomLineError((e as Error).message);
           }
-        : l,
-    );
+        } else if (!canLeavePriceBlank && unitPrice && !decimalPattern.test(unitPrice)) {
+          livePriceError =
+            "Enter unit price as a number like 12.5 or 100, without commas.";
+        }
+        return {
+          ...l,
+          input,
+          price,
+          pending: false,
+          offline: false,
+          livePriceError,
+        };
+      }
+      return {
+        ...l,
+        pending: true,
+        livePriceError: "",
+        input: { ...l.input, [key]: value, override: false, reason: "" },
+      };
+    });
     setCart({ ...cart, lines });
   }
 
@@ -229,6 +342,7 @@ export default function Cart({
                   reason: "",
                 },
           ),
+          adjustment: { targetTotal: targetTotalValue },
           ...(cart.id ? { version: cart.version } : { requestId }),
         },
       );
@@ -238,6 +352,8 @@ export default function Cart({
         version: q.version,
         number: q.number,
         lines: q.lines,
+        totals: q.totals,
+        adjustment: { targetTotal: q.totals?.targetTotal || "" },
       });
       const reused = q.lines.filter(
         (line: any) => line.reusableResolution === "EXISTING",
@@ -400,7 +516,22 @@ export default function Cart({
                       <>
                         <strong>{l.partNumber}</strong>
                         <small>{l.description}</small>
+                        {importedDeliveryMeta(l) && (
+                          <small>
+                            {t("Delivery row", "صف التسليم")}{" "}
+                            {importedDeliveryMeta(l)?.rowNumber || "—"} ·{" "}
+                            {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
+                            {importedDeliveryMeta(l)?.docDate || "—"}
+                          </small>
+                        )}
                       </>
+                    )}
+                    {l.input?.type === "CUSTOM" && importedDeliveryMeta(l) && (
+                      <small>
+                        {t("Delivery source", "مصدر التسليم")}:{" "}
+                        {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
+                        {importedDeliveryMeta(l)?.docDate || "—"}
+                      </small>
                     )}
                     {l.input?.type !== "CUSTOM" && (
                       <label>
@@ -454,6 +585,14 @@ export default function Cart({
                     )}
                     {!!l.livePriceError && (
                       <small className="sales-check-error">{l.livePriceError}</small>
+                    )}
+                    {unresolvedImportedCustom(l) && !l.livePriceError && (
+                      <small className="sales-check-error">
+                        {t(
+                          "Enter a unit price before issuing this quotation line.",
+                          "أدخل سعر الوحدة قبل إصدار هذا السطر في عرض السعر.",
+                        )}
+                      </small>
                     )}
                   </td>
                   <td>
@@ -571,9 +710,38 @@ export default function Cart({
           <span>
             {t("VAT", "الضريبة")} <b>{sum.vat}</b>
           </span>
+          <label className="cart-roundoff-field">
+            <span>{t("Round-off total", "إجمالي التقريب")}</span>
+            <input
+              value={targetTotalValue}
+              onChange={(e) =>
+                setCart({
+                  ...cart,
+                  adjustment: { targetTotal: e.target.value },
+                })
+              }
+              placeholder={t("Leave blank for no total discount", "اتركه فارغاً بدون خصم إجمالي")}
+            />
+            <small>
+              {t(
+                "Enter the final customer total. The total discount is calculated automatically.",
+                "أدخل إجمالي العميل النهائي وسيتم حساب خصم الإجمالي تلقائياً.",
+              )}
+            </small>
+          </label>
+          {sum.quoteDiscount !== "0.00" && (
+            <span>
+              {t("Total discount", "خصم الإجمالي")} <b>{sum.quoteDiscount}</b>
+            </span>
+          )}
           <span className="grand-total">
             {t("Grand total", "الإجمالي")} <b>SAR {sum.total}</b>
           </span>
+        </div>
+      )}
+      {!!sum.error && (
+        <div className="notice">
+          {t(sum.error, sum.error)}
         </div>
       )}
       {error && (

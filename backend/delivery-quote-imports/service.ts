@@ -136,6 +136,12 @@ async function stageRow(
     "BLOCKED";
   let productId: string | null = null;
   let lineInput: Record<string, unknown> = {};
+  const importMeta = {
+    source: "DELIVERY_NOTE" as const,
+    docNo,
+    docDate,
+    unresolved: false,
+  };
   if (!issues.length && partNumber) {
     const matched = await productMatch(db, partNumber);
     if (matched) {
@@ -150,6 +156,7 @@ async function stageRow(
         override: false,
         reason: "",
         sellingLevel: selectedLevel(input).code,
+        importMeta,
       };
     } else {
       resolution = "UNMATCHED_CUSTOM";
@@ -161,9 +168,11 @@ async function stageRow(
         quantity,
         unitPriceExcl: moneyPattern.test(sourcePrice) ? sourcePrice : "",
         discount: "0",
+        importMeta: {
+          ...importMeta,
+          unresolved: !moneyPattern.test(sourcePrice),
+        },
       };
-      if (!moneyPattern.test(sourcePrice))
-        issues.push("Enter a unit price before completing this custom row");
     }
   }
   const completed =
@@ -395,21 +404,58 @@ export async function mapRows(
       );
     }
     const header = headerState(staged);
+    const summaryRows = rows.map((row, index) => ({
+      ...row,
+      ...staged[index],
+      action: "ADD",
+    }));
     const summary = summarizeReview(
-      rows.map((row, index) => ({
-        ...row,
-        ...staged[index],
-        action: "ADD",
-      })),
+      summaryRows,
       header,
+    );
+    if (header.blockedReason) {
+      await tx.query(
+        `UPDATE delivery_quote_jobs
+         SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,error=NULL,version=version+1,updated_at=now()
+         WHERE id=$1`,
+        [id, json(mapping), json(header), json(summary)],
+      );
+      return { ok: true, blocked: true };
+    }
+    const quote = await saveDraft(
+      tx,
+      actor,
+      {
+        customer: toQuoteCustomer(header),
+        lines: summaryRows
+          .filter((row) => row.action === "ADD")
+          .map((row) => ({
+            ...row.lineInput,
+            importMeta: {
+              ...(row.lineInput.importMeta ?? {}),
+              rowId: row.id,
+              rowNumber: row.row_number,
+            },
+          })),
+      },
+      {},
     );
     await tx.query(
       `UPDATE delivery_quote_jobs
-       SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,error=NULL,version=version+1,updated_at=now()
+       SET status='COMPLETED',mapping=$2,header=$3,summary=$4,error=NULL,quote_id=$5,version=version+1,updated_at=now()
        WHERE id=$1`,
-      [id, json(mapping), json(header), json(summary)],
+      [id, json(mapping), json(header), json(summary), quote.id],
     );
-    return { ok: true };
+    await audit(
+      tx,
+      actor.id,
+      "DELIVERY_QUOTE_FINALIZE",
+      "delivery_quote_jobs",
+      id,
+      null,
+      { quoteId: quote.id },
+    );
+    return { ok: true, quote };
   });
 }
 
@@ -521,20 +567,22 @@ export async function finalize(
     ).rows;
     const included = rows.filter((row) => row.action === "ADD");
     assert(included.length > 0, 400, "Select at least one row for the quotation");
-    const incomplete = included.filter(
-      (row) => !row.completed || (Array.isArray(row.issues) && row.issues.length),
-    );
-    assert(
-      incomplete.length === 0,
-      409,
-      "Some included rows still need price or corrections. Complete or remove them before creating the quotation",
-    );
     const quote = await saveDraft(
       tx,
       actor,
       {
         customer: toQuoteCustomer(header),
-        lines: included.map((row) => row.line_input),
+        lines: included.map((row) => ({
+          ...row.line_input,
+          importMeta: {
+            ...(row.line_input?.importMeta ?? {}),
+            rowId: row.id,
+            rowNumber: row.row_number,
+            docNo: row.doc_no ?? row.docNo ?? row.raw?.[job.mapping?.docNo] ?? "",
+            docDate:
+              row.doc_date ?? row.docDate ?? row.raw?.[job.mapping?.date] ?? "",
+          },
+        })),
       },
       {},
     );
