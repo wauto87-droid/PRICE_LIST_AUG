@@ -456,9 +456,9 @@ export async function reviewRows(
         issues = [friendlyIssue(error)];
       }
       if (data.action === "REMOVE") completed = false;
-      if (data.completed !== undefined) completed = data.completed;
-      if (data.action === "RESTORE") completed = issues.length === 0;
-      if (data.action === "ADD") completed = issues.length === 0;
+      else if (data.completed !== undefined || data.action === "RESTORE" || data.action === "ADD")
+        completed = issues.length === 0;
+      else if (issues.length) completed = false;
       await tx.query(
         `UPDATE delivery_quote_rows
          SET action=$2,completed=$3,issues=$4,line_input=$5

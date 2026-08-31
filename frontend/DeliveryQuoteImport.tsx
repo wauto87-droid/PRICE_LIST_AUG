@@ -102,7 +102,9 @@ export default function DeliveryQuoteImport({
   const completionLabel = (row: any) =>
     row.action === "REMOVE"
       ? t("Removed", "محذوف")
-      : row.completed
+      : row.issues?.length
+        ? t("Needs work", "يحتاج عمل")
+        : row.completed
         ? t("Complete", "مكتمل")
         : t("Needs work", "يحتاج عمل");
 
@@ -337,6 +339,17 @@ export default function DeliveryQuoteImport({
               "Customer details will be added once in the quotation header. Review and complete the line rows below.",
               "ستتم إضافة بيانات العميل مرة واحدة في رأس عرض السعر. راجع وأكمل صفوف البنود أدناه.",
             )}
+          </div>
+          <div className="quantity-drilldown-summary">
+            <span>
+              {t("Selected rows", "الصفوف المحددة")}: {selectedIds.length}
+            </span>
+            <span>
+              {t("Included rows", "الصفوف المضمنة")}: {job.summary?.includedRows || 0}
+            </span>
+            <span>
+              {t("Rows needing work", "الصفوف التي تحتاج عمل")}: {job.summary?.blockedRows || 0}
+            </span>
           </div>
           <div className="actions wrap">
             {[
