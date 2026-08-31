@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import { buildLookupLineRequest } from "./lookup-pricing";
 import { visibleLevels } from "./levels";
+import { wheelSafeNumberInputProps } from "./number-input";
 
 export default function QuotationLineQuickAdd({
   t,
@@ -101,6 +102,7 @@ export default function QuotationLineQuickAdd({
             type="number"
             min="0.000001"
             step="any"
+            {...wheelSafeNumberInputProps}
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
           />
