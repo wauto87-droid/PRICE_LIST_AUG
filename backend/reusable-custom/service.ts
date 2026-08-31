@@ -53,13 +53,43 @@ async function duplicate(
 }
 export async function search(db: DB, actor: Actor, q: string) {
   canQuote(actor);
-  const term = q.trim().slice(0, 100);
+  const term = normalizeDescription(q).slice(0, 100);
+  if (!term) return [];
   return (
     await db.query(
-      "SELECT r.id,r.reference,r.description,r.unit,r.suggested_unit_price AS \"suggestedUnitPrice\",r.suggested_discount AS \"suggestedDiscount\",r.usage_count,r.last_used_at,r.version FROM reusable_custom_items r WHERE r.status='ACTIVE' AND ($1='' OR r.reference ILIKE '%'||$1||'%' OR r.description ILIKE '%'||$1||'%') ORDER BY CASE WHEN upper(r.reference)=upper($1) THEN 0 ELSE 1 END,r.usage_count DESC,r.updated_at DESC LIMIT 20",
+      `SELECT r.id,r.reference,r.description,r.unit,r.suggested_unit_price AS "suggestedUnitPrice",r.suggested_discount AS "suggestedDiscount",r.usage_count,r.last_used_at,r.version
+       FROM reusable_custom_items r
+       WHERE r.status='ACTIVE' AND (position($1 in r.normalized_reference)>0 OR position($1 in r.normalized_description)>0)
+       ORDER BY CASE WHEN r.normalized_reference=$1 THEN 0 WHEN position($1 in r.normalized_reference)=1 THEN 1 WHEN position($1 in r.normalized_description)=1 THEN 2 ELSE 3 END,r.usage_count DESC,r.updated_at DESC
+       LIMIT 8`,
       [term],
     )
   ).rows;
+}
+export async function resolveExact(db: DB, actor: Actor, input: unknown) {
+  canQuote(actor);
+  const value = z
+    .object({
+      reference: z.string().max(100).default(""),
+      description: z.string().max(1000).default(""),
+    })
+    .strict()
+    .parse(input);
+  if (!value.reference.trim() && !value.description.trim())
+    return { match: null };
+  const match = await duplicate(db, value.reference, value.description || " ");
+  return {
+    match: match
+      ? {
+          id: match.id,
+          reference: match.reference,
+          description: match.description,
+          unit: match.unit,
+          suggestedUnitPrice: match.suggested_unit_price,
+          suggestedDiscount: match.suggested_discount,
+        }
+      : null,
+  };
 }
 export async function list(db: DB, actor: Actor, q = "", status = "ACTIVE") {
   manage(actor);

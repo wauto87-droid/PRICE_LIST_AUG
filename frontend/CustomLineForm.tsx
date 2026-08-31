@@ -1,10 +1,15 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { calculateCustom, customLineInput } from "@/backend/pricing/engine";
 import type { Translate } from "./api";
 import { api } from "./api";
 import { wheelSafeNumberInputProps } from "./number-input";
 import { humanizeCustomLineError } from "./custom-line-errors";
+import {
+  formatReusableDiscount,
+  formatReusablePrice,
+  moveReusableIndex,
+} from "./reusable-search";
 const blank = (partNumber = "") => ({
   partNumber,
   description: "",
@@ -25,39 +30,53 @@ export default function CustomLineForm({
   onAdd: (line: any) => void;
   suggestedPart?: string;
 }) {
+  const searchId = useId(),
+    resultsId = searchId + "-results";
   const [open, setOpen] = useState(false),
     [value, setValue] = useState(blank()),
     [error, setError] = useState(""),
     [savedItems, setSavedItems] = useState<any[]>([]),
-    [checking, setChecking] = useState(false);
+    [checking, setChecking] = useState(false),
+    [searchQuery, setSearchQuery] = useState(""),
+    [searching, setSearching] = useState(false),
+    [activeResult, setActiveResult] = useState(-1),
+    [duplicateMatch, setDuplicateMatch] = useState<any>(null);
   useEffect(() => {
     if (!open && suggestedPart.trim())
       setValue((current) => ({ ...current, partNumber: suggestedPart.trim() }));
   }, [suggestedPart, open]);
   useEffect(() => {
-    if (!open) return;
-    const queries = [value.partNumber.trim(), value.description.trim()].filter(
-      (query, index, all) => query && all.indexOf(query) === index,
-    );
+    const query = searchQuery.trim();
+    if (!open || !query) {
+      setSavedItems([]);
+      setSearching(false);
+      setActiveResult(-1);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
     const timer = setTimeout(
       () =>
-        Promise.all(
-          (queries.length ? queries : [""]).map((query) =>
-            api("reusable-custom-items?q=" + encodeURIComponent(query)),
-          ),
-        )
-          .then((groups) =>
-            setSavedItems([
-              ...new Map(
-                groups.flat().map((item: any) => [item.id, item]),
-              ).values(),
-            ]),
-          )
-          .catch(() => setSavedItems([])),
+        api("reusable-custom-items?q=" + encodeURIComponent(query))
+          .then((items) => {
+            if (!cancelled) {
+              setSavedItems(items);
+              setActiveResult(-1);
+            }
+          })
+          .catch(() => {
+            if (!cancelled) setSavedItems([]);
+          })
+          .finally(() => {
+            if (!cancelled) setSearching(false);
+          }),
       250,
     );
-    return () => clearTimeout(timer);
-  }, [open, value.partNumber, value.description]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [open, searchQuery]);
   function useSaved(item: any) {
     setValue({
       partNumber: item.reference || "",
@@ -69,6 +88,17 @@ export default function CustomLineForm({
       reusableItemId: item.id,
     });
     setError("");
+    setDuplicateMatch(null);
+    setSearchQuery("");
+    setSavedItems([]);
+    setActiveResult(-1);
+  }
+  function closeForm() {
+    setOpen(false);
+    setSearchQuery("");
+    setSavedItems([]);
+    setActiveResult(-1);
+    setDuplicateMatch(null);
   }
   async function add() {
     try {
@@ -79,13 +109,26 @@ export default function CustomLineForm({
           "search?q=" + encodeURIComponent(reference),
         );
         const exact = matches.find(
-          (item) => String(item.partNumber ?? "").trim().toUpperCase() ===
-            reference.toUpperCase(),
+          (item) =>
+            String(item.partNumber ?? "")
+              .trim()
+              .toUpperCase() === reference.toUpperCase(),
         );
         if (exact)
           throw new Error(
             `Part reference matches catalog item ${exact.partNumber}. Use the catalog item instead`,
           );
+      }
+      if (!value.reusableItemId) {
+        const resolved: any = await api(
+          "reusable-custom-items/resolve",
+          "POST",
+          { reference, description: value.description },
+        );
+        if (resolved.match) {
+          setDuplicateMatch(resolved.match);
+          return;
+        }
       }
       const input = customLineInput.parse({ type: "CUSTOM", ...value });
       onAdd({
@@ -101,6 +144,9 @@ export default function CustomLineForm({
       setValue(blank());
       setError("");
       setOpen(false);
+      setSearchQuery("");
+      setSavedItems([]);
+      setDuplicateMatch(null);
     } catch (reason) {
       setError(humanizeCustomLineError((reason as Error).message));
     } finally {
@@ -112,7 +158,7 @@ export default function CustomLineForm({
       <button
         type="button"
         className="custom-line-toggle"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => (open ? closeForm() : setOpen(true))}
       >
         + {t("Add custom item", "إضافة صنف مخصص")}
       </button>
@@ -132,33 +178,141 @@ export default function CustomLineForm({
             </div>
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={closeForm}
               aria-label={t("Close", "إغلاق")}
             >
               ×
             </button>
           </div>
-          {!!savedItems.length && (
-            <div className="reusable-custom-results">
-              <strong>
-                {t("Reusable custom items", "الأصناف المخصصة المحفوظة")}
-              </strong>
-              {savedItems.map((item) => (
+          <div className="reusable-custom-search">
+            <label htmlFor={searchId}>
+              {t(
+                "Search reusable custom items",
+                "بحث في الأصناف المخصصة المحفوظة",
+              )}
+            </label>
+            <div className="reusable-search-input">
+              <input
+                id={searchId}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={!!searchQuery.trim() && !!savedItems.length}
+                aria-controls={resultsId}
+                aria-activedescendant={
+                  activeResult >= 0
+                    ? `${searchId}-result-${savedItems[activeResult]?.id}`
+                    : undefined
+                }
+                value={searchQuery}
+                placeholder={t(
+                  "Part number or description",
+                  "رقم الصنف أو الوصف",
+                )}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setDuplicateMatch(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActiveResult((current) =>
+                      moveReusableIndex(
+                        current,
+                        e.key === "ArrowDown" ? 1 : -1,
+                        savedItems.length,
+                      ),
+                    );
+                  } else if (e.key === "Enter" && activeResult >= 0) {
+                    e.preventDefault();
+                    useSaved(savedItems[activeResult]);
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSearchQuery("");
+                    setSavedItems([]);
+                    setActiveResult(-1);
+                  }
+                }}
+              />
+              {searchQuery && (
                 <button
                   type="button"
-                  key={item.id}
-                  onClick={() => useSaved(item)}
+                  aria-label={t(
+                    "Clear reusable search",
+                    "مسح بحث الأصناف المحفوظة",
+                  )}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSavedItems([]);
+                    setActiveResult(-1);
+                  }}
                 >
-                  <span>
-                    {item.reference || t("No reference", "بدون مرجع")} ·{" "}
-                    {item.description}
-                  </span>
-                  <small>
-                    {item.suggestedUnitPrice} · {item.suggestedDiscount}%
-                  </small>
-                  <b>{t("Use existing item", "استخدام الصنف الموجود")}</b>
+                  ×
                 </button>
-              ))}
+              )}
+            </div>
+            {searching && (
+              <small className="muted">{t("Searching…", "جارٍ البحث…")}</small>
+            )}
+            {!!searchQuery.trim() && !searching && !!savedItems.length && (
+              <div
+                id={resultsId}
+                className="reusable-custom-results"
+                role="listbox"
+              >
+                {savedItems.map((item, index) => (
+                  <button
+                    id={`${searchId}-result-${item.id}`}
+                    role="option"
+                    aria-selected={index === activeResult}
+                    className={index === activeResult ? "active" : ""}
+                    type="button"
+                    key={item.id}
+                    onMouseEnter={() => setActiveResult(index)}
+                    onClick={() => useSaved(item)}
+                  >
+                    <span
+                      title={`${item.reference || ""} · ${item.description}`}
+                    >
+                      <strong>
+                        {item.reference || t("No reference", "بدون مرجع")}
+                      </strong>
+                      <em>{item.description}</em>
+                    </span>
+                    <small>
+                      {formatReusablePrice(item.suggestedUnitPrice)} ·{" "}
+                      {formatReusableDiscount(item.suggestedDiscount)}%
+                    </small>
+                    <b>{t("Use", "استخدام")}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!!searchQuery.trim() && !searching && !savedItems.length && (
+              <small className="muted">
+                {t(
+                  "No reusable items found.",
+                  "لم يتم العثور على أصناف محفوظة.",
+                )}
+              </small>
+            )}
+          </div>
+          {duplicateMatch && (
+            <div className="reusable-duplicate-warning" role="alert">
+              <span>
+                <strong>
+                  {t(
+                    "This item already exists in the reusable list.",
+                    "هذا الصنف موجود مسبقاً في القائمة المحفوظة.",
+                  )}
+                </strong>
+                <small>
+                  {duplicateMatch.reference || t("No reference", "بدون مرجع")} ·{" "}
+                  {duplicateMatch.description}
+                </small>
+              </span>
+              <button type="button" onClick={() => useSaved(duplicateMatch)}>
+                {t("Use existing item", "استخدام الصنف الموجود")}
+              </button>
             </div>
           )}
           <div className="form-grid custom-line-fields">
@@ -167,9 +321,10 @@ export default function CustomLineForm({
               <input
                 value={value.partNumber}
                 maxLength={100}
-                onChange={(e) =>
-                  setValue({ ...value, partNumber: e.target.value })
-                }
+                onChange={(e) => {
+                  setValue({ ...value, partNumber: e.target.value });
+                  setDuplicateMatch(null);
+                }}
               />
             </label>
             <label className="custom-description">
@@ -177,9 +332,10 @@ export default function CustomLineForm({
               <input
                 value={value.description}
                 maxLength={1000}
-                onChange={(e) =>
-                  setValue({ ...value, description: e.target.value })
-                }
+                onChange={(e) => {
+                  setValue({ ...value, description: e.target.value });
+                  setDuplicateMatch(null);
+                }}
               />
             </label>
             <label>

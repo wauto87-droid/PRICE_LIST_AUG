@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { embedded, migrate, one } from "../backend/core/db";
 import {
   setup,
@@ -13,6 +14,7 @@ import {
   list,
   update,
   convert,
+  resolveExact,
 } from "../backend/reusable-custom/service";
 
 test("Reusable custom items are deduplicated, reusable, admin-managed, and safely converted", async () => {
@@ -67,9 +69,45 @@ test("Reusable custom items are deduplicated, reusable, admin-managed, and safel
     first.lines[0].reusableItemId,
   );
   let saved: any[] = await search(db, actor, "special");
+  assert.equal((await search(db, actor, "  SPECIAL   fabricated ")).length, 1);
+  assert.deepEqual(await search(db, actor, ""), []);
   assert.equal(saved.length, 1);
   assert.equal(saved[0].usage_count, 1);
   const reusableId = saved[0].id;
+  assert.equal(
+    (
+      await resolveExact(db, actor, {
+        reference: " special-1 ",
+        description: "",
+      })
+    ).match!.id,
+    reusableId,
+  );
+  assert.equal(
+    (
+      await resolveExact(db, actor, {
+        reference: "",
+        description: " SPECIAL   FABRICATED panel ",
+      })
+    ).match!.id,
+    reusableId,
+  );
+  for (let index = 0; index < 10; index++)
+    await db.query(
+      "INSERT INTO reusable_custom_items(id,reference,normalized_reference,description,normalized_description,unit,suggested_unit_price,suggested_discount,created_by) VALUES($1,$2,$3,$4,$5,'pcs','1','0',$6)",
+      [
+        randomUUID(),
+        index === 0 ? "RANK" : `RANK-${index}`,
+        index === 0 ? "RANK" : `RANK-${index}`,
+        `Rank description ${index}`,
+        `RANK DESCRIPTION ${index}`,
+        actor.id,
+      ],
+    );
+  const ranked: any[] = await search(db, actor, "rank");
+  assert.equal(ranked.length, 8);
+  assert.equal(ranked[0].reference, "RANK");
+  assert.equal(ranked[1].reference.startsWith("RANK-"), true);
   await saveDraft(
     db,
     actor,

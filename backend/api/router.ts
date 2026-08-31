@@ -375,6 +375,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           ),
         );
       }
+      if (id === "resolve" && method === "POST")
+        return response(
+          await reusableCustom.resolveExact(db, actor, await body(req)),
+        );
       if (id) {
         uuid(id);
         if (!action && method === "GET")
@@ -930,12 +934,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         if (action === "finalize" && method === "POST")
           return response(
-            await deliveryQuoteImports.finalize(
-              db,
-              actor,
-              id,
-              await body(req),
-            ),
+            await deliveryQuoteImports.finalize(db, actor, id, await body(req)),
           );
         if (!action && method === "DELETE")
           return response(await deliveryQuoteImports.remove(db, actor, id));
