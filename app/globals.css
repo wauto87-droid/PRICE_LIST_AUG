@@ -314,12 +314,12 @@ h3 {
   box-shadow: 0 5px 20px #25253903;
 }
 .lookup-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 800px) 1fr;
-  gap: 40px;
+  display: block;
+  width: min(100%, 1040px);
+  margin-inline: auto;
 }
 .lookup-layout.lookup-compact {
-  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 1040px);
 }
 .workspace-layout {
   display: grid;
@@ -741,8 +741,8 @@ kbd {
 }
 .lookup-selected-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
   align-items: start;
 }
 .lookup-selected-main,
@@ -753,32 +753,85 @@ kbd {
 .lookup-selected-side {
   align-content: start;
 }
+.lookup-selected-actions {
+  justify-content: flex-end;
+  min-height: 24px;
+}
 .lookup-compact-fields {
   margin-top: 0;
 }
 .lookup-final-price-compact {
   margin-top: 0;
-  border: 3px solid var(--red);
-  box-shadow: 0 10px 28px rgb(204 0 0 / 10%);
+  border: 2px solid var(--red);
+  box-shadow: 0 10px 28px rgb(204 0 0 / 8%);
 }
 .selling-level-selector {
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: #f7f7f8;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
-.selling-level-selector-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: start;
-  gap: 12px;
-  margin-bottom: 12px;
+.selling-level-select {
+  display: grid;
+  gap: 7px;
 }
-.selling-level-selector-head p {
-  margin: 4px 0 0;
+.selling-level-select > span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+.selling-level-select select {
+  min-height: 54px;
+  padding: 12px 42px 12px 14px;
+  border: 1.5px solid #d9dde6;
+  border-radius: 12px;
+  background-color: #fff;
+  color: var(--ink);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.final-unit-price {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0 12px;
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+.final-unit-price span {
+  font-size: 14px;
+}
+.final-unit-price strong {
+  font-size: clamp(42px, 7vw, 64px);
+  line-height: 1;
+}
+.unit-price-details {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.unit-price-details span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.unit-price-details b {
+  color: var(--ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.lookup-line-totals {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.65fr) repeat(2, minmax(150px, 1fr));
+  align-items: end;
+  text-align: center;
+}
+.lookup-line-totals b {
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
 }
 .customer-price-guidance {
   margin: 9px 0 14px;
@@ -2302,6 +2355,17 @@ fieldset label {
   .lookup-selected-main,
   .lookup-selected-side {
     gap: 12px;
+  }
+  .lookup-compact-fields,
+  .lookup-line-totals {
+    grid-template-columns: 1fr;
+  }
+  .lookup-selected-actions {
+    justify-content: flex-start;
+  }
+  .unit-price-details {
+    display: grid;
+    gap: 6px;
   }
   .search-box input {
     font-size: 15px;

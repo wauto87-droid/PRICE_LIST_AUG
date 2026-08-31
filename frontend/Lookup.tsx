@@ -24,14 +24,12 @@ export default function Lookup({
   user,
   settings,
   online,
-  showAside = true,
 }: {
   t: Translate;
   onAdd: (line: any) => void;
   user: any;
   settings: any;
   online: boolean;
-  showAside?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [results, setResults] = useState<any[]>([]),
@@ -475,8 +473,14 @@ export default function Lookup({
         )
         .toFixed(2)
     : "0.00";
+  const unitVat = displayPrice
+    ? new Decimal(displayPrice.finalIncl)
+        .minus(displayPrice.finalExcl)
+        .toDecimalPlaces(2)
+        .toFixed(2)
+    : "";
   return (
-    <div className={"lookup-layout" + (showAside ? "" : " lookup-compact")}>
+    <div className="lookup-layout lookup-compact">
       <section className="card lookup-card">
         <CustomLineForm
           t={t}
@@ -642,14 +646,7 @@ export default function Lookup({
               )}
             </div>
             {selected && (
-              <div className="lookup-selected-hint">
-                <div>
-                  <strong>
-                    {t("Selected", "المحدد")}: {selected.partNumber}
-                  </strong>
-                  <span>{selected.description}</span>
-                </div>
-                <div className="actions wrap">
+              <div className="lookup-selected-actions actions wrap">
                   {hasRelatedMatches && (
                     <button
                       type="button"
@@ -676,7 +673,6 @@ export default function Lookup({
                   >
                     {t("New search", "بحث جديد")}
                   </button>
-                </div>
               </div>
             )}
             {suggestionsOpen && !!filteredSuggestions.length && (
@@ -855,60 +851,19 @@ export default function Lookup({
                   </span>
                 </div>
                 <section className="selling-level-selector">
-                  <div className="selling-level-selector-head">
-                    <div>
-                      <span className="eyebrow">
-                        {t("SELECT SELLING LEVEL", "اختر مستوى البيع")}
-                      </span>
-                      <p>
-                        {t(
-                          "Base price options — not the final customer price",
-                          "خيارات السعر الأساسي — وليست السعر النهائي للعميل",
-                        )}
-                      </p>
-                    </div>
-                    <span className="pill">
-                      {visibleLevels(selected).length} {t("available", "متاح")}
-                    </span>
-                  </div>
-                  <div
-                    className="selling-levels"
-                    role="group"
-                    aria-label={t("Price option", "خيار السعر")}
-                  >
-                    {visibleLevels(selected).map((l) => (
-                      <button
-                        key={l.code}
-                        type="button"
-                        className={
-                          "selling-level" +
-                          (sellingLevel === l.code ? " selected" : "")
-                        }
-                        aria-pressed={sellingLevel === l.code}
-                        onClick={() => chooseLevel(l.code)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            chooseLevel(l.code);
-                          }
-                        }}
-                      >
-                        <span>
-                          {levelLabel(l.code, t)}{" "}
-                          {sellingLevel === l.code ? "✓" : ""}
-                        </span>
-                        {l.code ===
-                          (selected.defaultLevel ?? "END_CUSTOMER") && (
-                          <small>{t("Main price", "السعر الرئيسي")}</small>
-                        )}
-                        <strong>{l.masterExcl}</strong>
-                        <span>{t("Excl. VAT · SAR", "قبل الضريبة · ر.س")}</span>
-                        <small>
-                          {t("Incl. VAT", "شامل الضريبة")} {l.masterIncl}
-                        </small>
-                      </button>
-                    ))}
-                  </div>
+                  <label className="selling-level-select">
+                    <span>{t("SELLING LEVEL", "مستوى البيع")}</span>
+                    <select
+                      value={sellingLevel}
+                      onChange={(event) => chooseLevel(event.target.value)}
+                    >
+                      {visibleLevels(selected).map((level) => (
+                        <option key={level.code} value={level.code}>
+                          {levelLabel(level.code, t)} — SAR {level.masterExcl}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </section>
               </div>
               <div className="lookup-selected-side">
@@ -953,24 +908,16 @@ export default function Lookup({
                     {online
                       ? t(
                           previewOnly
-                            ? "FINAL CUSTOMER PRICE PREVIEW — VALIDATED ON ADD"
-                            : "FINAL CUSTOMER PRICE",
+                            ? "FINAL UNIT PRICE EXCL. VAT — VALIDATED ON ADD"
+                            : "FINAL UNIT PRICE EXCL. VAT",
                           previewOnly
-                            ? "معاينة السعر النهائي للعميل — يتم التحقق عند الإضافة"
-                            : "السعر النهائي للعميل",
-                        ) +
-                        " · " +
-                        levelLabel(sellingLevel, t)
+                            ? "معاينة سعر الوحدة النهائي قبل الضريبة — يتم التحقق عند الإضافة"
+                            : "سعر الوحدة النهائي قبل الضريبة",
+                        )
                       : t(
                           "OFFLINE ESTIMATE — NOT VALIDATED",
                           "تقدير دون اتصال — غير معتمد",
                         )}
-                  </div>
-                  <div className="customer-price-guidance">
-                    {t(
-                      "Customer-facing price — communicate this selected result",
-                      "سعر العميل — استخدم هذه النتيجة المحددة عند إبلاغ العميل",
-                    )}
                   </div>
                   {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
                     <p className="muted">
@@ -986,15 +933,19 @@ export default function Lookup({
                     )}
                   {displayPrice ? (
                     <>
-                      <div className="price-pair counter-prices">
-                        <div>
-                          <label>{t("Excl. VAT", "قبل الضريبة")}</label>
-                          <strong>{displayPrice.finalExcl}</strong>
-                        </div>
-                        <div>
-                          <label>{t("Incl. VAT", "شامل الضريبة")}</label>
-                          <strong>{displayPrice.finalIncl}</strong>
-                        </div>
+                      <div className="final-unit-price">
+                        <span>SAR</span>
+                        <strong>{displayPrice.finalExcl}</strong>
+                      </div>
+                      <div className="unit-price-details">
+                        <span>
+                          {t("VAT per unit", "ضريبة الوحدة")} {displayPrice.vatRate}%
+                          <b>SAR {unitVat}</b>
+                        </span>
+                        <span>
+                          {t("Unit incl. VAT", "الوحدة شاملة الضريبة")}
+                          <b>SAR {displayPrice.finalIncl}</b>
+                        </span>
                       </div>
                       {previewOnly && (
                         <p className="muted">
@@ -1028,17 +979,19 @@ export default function Lookup({
                           )}
                         </p>
                       )}
-                      <div className="line-summary">
+                      <div className="line-summary lookup-line-totals">
                         <span>
-                          {t("TOTAL EXCL. VAT", "الإجمالي قبل الضريبة")}{" "}
+                          {t("QUANTITY", "الكمية")}
+                          <b>
+                            {quantity} {selected.unit}
+                          </b>
+                        </span>
+                        <span>
+                          {t("LINE TOTAL EXCL. VAT", "إجمالي السطر قبل الضريبة")}{" "}
                           <b>SAR {displayPrice.subtotal}</b>
                         </span>
                         <span>
-                          VAT {displayPrice.vatRate}%{" "}
-                          <b>{displayPrice.vatAmount}</b>
-                        </span>
-                        <span>
-                          {t("TOTAL INCL. VAT", "الإجمالي شامل الضريبة")}{" "}
+                          {t("LINE TOTAL INCL. VAT", "إجمالي السطر شامل الضريبة")}{" "}
                           <b>SAR {displayPrice.total}</b>
                         </span>
                       </div>
@@ -1094,43 +1047,6 @@ export default function Lookup({
           </>
         )}
       </section>
-      {showAside && (
-        <aside className="lookup-aside">
-          <div className="eyebrow">
-            {t("BUILT FOR YOUR COUNTER", "مصمم لخدمة العملاء")}
-          </div>
-          <h2>
-            {t(
-              "Stay in one flow from search to draft.",
-              "ابق في مسار واحد من البحث إلى المسودة.",
-            )}
-          </h2>
-          <p>
-            {t(
-              "Pick a product on the left, then review customer details and quotation lines on the right without losing your place.",
-              "اختر الصنف من اليسار ثم راجع بيانات العميل وبنود عرض السعر من اليمين دون فقدان مكانك.",
-            )}
-          </p>
-          <ol>
-            <li>
-              {t(
-                "Search by part number, old code, or description",
-                "ابحث برقم الصنف أو الرمز القديم أو الوصف",
-              )}
-            </li>
-            <li>
-              {t("Choose the right selling level", "اختر مستوى البيع المناسب")}
-            </li>
-            <li>{t("Save the draft with confidence", "احفظ المسودة بثقة")}</li>
-          </ol>
-          <div className="aside-note">
-            {t(
-              "Server-side pricing still protects VAT, limits, and minimum-price rules before issuing the final quotation.",
-              "لا يزال التسعير على الخادم يحمي الضريبة والحدود وقواعد الحد الأدنى قبل إصدار عرض السعر النهائي.",
-            )}
-          </div>
-        </aside>
-      )}
       {requestDialogOpen && selected && displayPrice?.minimumReached && (
         <div className="modal-backdrop">
           <div className="modal">

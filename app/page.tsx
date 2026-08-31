@@ -461,7 +461,6 @@ export default function App() {
                   user={session.user}
                   settings={session.settings}
                   online={online}
-                  showAside
                   onAdd={(line) => {
                     setCart({ ...cart, lines: [...cart.lines, line] });
                     setMessage(
