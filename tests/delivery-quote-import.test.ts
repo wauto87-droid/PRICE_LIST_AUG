@@ -89,10 +89,10 @@ test("DNN Balance rows use Balance as quantity and exclude zero balances", async
     "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'1219 DNN.XLS','fixture','AWAITING_MAPPING',$2,$3)",
     [jobId, actor.id, json({ columns })],
   );
-  const raw = (balance: string) => ({
+  const raw = (balance: string, customer = "BASAHAL EST  FOR TRADING AND INDUSTRY") => ({
     Date: "2026-09-01",
     "Document No": "INV-99",
-    "Cust.Name": "ACME",
+    "Cust.Name": customer,
     "Item Code": "DNN-ITEM",
     "Item Name": "DNN item",
     Qty: "10",
@@ -109,7 +109,7 @@ test("DNN Balance rows use Balance as quantity and exclude zero balances", async
       jobId,
       json(raw("3")),
       zeroRowId,
-      json(raw("0")),
+      json(raw("0", "BASAHAL EST, FOR TRADING AND INDUSTRY")),
       negativeRowId,
       json(raw("-1")),
     ],
@@ -123,6 +123,8 @@ test("DNN Balance rows use Balance as quantity and exclude zero balances", async
   const negative = opened.rows.find((row: any) => row.id === negativeRowId);
   assert.equal(positive.line_input.quantity, "3");
   assert.equal(positive.line_input.importMeta.docNo, "DN-1219");
+  assert.equal(opened.header.customerCount, 1);
+  assert.equal(opened.summary.blockedReason, "");
   assert.equal(zero.action, "REMOVE");
   assert.equal(zero.issues.length, 0);
   assert.equal(negative.action, "ADD");

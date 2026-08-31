@@ -189,6 +189,20 @@ function uniqueNonBlank(values: string[]) {
   return [...seen.values()];
 }
 
+function uniqueCustomerNames(values: string[]) {
+  const seen = new Map<string, string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed
+      .toUpperCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+    if (!seen.has(key)) seen.set(key, trimmed);
+  }
+  return [...seen.values()];
+}
+
 async function productMatch(db: DB, partNumber: string) {
   const normalized = normalizePart(partNumber);
   return one(
@@ -313,7 +327,7 @@ async function loadJob(tx: DB, actor: Actor, id: string, forUpdate = false) {
 }
 
 function headerState(rows: any[]) {
-  const customers = uniqueNonBlank(rows.map((row) => row.customerName));
+  const customers = uniqueCustomerNames(rows.map((row) => row.customerName));
   const docNos = uniqueNonBlank(rows.map((row) => formatDeliveryDocNo(row.docNo)));
   const dates = uniqueNonBlank(rows.map((row) => formatDeliveryDate(row.docDate)));
   return {

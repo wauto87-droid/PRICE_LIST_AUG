@@ -45,6 +45,7 @@ export default function DeliveryQuoteImport({
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("all");
+  const [showCustomerColumn, setShowCustomerColumn] = useState(false);
   const [tab, setTab] = useState<"IMPORT" | "OUTPUTS" | "ADMIN">("OUTPUTS");
   const [outputFilters, setOutputFilters] = useState(defaultHistoryFilters);
   const [adminFilters, setAdminFilters] = useState(defaultHistoryFilters);
@@ -94,6 +95,7 @@ export default function DeliveryQuoteImport({
     );
     setJob(next);
     setFilter(nextFilter);
+    setShowCustomerColumn(false);
     const columns = next.summary?.columns || [];
     setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
     setSelected({});
@@ -134,12 +136,31 @@ export default function DeliveryQuoteImport({
     }
   }
 
+  async function applyMapping() {
+    const payload = {
+      version: job.version,
+      date: mapping.date,
+      docNo: mapping.docNo,
+      customerName: mapping.customerName,
+      partNumber: mapping.partNumber,
+      description: mapping.description,
+      quantity: mapping.quantity,
+      ...(mapping.price ? { price: mapping.price } : {}),
+    };
+    await api(`delivery-quote-imports/${job.id}/mapping`, "POST", payload);
+    await open(job.id);
+  }
+
   const selectedIds = Object.entries(selected)
     .filter(([, value]) => value)
     .map(([id]) => id);
   const isAdmin = user.permissions.includes("QUOTE_VIEW_ALL");
   const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
   const headerSummary = job?.header || job?.summary || {};
+  const conflictingCustomers = Array.isArray(headerSummary.customers)
+    ? headerSummary.customers
+    : [];
+  const hasCustomerConflict = conflictingCustomers.length > 1;
   const visibleRowIds = (job?.rows || []).map((row: any) => row.id);
   const allVisibleSelected =
     visibleRowIds.length > 0 && visibleRowIds.every((id: string) => selected[id]);
@@ -518,22 +539,7 @@ export default function DeliveryQuoteImport({
           <button
             className="primary"
             disabled={busy || !mapping.customerName || !mapping.partNumber || !mapping.description || !mapping.quantity || !mapping.docNo || !mapping.date}
-            onClick={() =>
-              void run(async () => {
-                const payload = {
-                  version: job.version,
-                  date: mapping.date,
-                  docNo: mapping.docNo,
-                  customerName: mapping.customerName,
-                  partNumber: mapping.partNumber,
-                  description: mapping.description,
-                  quantity: mapping.quantity,
-                  ...(mapping.price ? { price: mapping.price } : {}),
-                };
-                await api(`delivery-quote-imports/${job.id}/mapping`, "POST", payload);
-                await open(job.id);
-              })
-            }
+            onClick={() => void run(applyMapping)}
           >
             {t("Apply mapping", "تطبيق الربط")}
           </button>
@@ -548,7 +554,34 @@ export default function DeliveryQuoteImport({
                   "Review rows, remove anything unnecessary, complete custom rows, then create the quotation.",
                   "راجع الصفوف، احذف غير الضروري، أكمل الصفوف المخصصة، ثم أنشئ عرض السعر.",
                 )}
+            {job.summary?.blockedReason && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(applyMapping)}
+              >
+                {t("Refresh customer mapping", "تحديث ربط العميل")}
+              </button>
+            )}
           </div>
+          {hasCustomerConflict && (
+            <div className="notice">
+              <button
+                type="button"
+                onClick={() => setShowCustomerColumn((visible) => !visible)}
+                aria-expanded={showCustomerColumn}
+              >
+                {showCustomerColumn
+                  ? t("Hide customer names", "إخفاء أسماء العملاء")
+                  : t("Show customer names", "إظهار أسماء العملاء")}
+              </button>
+              {showCustomerColumn && (
+                <small>
+                  {t("Customers found", "العملاء الموجودون")}: {conflictingCustomers.join(" · ")}
+                </small>
+              )}
+            </div>
+          )}
           <div className="notice">
             {t(
               "Customer details will be added once in the quotation header. Review and complete the line rows below.",
@@ -691,6 +724,7 @@ export default function DeliveryQuoteImport({
                   </th>
                   <th>{t("Row", "الصف")}</th>
                   <th>{t("Date", "التاريخ")}</th>
+                  {showCustomerColumn && <th>{t("Customer", "العميل")}</th>}
                   <th>{t("Doc No", "رقم المستند")}</th>
                   <th>{t("Part / description", "الصنف / الوصف")}</th>
                   <th>{t("Qty", "الكمية")}</th>
@@ -720,6 +754,9 @@ export default function DeliveryQuoteImport({
                       </td>
                       <td>{row.row_number}</td>
                       <td>{formatDeliveryDate(row.doc_date ?? row.docDate ?? raw[job.mapping?.date]) || "—"}</td>
+                      {showCustomerColumn && (
+                        <td>{raw[job.mapping?.customerName] || "—"}</td>
+                      )}
                       <td>{formatDeliveryDocNo(row.doc_no ?? row.docNo ?? raw[job.mapping?.docNo]) || "—"}</td>
                       <td>
                         <strong>
