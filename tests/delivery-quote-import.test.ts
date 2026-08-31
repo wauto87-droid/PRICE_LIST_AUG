@@ -223,10 +223,14 @@ test("Delivery-note quotation import accepts files with no mapped price column",
   let opened: any = await get(db, actor, jobId);
   assert.equal(opened.status, "AWAITING_REVIEW");
   assert.equal(opened.mapping.price, undefined);
+  assert.equal(opened.mapping.date, "Date");
+  assert.equal(opened.mapping.docNo, "Doc.No");
   assert.equal(opened.summary.customerName, "ACME");
   assert.equal(opened.rows.length, 2);
   const matched = opened.rows.find((row: any) => row.resolution === "MATCHED_CATALOG");
   const custom = opened.rows.find((row: any) => row.id === customRowId);
+  assert.equal(matched.raw.Date, "2026-08-31");
+  assert.equal(matched.raw["Doc.No"], "DN-300");
   assert.equal(matched.completed, true);
   assert.equal(custom.completed, false);
   await reviewRows(db, actor, jobId, {

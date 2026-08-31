@@ -445,6 +445,8 @@ export default function DeliveryQuoteImport({
                     />
                   </th>
                   <th>{t("Row", "الصف")}</th>
+                  <th>{t("Date", "التاريخ")}</th>
+                  <th>{t("Doc No", "رقم المستند")}</th>
                   <th>{t("Part / description", "الصنف / الوصف")}</th>
                   <th>{t("Qty", "الكمية")}</th>
                   <th>{t("File price", "سعر الملف")}</th>
@@ -472,6 +474,8 @@ export default function DeliveryQuoteImport({
                         />
                       </td>
                       <td>{row.row_number}</td>
+                      <td>{raw[job.mapping?.date] || "—"}</td>
+                      <td>{raw[job.mapping?.docNo] || "—"}</td>
                       <td>
                         <strong>
                           {input.partNumber ||
