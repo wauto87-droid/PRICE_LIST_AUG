@@ -322,6 +322,39 @@ function headerState(rows: any[]) {
   };
 }
 
+function normalizeDeliveryHeader(header: any) {
+  const source = header && typeof header === "object" ? header : {};
+  return {
+    ...source,
+    customerName: String(source.customerName ?? "").trim(),
+    docNos: uniqueNonBlank(
+      (Array.isArray(source.docNos) ? source.docNos : []).map(
+        formatDeliveryDocNo,
+      ),
+    ),
+    dates: uniqueNonBlank(
+      (Array.isArray(source.dates) ? source.dates : []).map(
+        formatDeliveryDate,
+      ),
+    ),
+  };
+}
+
+function headerFromRows(rows: any[], mapping: any) {
+  return normalizeDeliveryHeader(
+    headerState(
+      rows.map((row) => {
+        const importMeta = row.line_input?.importMeta ?? {};
+        return {
+          customerName: String(row.raw?.[mapping?.customerName] ?? "").trim(),
+          docNo: importMeta.docNo ?? row.raw?.[mapping?.docNo],
+          docDate: importMeta.docDate ?? row.raw?.[mapping?.date],
+        };
+      }),
+    ),
+  );
+}
+
 function summarizeReview(rows: any[], header: any) {
   return {
     totalRows: rows.length,
@@ -343,14 +376,19 @@ function summarizeReview(rows: any[], header: any) {
 }
 
 function toQuoteCustomer(header: any) {
-  const reference = header.docNos.length
-    ? `Delivery notes: ${header.docNos.join(", ")}`
+  const normalized = normalizeDeliveryHeader(header);
+  const reference = normalized.docNos.length
+    ? `Delivery notes: ${normalized.docNos.join(", ")}`
     : "";
   const notesParts = [];
-  if (header.dates.length) notesParts.push(`Delivery dates: ${header.dates.join(", ")}`);
-  if (header.docNos.length) notesParts.push(`Imported from delivery notes: ${header.docNos.join(", ")}`);
+  if (normalized.dates.length)
+    notesParts.push(`Delivery dates: ${normalized.dates.join(", ")}`);
+  if (normalized.docNos.length)
+    notesParts.push(
+      `Imported from delivery notes: ${normalized.docNos.join(", ")}`,
+    );
   return {
-    name: header.customerName,
+    name: normalized.customerName,
     number: "",
     mobile: "",
     reference,
@@ -747,14 +785,16 @@ export async function finalize(
       return publicQuote(await getQuote(tx, actor, job.quote_id), actor);
     }
     assert(job.version === data.version, 409, "Import changed. Reload");
-    const header = job.header ?? {};
-    assert(!header.blockedReason, 409, String(header.blockedReason));
     const rows = (
       await tx.query(
         "SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
         [id],
       )
     ).rows;
+    const header = job.mapping
+      ? headerFromRows(rows, job.mapping)
+      : normalizeDeliveryHeader(job.header);
+    assert(!header.blockedReason, 409, String(header.blockedReason));
     const included = rows.filter((row) => row.action === "ADD");
     assert(included.length > 0, 400, "Select at least one row for the quotation");
     const quote = await saveDraft(

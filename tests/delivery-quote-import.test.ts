@@ -19,6 +19,7 @@ import {
   historyDateBounds,
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
+import { quotationHtml } from "../backend/pdf/template";
 
 test("Delivery-note quotation import maps rows, supports row actions, and finalizes into a quotation", async () => {
   const db = await embedded();
@@ -464,10 +465,40 @@ test("Delivery-note quotation import normalizes Excel serial dates and doc numbe
     completed: true,
   });
   opened = await get(db, actor, jobId);
+  await db.query(
+    "UPDATE delivery_quote_jobs SET header=$2 WHERE id=$1",
+    [
+      jobId,
+      json({
+        customerName: "IEC OHOD MAJID",
+        docNos: ["1586.0"],
+        dates: ["46264.478310185186"],
+        blockedReason: "",
+      }),
+    ],
+  );
   const quote: any = await finalize(db, actor, jobId, { version: opened.version });
   assert.equal(quote.lines.length, 1);
   assert.equal(quote.lines[0].importMeta.docNo, "1586");
   assert.equal(quote.lines[0].importMeta.docDate.startsWith("2026-08-3"), true);
+  assert.equal(quote.customer.reference, "Delivery notes: 1586");
+  assert.match(quote.customer.notes, /Delivery dates: 2026-08-3/);
+  assert.match(quote.customer.notes, /Imported from delivery notes: 1586/);
+  assert.doesNotMatch(quote.customer.notes, /46264\.478310185186|1586\.0/);
+  const html = quotationHtml(
+    quote,
+    {
+      companyName: "AMT",
+      companyArabic: "",
+      currency: "SAR",
+      pdfUnitPrices: "BOTH",
+      quotation: {},
+    },
+    "",
+  );
+  assert.match(html, /Delivery dates: 2026-08-3/);
+  assert.match(html, /Imported from delivery notes: 1586/);
+  assert.doesNotMatch(html, /46264\.478310185186|1586\.0/);
   await db.close?.();
 });
 
