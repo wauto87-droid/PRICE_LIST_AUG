@@ -206,9 +206,14 @@ export default function App() {
     });
     setTab("draft");
   }
+  const compactWorkspace = !!session && tab === "workspace";
   return (
     <>
-      <header className="app-header">
+      <header
+        className={
+          "app-header" + (compactWorkspace ? " workspace-compact-header" : "")
+        }
+      >
         <a
           className="brand"
           href={appPath("/")}
@@ -402,7 +407,9 @@ export default function App() {
       ) : (
         <>
           <nav
-            className="main-nav"
+            className={
+              "main-nav" + (compactWorkspace ? " workspace-compact-nav" : "")
+            }
             aria-label={t("Main navigation", "التنقل الرئيسي")}
           >
             {[
@@ -429,8 +436,13 @@ export default function App() {
               {t("PRICE ACCURACY. EVERY TIME.", "دقة الأسعار في كل مرة.")}
             </div>
           </nav>
-          <main>
-            <div className="page-heading">
+          <main className={compactWorkspace ? "workspace-compact-main" : ""}>
+            <div
+              className={
+                "page-heading" +
+                (compactWorkspace ? " workspace-compact-heading" : "")
+              }
+            >
               <div>
                 <p className="eyebrow">
                   {t("YOUR COUNTER, CONNECTED", "مكتب مبيعاتك المتصل")}
@@ -572,7 +584,12 @@ export default function App() {
         </div>
       )}
       <ConfirmModal t={t} />
-      <footer className="app-footer">
+      <footer
+        className={
+          "app-footer" +
+          (compactWorkspace ? " workspace-compact-footer" : "")
+        }
+      >
         <span>AMT ELECTRIC</span>
         <span>
           {t("Price List & Quotations", "قائمة الأسعار وعروض الأسعار")} ·{" "}

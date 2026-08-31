@@ -2208,6 +2208,188 @@ fieldset label {
   font-weight: bold;
   letter-spacing: 1.8px;
 }
+@media (min-width: 701px) {
+  .workspace-compact-header {
+    height: 64px;
+    border-top-width: 3px;
+  }
+  .workspace-compact-header .brand {
+    gap: 10px;
+  }
+  .workspace-compact-header .brand img {
+    width: 42px;
+    height: 48px;
+  }
+  .workspace-compact-header .brand strong {
+    font-size: 17px;
+    letter-spacing: 1.4px;
+  }
+  .workspace-compact-header .brand small {
+    font-size: 7px;
+    letter-spacing: 1.3px;
+  }
+  .workspace-compact-header .header-actions {
+    gap: 12px;
+  }
+  .workspace-compact-header .install-button,
+  .workspace-compact-header .language {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+  .workspace-compact-header .user-name {
+    padding-inline-start: 12px;
+    font-size: 11px;
+  }
+  .workspace-compact-nav,
+  .workspace-compact-nav button {
+    height: 48px;
+  }
+  .workspace-compact-nav {
+    gap: 27px;
+  }
+  .workspace-compact-nav button {
+    font-size: 12px;
+  }
+  .workspace-compact-main {
+    min-height: calc(100vh - 143px);
+    padding-top: 9px;
+    padding-bottom: 10px;
+  }
+  .workspace-compact-heading {
+    margin-bottom: 7px;
+    min-height: 24px;
+  }
+  .workspace-compact-heading .eyebrow,
+  .workspace-compact-heading .currency-tag {
+    display: none;
+  }
+  .workspace-compact-heading h1 {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.2;
+  }
+  .workspace-compact-footer {
+    min-height: 31px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+    font-size: 8px;
+  }
+  .workspace-compact-main .lookup-card {
+    padding: 13px 20px;
+    border-radius: 15px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .custom-line-entry {
+    margin-bottom: 7px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .custom-line-toggle {
+    min-height: 30px;
+    padding: 5px 11px;
+    font-size: 11px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .lookup-search-panel {
+    gap: 6px;
+    margin-bottom: 7px;
+  }
+  .workspace-compact-main
+    .lookup-card.has-selection
+    .lookup-search-panel
+    > .eyebrow,
+  .workspace-compact-main .lookup-card.has-selection .lookup-title-row,
+  .workspace-compact-main .lookup-card.has-selection .lookup-search-meta {
+    display: none;
+  }
+  .workspace-compact-main .lookup-card.has-selection .lookup-search-stack {
+    gap: 5px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .search-box input {
+    padding: 10px 0;
+    font-size: 15px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .search-box > span {
+    font-size: 22px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .lookup-selected-actions {
+    min-height: 18px;
+  }
+  .workspace-compact-main .lookup-card.has-selection .lookup-selected-actions button {
+    padding-block: 1px;
+    font-size: 11px;
+  }
+  .workspace-compact-main .lookup-selected-workspace,
+  .workspace-compact-main .lookup-selected-main,
+  .workspace-compact-main .lookup-selected-side {
+    gap: 8px;
+  }
+  .workspace-compact-main .product-heading {
+    margin: 2px 0 5px;
+  }
+  .workspace-compact-main .product-heading h2 {
+    font-size: 20px;
+  }
+  .workspace-compact-main .product-heading p {
+    margin: 0;
+    font-size: 11px;
+  }
+  .workspace-compact-main .selling-level-select {
+    gap: 4px;
+  }
+  .workspace-compact-main .selling-level-select select {
+    min-height: 42px;
+    padding-block: 7px;
+    font-size: 14px;
+  }
+  .workspace-compact-main .lookup-compact-fields {
+    gap: 10px;
+  }
+  .workspace-compact-main .lookup-compact-fields label {
+    gap: 4px;
+  }
+  .workspace-compact-main .lookup-compact-fields input {
+    height: 42px;
+    min-height: 42px;
+    padding-block: 7px;
+    font-size: 17px;
+  }
+  .workspace-compact-main .lookup-final-price-compact {
+    padding: 9px 14px;
+  }
+  .workspace-compact-main .lookup-final-price-compact > .eyebrow {
+    margin-bottom: 4px;
+    font-size: 9px;
+  }
+  .workspace-compact-main .lookup-final-price-compact > p {
+    margin: 3px 0;
+    font-size: 10px;
+  }
+  .workspace-compact-main .final-unit-price {
+    padding: 1px 0 6px;
+  }
+  .workspace-compact-main .final-unit-price strong {
+    font-size: 42px;
+  }
+  .workspace-compact-main .unit-price-details {
+    gap: 20px;
+    font-size: 10px;
+  }
+  .workspace-compact-main .unit-price-details b {
+    font-size: 12px;
+  }
+  .workspace-compact-main .lookup-line-totals {
+    margin-top: 7px;
+    padding-top: 7px;
+  }
+  .workspace-compact-main .lookup-line-totals b {
+    font-size: 12px;
+  }
+  .workspace-compact-main .lookup-action-row {
+    gap: 5px;
+  }
+  .workspace-compact-main .add-button {
+    min-height: 40px;
+    font-size: 13px;
+  }
+}
 .toast {
   position: fixed;
   bottom: 30px;

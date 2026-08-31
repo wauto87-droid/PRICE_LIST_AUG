@@ -481,7 +481,9 @@ export default function Lookup({
     : "";
   return (
     <div className="lookup-layout lookup-compact">
-      <section className="card lookup-card">
+      <section
+        className={"card lookup-card" + (selected ? " has-selection" : "")}
+      >
         <CustomLineForm
           t={t}
           vat={String(settings.vat)}
