@@ -321,3 +321,85 @@ test("Delivery-note quotation import blocks finalize when customer names are mix
   );
   await db.close?.();
 });
+
+test("Delivery-note quotation import preserves per-row updates and defaults empty price to 0", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-quote-bulk-update-token-123456";
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin",
+    password: "abcd",
+    name: "Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  const jobId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'bulk.xlsx','fixture','AWAITING_MAPPING',$2,$3)",
+    [jobId, actor.id, json({ columns: ["Date", "Doc", "Customer", "Item", "Description", "Qty"] })],
+  );
+  const row1Id = randomUUID();
+  const row2Id = randomUUID();
+  const row3Id = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$5,2,$6),($7,$8,3,$9)",
+    [
+      row1Id,
+      jobId,
+      json({ Date: "2026-08-31", Doc: "DN-101", Customer: "ACME", Item: "CUSTOM-A", Description: "Desc A", Qty: "2" }),
+      row2Id,
+      jobId,
+      json({ Date: "2026-08-31", Doc: "DN-101", Customer: "ACME", Item: "CUSTOM-B", Description: "Desc B", Qty: "3" }),
+      row3Id,
+      jobId,
+      json({ Date: "2026-08-31", Doc: "DN-101", Customer: "ACME", Item: "CUSTOM-C", Description: "Desc C", Qty: "4" }),
+    ],
+  );
+  await mapRows(db, actor, jobId, {
+    version: 1,
+    date: "Date",
+    docNo: "Doc",
+    customerName: "Customer",
+    partNumber: "Item",
+    description: "Description",
+    quantity: "Qty",
+  });
+  let opened: any = await get(db, actor, jobId);
+  assert.equal(opened.rows.length, 3);
+  // Bulk update prices and mark complete: row1 has 12, row2 has 11, row3 is empty (should default to 0)
+  await reviewRows(db, actor, jobId, {
+    version: opened.version,
+    rowIds: [row1Id, row2Id, row3Id],
+    completed: true,
+    rowUpdates: {
+      [row1Id]: { unitPriceExcl: "12", quantity: "2" },
+      [row2Id]: { unitPriceExcl: "11", quantity: "3" },
+      [row3Id]: { unitPriceExcl: "", quantity: "4" },
+    },
+  });
+  opened = await get(db, actor, jobId);
+  const r1 = opened.rows.find((r: any) => r.id === row1Id);
+  const r2 = opened.rows.find((r: any) => r.id === row2Id);
+  const r3 = opened.rows.find((r: any) => r.id === row3Id);
+  assert.equal(r1.line_input.unitPriceExcl, "12");
+  assert.equal(r1.completed, true);
+  assert.equal(r2.line_input.unitPriceExcl, "11");
+  assert.equal(r2.completed, true);
+  assert.equal(r3.line_input.unitPriceExcl, "0");
+  assert.equal(r3.completed, true);
+
+  const quote: any = await finalize(db, actor, jobId, { version: opened.version });
+  assert.equal(quote.lines.length, 3);
+  assert.equal(quote.lines[0].price.finalExcl, "12.00");
+  assert.equal(quote.lines[1].price.finalExcl, "11.00");
+  assert.equal(quote.lines[2].price.finalExcl, "0.00");
+  await db.close?.();
+});
+

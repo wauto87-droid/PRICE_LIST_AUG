@@ -55,6 +55,7 @@ export const lineInput = z
     discount: percent.default("0"),
     override: z.boolean().default(false),
     reason: z.string().trim().max(500).default(""),
+    importMeta: z.any().optional(),
   })
   .strict();
 export type LineInput = z.infer<typeof lineInput>;
@@ -69,6 +70,7 @@ export const customLineInput = z
     discount: percent.default("0"),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
+    importMeta: z.any().optional(),
   })
   .strict();
 export type CustomLineInput = z.infer<typeof customLineInput>;

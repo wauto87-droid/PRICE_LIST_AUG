@@ -32,22 +32,24 @@ const mappingSchema = z
   })
   .strict();
 
+const rowUpdateItemSchema = z
+  .object({
+    quantity: z.string().optional(),
+    description: z.string().optional(),
+    unitPriceExcl: z.string().optional(),
+    discount: z.string().optional(),
+    sellingLevel: z.enum(["WHOLESALE", "RETAIL", "END_CUSTOMER"]).optional(),
+  })
+  .strict();
+
 const reviewSchema = z
   .object({
     version: z.coerce.number().int(),
     rowIds: z.array(z.string().uuid()).min(1).max(500),
     action: z.enum(["ADD", "REMOVE", "RESTORE"]).optional(),
     completed: z.boolean().optional(),
-    updates: z
-      .object({
-        quantity: z.string().optional(),
-        description: z.string().optional(),
-        unitPriceExcl: z.string().optional(),
-        discount: z.string().optional(),
-        sellingLevel: z.enum(["WHOLESALE", "RETAIL", "END_CUSTOMER"]).optional(),
-      })
-      .strict()
-      .optional(),
+    updates: rowUpdateItemSchema.optional(),
+    rowUpdates: z.record(z.string().uuid(), rowUpdateItemSchema).optional(),
   })
   .strict();
 
@@ -160,24 +162,26 @@ async function stageRow(
       };
     } else {
       resolution = "UNMATCHED_CUSTOM";
+      const hasValidPrice = moneyPattern.test(sourcePrice);
       lineInput = {
         type: "CUSTOM",
         partNumber,
         description,
         unit: "pcs",
         quantity,
-        unitPriceExcl: moneyPattern.test(sourcePrice) ? sourcePrice : "",
+        unitPriceExcl: hasValidPrice ? sourcePrice : "0",
         discount: "0",
         importMeta: {
           ...importMeta,
-          unresolved: !moneyPattern.test(sourcePrice),
+          unresolved: !hasValidPrice,
         },
       };
     }
   }
   const completed =
     issues.length === 0 &&
-    (resolution === "MATCHED_CATALOG" || resolution === "UNMATCHED_CUSTOM");
+    (resolution === "MATCHED_CATALOG" ||
+      (resolution === "UNMATCHED_CUSTOM" && moneyPattern.test(sourcePrice)));
   return {
     customerName,
     docNo,
@@ -413,49 +417,13 @@ export async function mapRows(
       summaryRows,
       header,
     );
-    if (header.blockedReason) {
-      await tx.query(
-        `UPDATE delivery_quote_jobs
-         SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,error=NULL,version=version+1,updated_at=now()
-         WHERE id=$1`,
-        [id, json(mapping), json(header), json(summary)],
-      );
-      return { ok: true, blocked: true };
-    }
-    const quote = await saveDraft(
-      tx,
-      actor,
-      {
-        customer: toQuoteCustomer(header),
-        lines: summaryRows
-          .filter((row) => row.action === "ADD")
-          .map((row) => ({
-            ...row.lineInput,
-            importMeta: {
-              ...(row.lineInput.importMeta ?? {}),
-              rowId: row.id,
-              rowNumber: row.row_number,
-            },
-          })),
-      },
-      {},
-    );
     await tx.query(
       `UPDATE delivery_quote_jobs
-       SET status='COMPLETED',mapping=$2,header=$3,summary=$4,error=NULL,quote_id=$5,version=version+1,updated_at=now()
+       SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,error=NULL,version=version+1,updated_at=now()
        WHERE id=$1`,
-      [id, json(mapping), json(header), json(summary), quote.id],
+      [id, json(mapping), json(header), json(summary)],
     );
-    await audit(
-      tx,
-      actor.id,
-      "DELIVERY_QUOTE_FINALIZE",
-      "delivery_quote_jobs",
-      id,
-      null,
-      { quoteId: quote.id },
-    );
-    return { ok: true, quote };
+    return { ok: true, blocked: !!header.blockedReason };
   });
 }
 
@@ -485,24 +453,56 @@ export async function reviewRows(
     assert(rows.length === data.rowIds.length, 404, "One or more rows were not found");
     for (const row of rows) {
       let nextInput = { ...(row.line_input ?? {}) };
-      if (data.updates) nextInput = { ...nextInput, ...data.updates };
-      let issues = Array.isArray(row.issues) ? [...row.issues] : [];
+      const rowUpdate =
+        (data.rowUpdates && data.rowUpdates[row.id]) || data.updates;
+      if (rowUpdate) {
+        if (rowUpdate.quantity !== undefined) {
+          nextInput.quantity = String(rowUpdate.quantity).trim();
+        }
+        if (rowUpdate.description !== undefined) {
+          nextInput.description = String(rowUpdate.description).trim();
+        }
+        if (rowUpdate.discount !== undefined) {
+          nextInput.discount = String(rowUpdate.discount).trim();
+        }
+        if (rowUpdate.sellingLevel !== undefined) {
+          nextInput.sellingLevel = rowUpdate.sellingLevel;
+        }
+        if (rowUpdate.unitPriceExcl !== undefined) {
+          const rawPrice = String(rowUpdate.unitPriceExcl).trim();
+          nextInput.unitPriceExcl = rawPrice === "" ? "0" : rawPrice;
+        }
+      }
+      let issues: string[] = [];
       let completed = row.completed;
       try {
         if (row.resolution === "MATCHED_CATALOG") {
-          const parsed = lineInput.parse(nextInput);
-          nextInput = parsed;
+          const parsed = lineInput.passthrough().parse(nextInput);
+          nextInput = { ...nextInput, ...parsed };
           issues = [];
         } else if (row.resolution === "UNMATCHED_CUSTOM") {
-          const parsed = customLineInput.parse(nextInput);
-          nextInput = parsed;
+          if (
+            nextInput.unitPriceExcl === undefined ||
+            nextInput.unitPriceExcl === null ||
+            String(nextInput.unitPriceExcl).trim() === ""
+          ) {
+            nextInput.unitPriceExcl = "0";
+          } else {
+            nextInput.unitPriceExcl = String(nextInput.unitPriceExcl).trim();
+          }
+          const parsed = customLineInput.passthrough().parse(nextInput);
+          nextInput = { ...nextInput, ...parsed };
           issues = [];
         }
       } catch (error) {
         issues = [friendlyIssue(error)];
       }
       if (data.action === "REMOVE") completed = false;
-      else if (data.completed !== undefined || data.action === "RESTORE" || data.action === "ADD")
+      else if (
+        data.completed !== undefined ||
+        data.action === "RESTORE" ||
+        data.action === "ADD"
+      )
         completed = issues.length === 0;
       else if (issues.length) completed = false;
       await tx.query(

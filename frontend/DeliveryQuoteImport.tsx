@@ -93,6 +93,19 @@ export default function DeliveryQuoteImport({
       for (const id of visibleRowIds) next[id] = checked;
       return next;
     });
+  const getRowUpdates = (ids?: string[]) => {
+    const targetIds = ids && ids.length ? ids : (job?.rows || []).map((r: any) => r.id);
+    const rowUpdates: Record<string, { quantity?: string; unitPriceExcl?: string }> = {};
+    for (const r of job?.rows || []) {
+      if (targetIds.includes(r.id)) {
+        rowUpdates[r.id] = {
+          quantity: r.line_input?.quantity !== undefined ? String(r.line_input.quantity) : undefined,
+          unitPriceExcl: r.line_input?.unitPriceExcl !== undefined ? String(r.line_input.unitPriceExcl) : undefined,
+        };
+      }
+    }
+    return rowUpdates;
+  };
   const resolutionLabel = (resolution: string) =>
     resolution === "MATCHED_CATALOG"
       ? t("Catalog item", "صنف من الكتالوج")
@@ -374,6 +387,7 @@ export default function DeliveryQuoteImport({
                     version: job.version,
                     rowIds: selectedIds,
                     action: "REMOVE",
+                    rowUpdates: getRowUpdates(),
                   });
                   await open(job.id, filter);
                 })
@@ -389,6 +403,7 @@ export default function DeliveryQuoteImport({
                     version: job.version,
                     rowIds: selectedIds,
                     action: "RESTORE",
+                    rowUpdates: getRowUpdates(),
                   });
                   await open(job.id, filter);
                 })
@@ -404,6 +419,7 @@ export default function DeliveryQuoteImport({
                     version: job.version,
                     rowIds: selectedIds,
                     completed: true,
+                    rowUpdates: getRowUpdates(),
                   });
                   await open(job.id, filter);
                 })
@@ -412,14 +428,41 @@ export default function DeliveryQuoteImport({
               {t("Mark complete", "تحديد كمكتمل")}
             </button>
             <button
+              disabled={busy || !job?.rows?.length}
+              onClick={() =>
+                void run(async () => {
+                  const allIds = (job?.rows || []).map((r: any) => r.id);
+                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                    version: job.version,
+                    rowIds: allIds,
+                    rowUpdates: getRowUpdates(),
+                  });
+                  await open(job.id, filter);
+                })
+              }
+            >
+              {t("Save changes", "حفظ التغييرات")}
+            </button>
+            <button
               className="primary"
               disabled={busy}
               onClick={() =>
                 void run(async () => {
+                  const allIds = (job?.rows || []).map((r: any) => r.id);
+                  if (allIds.length) {
+                    await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                      version: job.version,
+                      rowIds: allIds,
+                      rowUpdates: getRowUpdates(),
+                    });
+                  }
+                  const refreshed: any = await api(
+                    `delivery-quote-imports/${job.id}?page=0&pageSize=100&filter=${encodeURIComponent(filter)}`,
+                  );
                   const quote = await api(
                     `delivery-quote-imports/${job.id}/finalize`,
                     "POST",
-                    { version: job.version },
+                    { version: refreshed.version },
                   );
                   onImported(quote);
                   await open(job.id, filter);
@@ -536,7 +579,7 @@ export default function DeliveryQuoteImport({
                             }}
                             placeholder={
                               row.resolution === "UNMATCHED_CUSTOM"
-                                ? t("Enter price", "أدخل السعر")
+                                ? t("Enter price (or 0)", "أدخل السعر (أو 0)")
                                 : t("Uses catalog price", "يستخدم سعر الكتالوج")
                             }
                           />
@@ -565,13 +608,7 @@ export default function DeliveryQuoteImport({
                                   version: job.version,
                                   rowIds: [row.id],
                                   completed: true,
-                                  updates: {
-                                    quantity: job.rows.find((item: any) => item.id === row.id)
-                                      ?.line_input?.quantity,
-                                    unitPriceExcl:
-                                      job.rows.find((item: any) => item.id === row.id)
-                                        ?.line_input?.unitPriceExcl,
-                                  },
+                                  rowUpdates: getRowUpdates(),
                                 });
                                 await open(job.id, filter);
                               })
@@ -586,6 +623,7 @@ export default function DeliveryQuoteImport({
                                   version: job.version,
                                   rowIds: [row.id],
                                   action: row.action === "REMOVE" ? "RESTORE" : "REMOVE",
+                                  rowUpdates: getRowUpdates(),
                                 });
                                 await open(job.id, filter);
                               })
