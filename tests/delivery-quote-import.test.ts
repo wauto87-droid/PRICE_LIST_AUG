@@ -20,6 +20,115 @@ import {
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
 import { quotationHtml } from "../backend/pdf/template";
+import { deliveryQuoteMappingDefaults } from "../frontend/delivery-quote-mapping";
+
+test("DNN delivery-note headers map Balance as the quotation quantity", () => {
+  assert.deepEqual(
+    deliveryQuoteMappingDefaults([
+      "Date",
+      "Document No",
+      "Cust.Name",
+      "Item Code",
+      "Item Name",
+      "Unit",
+      "Qty",
+      "Invoiced",
+      "Invoice Returned",
+      "Delivery Returned",
+      "Balance",
+      "Delivery no.",
+    ]),
+    {
+      date: "Date",
+      docNo: "Delivery no.",
+      customerName: "Cust.Name",
+      partNumber: "Item Code",
+      description: "Item Name",
+      quantity: "Balance",
+      price: "",
+    },
+  );
+});
+
+test("DNN Balance rows use Balance as quantity and exclude zero balances", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-quote-dnn-balance-token-123456";
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin",
+    password: "abcd",
+    name: "Admin",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+  const jobId = randomUUID();
+  const rowId = randomUUID();
+  const zeroRowId = randomUUID();
+  const negativeRowId = randomUUID();
+  const columns = [
+    "Date",
+    "Document No",
+    "Cust.Name",
+    "Item Code",
+    "Item Name",
+    "Qty",
+    "Invoiced",
+    "Invoice Returned",
+    "Delivery Returned",
+    "Balance",
+    "Delivery no.",
+  ];
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'1219 DNN.XLS','fixture','AWAITING_MAPPING',$2,$3)",
+    [jobId, actor.id, json({ columns })],
+  );
+  const raw = (balance: string) => ({
+    Date: "2026-09-01",
+    "Document No": "INV-99",
+    "Cust.Name": "ACME",
+    "Item Code": "DNN-ITEM",
+    "Item Name": "DNN item",
+    Qty: "10",
+    Invoiced: "8",
+    "Invoice Returned": "2",
+    "Delivery Returned": "1",
+    Balance: balance,
+    "Delivery no.": "DN-1219",
+  });
+  await db.query(
+    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5),($6,$2,3,$7)",
+    [
+      rowId,
+      jobId,
+      json(raw("3")),
+      zeroRowId,
+      json(raw("0")),
+      negativeRowId,
+      json(raw("-1")),
+    ],
+  );
+  const mapping = deliveryQuoteMappingDefaults(columns);
+  const { price: _price, ...requiredMapping } = mapping;
+  await mapRows(db, actor, jobId, { version: 1, ...requiredMapping });
+  const opened: any = await get(db, actor, jobId);
+  const positive = opened.rows.find((row: any) => row.id === rowId);
+  const zero = opened.rows.find((row: any) => row.id === zeroRowId);
+  const negative = opened.rows.find((row: any) => row.id === negativeRowId);
+  assert.equal(positive.line_input.quantity, "3");
+  assert.equal(positive.line_input.importMeta.docNo, "DN-1219");
+  assert.equal(zero.action, "REMOVE");
+  assert.equal(zero.issues.length, 0);
+  assert.equal(negative.action, "ADD");
+  assert.match(negative.issues.join(" "), /Quantity must be a positive number/);
+  await db.close?.();
+});
 
 test("Delivery-note quotation import maps rows, supports row actions, and finalizes into a quotation", async () => {
   const db = await embedded();

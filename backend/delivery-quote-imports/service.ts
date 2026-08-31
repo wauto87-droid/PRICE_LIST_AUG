@@ -224,11 +224,16 @@ async function stageRow(
     ? normalizeMappedValue("listPrice", raw[mapping.price])
     : "";
   const issues: string[] = [];
+  const zeroBalance =
+    mapping.quantity.toLowerCase().replace(/[^a-z0-9]/g, "") === "balance" &&
+    quantityPattern.test(quantity) &&
+    quantity === "0";
   if (!customerName) issues.push("Customer name is blank");
-  if (!partNumber) issues.push("Part number is blank");
-  if (!description) issues.push("Description is blank");
-  if (!quantityPattern.test(quantity) || quantity === "0")
+  if (!zeroBalance && !partNumber) issues.push("Part number is blank");
+  if (!zeroBalance && !description) issues.push("Description is blank");
+  if (!quantityPattern.test(quantity))
     issues.push("Quantity must be a positive number");
+  const action: "ADD" | "REMOVE" = zeroBalance ? "REMOVE" : "ADD";
   let resolution: "MATCHED_CATALOG" | "UNMATCHED_CUSTOM" | "BLOCKED" =
     "BLOCKED";
   let productId: string | null = null;
@@ -239,7 +244,7 @@ async function stageRow(
     docDate,
     unresolved: false,
   };
-  if (!issues.length && partNumber) {
+  if (!issues.length && action === "ADD" && partNumber) {
     const matched = await productMatch(db, partNumber);
     if (matched) {
       const row = await getProduct(db, matched.id);
@@ -274,9 +279,10 @@ async function stageRow(
     }
   }
   const completed =
-    issues.length === 0 &&
-    (resolution === "MATCHED_CATALOG" ||
-      (resolution === "UNMATCHED_CUSTOM" && moneyPattern.test(sourcePrice)));
+    action === "REMOVE" ||
+    (issues.length === 0 &&
+      (resolution === "MATCHED_CATALOG" ||
+        (resolution === "UNMATCHED_CUSTOM" && moneyPattern.test(sourcePrice))));
   return {
     customerName,
     docNo,
@@ -287,6 +293,7 @@ async function stageRow(
     sourcePrice,
     productId,
     resolution,
+    action,
     lineInput,
     issues,
     completed,
@@ -622,11 +629,12 @@ export async function mapRows(
       staged.push(next);
       await tx.query(
         `UPDATE delivery_quote_rows
-         SET resolution=$2,action='ADD',completed=$3,issues=$4,line_input=$5,source_price=$6,product_id=$7
+         SET resolution=$2,action=$3,completed=$4,issues=$5,line_input=$6,source_price=$7,product_id=$8
          WHERE id=$1`,
         [
           row.id,
           next.resolution,
+          next.action,
           next.completed,
           json(next.issues),
           json(next.lineInput),
@@ -639,7 +647,6 @@ export async function mapRows(
     const summaryRows = rows.map((row, index) => ({
       ...row,
       ...staged[index],
-      action: "ADD",
     }));
     const summary = summarizeReview(
       summaryRows,

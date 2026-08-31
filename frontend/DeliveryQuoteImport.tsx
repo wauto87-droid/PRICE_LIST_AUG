@@ -5,11 +5,7 @@ import {
   formatDeliveryDocNo,
   formatDeliveryDate,
 } from "@/backend/pricing/normalize";
-
-const autoMap = (columns: string[], names: string[]) =>
-  columns.find((column) =>
-    names.includes(column.toLowerCase().replace(/[^a-z0-9]/g, "")),
-  ) || "";
+import { deliveryQuoteMappingDefaults } from "./delivery-quote-mapping";
 
 type HistoryScope = "converted" | "admin";
 type HistoryFilters = {
@@ -99,18 +95,7 @@ export default function DeliveryQuoteImport({
     setJob(next);
     setFilter(nextFilter);
     const columns = next.summary?.columns || [];
-    setMapping({
-      date: next.mapping?.date || autoMap(columns, ["date", "docdate"]),
-      docNo: next.mapping?.docNo || autoMap(columns, ["docno", "deliveryno", "documentno"]),
-      customerName:
-        next.mapping?.customerName || autoMap(columns, ["customername", "customer", "partyname"]),
-      partNumber:
-        next.mapping?.partNumber || autoMap(columns, ["item", "partnumber", "partreference", "itemcode"]),
-      description:
-        next.mapping?.description || autoMap(columns, ["description", "desc", "itemdescription"]),
-      quantity: next.mapping?.quantity || autoMap(columns, ["qty", "quantity"]),
-      price: next.mapping?.price || autoMap(columns, ["price", "unitprice", "rate", "amount"]),
-    });
+    setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
     setSelected({});
   };
 
