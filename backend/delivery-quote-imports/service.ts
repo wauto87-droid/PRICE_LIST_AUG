@@ -572,17 +572,43 @@ export async function finalize(
       actor,
       {
         customer: toQuoteCustomer(header),
-        lines: included.map((row) => ({
-          ...row.line_input,
-          importMeta: {
-            ...(row.line_input?.importMeta ?? {}),
+        lines: included.map((row) => {
+          const baseInput = row.line_input || {};
+          const importMeta = {
+            source: "DELIVERY_NOTE" as const,
+            ...(baseInput.importMeta ?? {}),
             rowId: row.id,
             rowNumber: row.row_number,
             docNo: row.doc_no ?? row.docNo ?? row.raw?.[job.mapping?.docNo] ?? "",
             docDate:
               row.doc_date ?? row.docDate ?? row.raw?.[job.mapping?.date] ?? "",
-          },
-        })),
+            unresolved: false,
+          };
+          if (row.resolution === "MATCHED_CATALOG" || baseInput.productId) {
+            return {
+              type: "CATALOG" as const,
+              productId: baseInput.productId || row.product_id,
+              sellingLevel: baseInput.sellingLevel ?? "END_CUSTOMER",
+              quantity: String(baseInput.quantity ?? "1").trim(),
+              discount: String(baseInput.discount ?? "0").trim(),
+              override: Boolean(baseInput.override),
+              reason: String(baseInput.reason ?? "").trim(),
+              importMeta,
+            };
+          }
+          return {
+            type: "CUSTOM" as const,
+            partNumber: String(baseInput.partNumber || row.raw?.[job.mapping?.partNumber] || "").trim(),
+            description: String(baseInput.description || row.raw?.[job.mapping?.description] || "").trim(),
+            unit: String(baseInput.unit || "pcs").trim() || "pcs",
+            quantity: String(baseInput.quantity ?? "1").trim(),
+            unitPriceExcl: String(baseInput.unitPriceExcl ?? "0").trim() || "0",
+            discount: String(baseInput.discount ?? "0").trim(),
+            vat: baseInput.vat !== undefined ? String(baseInput.vat).trim() : undefined,
+            reusableItemId: baseInput.reusableItemId,
+            importMeta,
+          };
+        }),
       },
       {},
     );

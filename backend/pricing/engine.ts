@@ -1,9 +1,17 @@
 import Decimal from "decimal.js";
 import { z } from "zod";
 Decimal.set({ precision: 32, rounding: Decimal.ROUND_HALF_UP });
-export const decimal = z
-  .string()
-  .regex(/^\d{1,12}(\.\d{1,6})?$/, "Use a positive decimal, without commas");
+export const decimal = z.preprocess(
+  (v) =>
+    typeof v === "number"
+      ? String(v)
+      : typeof v === "string"
+        ? v.trim()
+        : v,
+  z
+    .string()
+    .regex(/^\d{1,12}(\.\d{1,6})?$/, "Use a positive decimal, without commas"),
+);
 export const percent = decimal.refine(
   (v) => new Decimal(v).lte(100),
   "Maximum is 100%",

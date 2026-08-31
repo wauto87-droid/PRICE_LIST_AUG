@@ -25,14 +25,14 @@ import {
 } from "../pricing/engine";
 const deliveryImportMeta = z
   .object({
-    source: z.literal("DELIVERY_NOTE"),
+    source: z.literal("DELIVERY_NOTE").default("DELIVERY_NOTE"),
     rowId: z.string().uuid().optional(),
     rowNumber: z.coerce.number().int().positive().optional(),
     docNo: z.string().max(200).default(""),
     docDate: z.string().max(100).default(""),
     unresolved: z.boolean().default(false),
   })
-  .strict();
+  .passthrough();
 
 const catalogLineInput = lineInput.extend({
   type: z.literal("CATALOG").optional(),
@@ -48,7 +48,7 @@ const unresolvedImportedCustomLineInput = z
     description: z.string().trim().min(1).max(1000),
     unit: z.string().trim().min(1).max(20).default("pcs"),
     quantity: decimal,
-    unitPriceExcl: z.union([z.literal(""), z.undefined()]).default(""),
+    unitPriceExcl: z.union([z.literal(""), z.undefined(), z.literal("0"), decimal]).default("0"),
     discount: percent.default("0"),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
@@ -56,7 +56,7 @@ const unresolvedImportedCustomLineInput = z
       unresolved: z.literal(true),
     }),
   })
-  .strict();
+  .passthrough();
 const quotationLineInput = z.union([
   catalogLineInput,
   savedCustomLineInput,
