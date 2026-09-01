@@ -240,6 +240,7 @@ export async function runJob(db: DB) {
                 rows: extracted.rows.length,
                 columns: extracted.columns,
                 warnings: extracted.warnings ?? [],
+                profile: extracted.profile ?? null,
               }),
             ],
           );

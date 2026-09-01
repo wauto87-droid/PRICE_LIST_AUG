@@ -1,5 +1,6 @@
 """Untrusted supplier files are processed only in the resource-limited worker."""
 import csv, json, sys, pathlib, subprocess, tempfile, zipfile
+from supplier_quote import extract_supplier_quote_pages
 sys.stdout.reconfigure(encoding='utf-8')
 
 source = pathlib.Path(sys.argv[1])
@@ -118,22 +119,29 @@ elif source.suffix.lower() == '.pdf':
     warnings.append('PDF extraction is low confidence. Verify every selected row against the original.')
     with pdfplumber.open(source) as pdf:
         if len(pdf.pages)>max_pages: raise ValueError('PDF page limit exceeded')
-        for number,page in enumerate(pdf.pages,1):
-            tables = page.extract_tables()
-            if tables:
-                for table in tables:
-                    for values in table:
-                        append({f'Column {i+1}':str(v or '') for i,v in enumerate(values)} | {'Page':str(number)})
-            else:
-                text = page.extract_text() or ''
-                if not text.strip():
-                    with tempfile.TemporaryDirectory() as tmp:
-                        prefix = str(pathlib.Path(tmp)/'page')
-                        subprocess.run(['pdftoppm','-f',str(number),'-l',str(number),'-scale-to','2200','-singlefile','-png',str(source),prefix],check=True,timeout=40,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-                        text = subprocess.run(['tesseract',prefix+'.png','stdout','-l','eng+ara'],check=True,timeout=45,capture_output=True,text=True).stdout
-                for line in text.splitlines():
-                    if line.strip(): append({'Text':line,'Page':str(number)})
+        page_texts = [(number, page.extract_text() or '') for number, page in enumerate(pdf.pages, 1)]
+        supplier_rows = extract_supplier_quote_pages(page_texts)
+        if supplier_rows:
+            for row in supplier_rows:
+                append(row)
+            warnings.append('Supplier quotation detected. Quote metadata is review-only; choose how Unit price should be saved before importing.')
+        else:
+            for number,page in enumerate(pdf.pages,1):
+                tables = page.extract_tables()
+                if tables:
+                    for table in tables:
+                        for values in table:
+                            append({f'Column {i+1}':str(v or '') for i,v in enumerate(values)} | {'Page':str(number)})
+                else:
+                    text = page_texts[number - 1][1]
+                    if not text.strip():
+                        with tempfile.TemporaryDirectory() as tmp:
+                            prefix = str(pathlib.Path(tmp)/'page')
+                            subprocess.run(['pdftoppm','-f',str(number),'-l',str(number),'-scale-to','2200','-singlefile','-png',str(source),prefix],check=True,timeout=40,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+                            text = subprocess.run(['tesseract',prefix+'.png','stdout','-l','eng+ara'],check=True,timeout=45,capture_output=True,text=True).stdout
+                    for line in text.splitlines():
+                        if line.strip(): append({'Text':line,'Page':str(number)})
 else:
     raise ValueError('Unsupported format')
 
-print(json.dumps({'rows':rows,'columns':list(rows[0]) if rows else [],'warnings':warnings},ensure_ascii=False))
+print(json.dumps({'rows':rows,'columns':list(rows[0]) if rows else [],'warnings':warnings, 'profile':'SUPPLIER_QUOTE' if any('Supplier quotation detected.' in warning for warning in warnings) else None},ensure_ascii=False))

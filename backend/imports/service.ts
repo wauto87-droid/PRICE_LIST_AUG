@@ -219,7 +219,12 @@ async function stageImportRow(
 }
 
 function splitImportDefaults(defaults: Record<string, unknown>) {
-  const { guidedImport, quickImport, ...productDefaults } = defaults;
+  const {
+    guidedImport,
+    quickImport,
+    supplierQuotePriceRole,
+    ...productDefaults
+  } = defaults;
   return {
     productDefaults,
     guidedImport:
@@ -228,6 +233,14 @@ function splitImportDefaults(defaults: Record<string, unknown>) {
         : guidedImportSchema.parse(guidedImport),
   };
 }
+
+const supplierQuotePriceTargets = [
+  "cost",
+  "listPrice",
+  "WHOLESALE.sellingPrice",
+  "RETAIL.sellingPrice",
+  "END_CUSTOMER.sellingPrice",
+];
 
 function defaultLevelListPrice(existing: ProductInput) {
   const code = existing.defaultLevel ?? "END_CUSTOMER";
@@ -579,6 +592,16 @@ export async function mapRows(
     assert(job.version === data.version, 409, "Import changed. Reload");
     const mode = data.mode ?? job.mode;
     const quickImport = data.quickImport ?? quickImportEnabled(job.defaults);
+    if (job.summary?.profile === "SUPPLIER_QUOTE") {
+      const quotePriceMappings = supplierQuotePriceTargets.filter(
+        (field) => data.mapping[field] === "Unit price",
+      );
+      assert(
+        quotePriceMappings.length === 1,
+        400,
+        "Choose exactly one destination for the supplier quote Unit price before validating the import",
+      );
+    }
     if (mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
     const { productDefaults, guidedImport } = splitImportDefaults(
       data.defaults,

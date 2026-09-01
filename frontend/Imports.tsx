@@ -57,7 +57,8 @@ const synonyms: Record<string, string[]> = {
 type ImportProfile =
   | "STANDARD"
   | "PUBLIC_PRICE_DISCOUNT"
-  | "SUPPLIER_SIMPLE";
+  | "SUPPLIER_SIMPLE"
+  | "SUPPLIER_QUOTE";
 type ReviewSection = "summary" | "all" | "repair";
 type DiscountPreset = {
   finalDiscount: string;
@@ -99,6 +100,19 @@ const supplierSimpleColumns = {
   listPrice: "Public Pricelist",
   groupColumn: "Activity",
 } as const;
+const supplierQuoteColumns = {
+  partNumber: "Article number",
+  description: "Description",
+  unit: "Unit",
+  price: "Unit price",
+} as const;
+const supplierQuotePriceTargets = [
+  ["cost", "Supplier cost"],
+  ["listPrice", "Public/list price"],
+  ["WHOLESALE.sellingPrice", "Wholesale fixed price"],
+  ["RETAIL.sellingPrice", "Retail fixed price"],
+  ["END_CUSTOMER.sellingPrice", "End customer fixed price"],
+] as const;
 const findMappedColumn = (columns: string[], field: string) =>
   columns.find((column) =>
     [
@@ -124,6 +138,13 @@ const isSupplierSimpleMapping = (
     (column) =>
       normalizeHeader(column) === normalizeHeader(supplierSimpleColumns.groupColumn),
   );
+const hasSupplierQuoteColumns = (columns: string[]) =>
+  [
+    supplierQuoteColumns.partNumber,
+    supplierQuoteColumns.description,
+    supplierQuoteColumns.unit,
+    supplierQuoteColumns.price,
+  ].every((column) => columns.includes(column));
 const mappingLabel = (field: string, profile: ImportProfile) => {
   if (profile !== "SUPPLIER_SIMPLE") return field;
   switch (field) {
@@ -203,6 +224,7 @@ export default function Imports({
     [quickImportMode, setQuickImportMode] = useState(false),
     [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false),
     [quickActionMessage, setQuickActionMessage] = useState("");
+  const [supplierQuotePriceRole, setSupplierQuotePriceRole] = useState("");
 
   const updateDefaultPreset = (field: keyof DiscountPreset, value: string) => {
     setGuidedDefaultPreset((prev) => {
@@ -262,8 +284,11 @@ export default function Imports({
       );
     }
   };
-  const guidedMode = importProfile !== "STANDARD";
+  const guidedMode = ["PUBLIC_PRICE_DISCOUNT", "SUPPLIER_SIMPLE"].includes(
+    importProfile,
+  );
   const supplierSimpleMode = importProfile === "SUPPLIER_SIMPLE";
+  const supplierQuoteMode = importProfile === "SUPPLIER_QUOTE";
   const load = () => api("imports").then(setJobs);
   useEffect(() => {
     load().catch((e) => setError(e.message));
@@ -382,7 +407,12 @@ export default function Imports({
     const j = await fetchJobPage(id, 0, undefined, emptyDrafts, "all");
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
-    const { guidedImport, quickImport, ...productDefaults } = savedDefaults;
+    const {
+      guidedImport,
+      quickImport,
+      supplierQuotePriceRole: savedSupplierQuotePriceRole,
+      ...productDefaults
+    } = savedDefaults;
     const columns = j.summary.columns || [];
     setReviewDrafts(emptyDrafts);
     setSelectedRows({});
@@ -427,20 +457,45 @@ export default function Imports({
       }
       nextMapping = auto;
     }
+    const isQuote =
+      j.summary?.profile === "SUPPLIER_QUOTE" || hasSupplierQuoteColumns(columns);
+    if (isQuote && !Object.keys(j.mapping).length)
+      nextMapping = {
+        partNumber: supplierQuoteColumns.partNumber,
+        description: supplierQuoteColumns.description,
+        unit: supplierQuoteColumns.unit,
+      };
     setMapping(nextMapping);
     const isSimple = isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns);
     setQuickImportMode(Boolean(quickImport ?? isSimple));
     setImportProfile(
-      isSimple
+      isQuote
+        ? "SUPPLIER_QUOTE"
+        : isSimple
         ? "SUPPLIER_SIMPLE"
         : guided?.mode === "PUBLIC_PRICE_DISCOUNT"
           ? "PUBLIC_PRICE_DISCOUNT"
           : "STANDARD",
     );
     setMode(j.mode || (isSimple ? "CREATE_UPDATE" : "UPDATE_ONLY"));
+    setSupplierQuotePriceRole(
+      savedSupplierQuotePriceRole ||
+        supplierQuotePriceTargets.find(
+          ([field]) => nextMapping[field] === supplierQuoteColumns.price,
+        )?.[0] ||
+        "",
+    );
   }
   const presetForGroup = (groupValue: string) =>
     guidedGroupPresets[groupValue] || guidedDefaultPreset;
+  const supplierQuotePricingDefaults =
+    supplierQuotePriceRole === "cost"
+      ? { method: "COST_MARKUP" }
+      : supplierQuotePriceRole === "listPrice"
+        ? { method: "LIST_DISCOUNT" }
+        : supplierQuotePriceRole
+          ? { defaultLevel: supplierQuotePriceRole.split(".")[0] }
+          : {};
   const saveDefaults = guidedMode
     ? {
         ...defaults,
@@ -457,7 +512,16 @@ export default function Imports({
           ),
         },
       }
-    : { ...defaults, quickImport: quickImportMode };
+    : {
+        ...defaults,
+        quickImport: quickImportMode,
+        ...(supplierQuoteMode
+          ? {
+              ...supplierQuotePricingDefaults,
+              supplierQuotePriceRole: supplierQuotePriceRole || undefined,
+            }
+          : {}),
+      };
   const reviewHeading = quickImportMode
     ? t("2. Quick summary & optional repair", "٢. ملخص سريع وإصلاح اختياري")
     : t("2. Review every row", "٢. مراجعة كل صف");
@@ -696,6 +760,9 @@ export default function Imports({
                           "قائمة مورد بسيطة",
                         )}
                       </option>
+                      <option value="SUPPLIER_QUOTE">
+                        {t("Supplier quotation PDF", "عرض سعر المورد PDF")}
+                      </option>
                     </select>
                   </label>
                   <label>
@@ -712,7 +779,12 @@ export default function Imports({
                       </option>
                     </select>
                   </label>
-                  {(supplierSimpleMode ? supplierSimpleFields : mappingFields).map(
+                  {(supplierQuoteMode
+                    ? ["partNumber", "description", "unit"]
+                    : supplierSimpleMode
+                      ? supplierSimpleFields
+                      : mappingFields
+                  ).map(
                     (field) => (
                     <label key={field}>
                       {t(
@@ -734,6 +806,24 @@ export default function Imports({
                       </select>
                     </label>
                     ),
+                  )}
+                  {supplierQuoteMode && (
+                    <label>
+                      {t("Save quoted unit price as", "حفظ سعر الوحدة المعروض كـ")}
+                      <select
+                        value={supplierQuotePriceRole}
+                        onChange={(e) => setSupplierQuotePriceRole(e.target.value)}
+                      >
+                        <option value="">
+                          {t("Choose before validating", "اختر قبل التحقق")}
+                        </option>
+                        {supplierQuotePriceTargets.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {t(label, label)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {guidedMode ? (
                     <>
@@ -963,7 +1053,11 @@ export default function Imports({
                   </>
                 )}
                 <button
-                  disabled={busy || actionBusy}
+                  disabled={
+                    busy ||
+                    actionBusy ||
+                    (supplierQuoteMode && !supplierQuotePriceRole)
+                  }
                   onClick={() =>
                     onAction(
                       {
@@ -991,7 +1085,23 @@ export default function Imports({
                       async () => {
                         await api("imports/" + job.id + "/mapping", "POST", {
                           mapping: Object.fromEntries(
-                            Object.entries(mapping).filter(([, v]) => v),
+                            Object.entries({
+                              ...mapping,
+                              ...(supplierQuoteMode
+                                ? Object.fromEntries(
+                                    supplierQuotePriceTargets.map(([field]) => [
+                                      field,
+                                      "",
+                                    ]),
+                                  )
+                                : {}),
+                              ...(supplierQuoteMode && supplierQuotePriceRole
+                                ? {
+                                    [supplierQuotePriceRole]:
+                                      supplierQuoteColumns.price,
+                                  }
+                                : {}),
+                            }).filter(([, v]) => v),
                           ),
                           defaults: saveDefaults,
                           version: job.version,
