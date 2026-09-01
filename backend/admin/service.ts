@@ -66,7 +66,11 @@ const settingsSchema = z
   .strict();
 export async function saveSettings(db: DB, actor: Actor, input: unknown) {
   requirePermission(actor, "SETTINGS_MANAGE");
-  const { quotation: ignored, ...general } = input as Record<string, unknown>;
+  const {
+    quotation: ignored,
+    aiProductModel: ignoredAiModel,
+    ...general
+  } = input as Record<string, unknown>;
   const data = settingsSchema.parse(general);
   return db.transaction(async (tx) => {
     const before = (await one(
@@ -74,7 +78,13 @@ export async function saveSettings(db: DB, actor: Actor, input: unknown) {
       "SELECT data FROM settings WHERE id=1 FOR UPDATE",
     ))!.data;
     await tx.query("UPDATE settings SET data=$1,version=version+1 WHERE id=1", [
-      json({ ...data, quotation: before.quotation }),
+      json({
+        ...data,
+        quotation: before.quotation,
+        ...(before.aiProductModel
+          ? { aiProductModel: before.aiProductModel }
+          : {}),
+      }),
     ]);
     await tx.query("UPDATE roles SET max_discount=$1 WHERE id='STAFF'", [
       data.staffDiscount,

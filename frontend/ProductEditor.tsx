@@ -32,6 +32,14 @@ export const blankProduct = {
   unit: "pcs",
   quantityPrecision: 0,
   active: true,
+  details: {
+    manufacturer: "",
+    productName: "",
+    productType: "",
+    series: "",
+    specifications: [],
+    applications: [],
+  },
 };
 
 const emptyLevel = (code: string) => ({
@@ -113,7 +121,9 @@ export default function ProductEditor({
   };
 
   const activeLevel = (() => {
-    const existing = p.levels.find((level: any) => level.code === p.defaultLevel);
+    const existing = p.levels.find(
+      (level: any) => level.code === p.defaultLevel,
+    );
     return existing || p.levels[0] || emptyLevel("END_CUSTOMER");
   })();
 
@@ -269,6 +279,74 @@ export default function ProductEditor({
           </label>
         </div>
 
+        <details
+          className="product-details-editor"
+          open={Boolean(
+            p.details?.manufacturer || p.details?.specifications?.length,
+          )}
+        >
+          <summary>{t("Product details", "تفاصيل المنتج")}</summary>
+          <div className="form-grid">
+            {[
+              ["manufacturer", "Manufacturer", "الشركة المصنعة"],
+              ["productName", "Product name", "اسم المنتج"],
+              ["productType", "Product type", "نوع المنتج"],
+              ["series", "Series", "السلسلة"],
+            ].map(([key, en, ar]) => (
+              <label key={key}>
+                {t(en, ar)}
+                <input
+                  value={p.details?.[key] ?? ""}
+                  onChange={(e) =>
+                    set("details", { ...p.details, [key]: e.target.value })
+                  }
+                />
+              </label>
+            ))}
+            <label>
+              {t(
+                "Specifications (Label: Value, one per line)",
+                "المواصفات (الاسم: القيمة، واحد في كل سطر)",
+              )}
+              <textarea
+                value={(p.details?.specifications ?? [])
+                  .map((x: any) => `${x.label}: ${x.value}`)
+                  .join("\n")}
+                onChange={(e) =>
+                  set("details", {
+                    ...p.details,
+                    specifications: e.target.value
+                      .split("\n")
+                      .map((line) => {
+                        const [label, ...rest] = line.split(":");
+                        return {
+                          label: label.trim(),
+                          value: rest.join(":").trim(),
+                        };
+                      })
+                      .filter((x) => x.label && x.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              {t("Applications (one per line)", "الاستخدامات (واحد في كل سطر)")}
+              <textarea
+                value={(p.details?.applications ?? []).join("\n")}
+                onChange={(e) =>
+                  set("details", {
+                    ...p.details,
+                    applications: e.target.value
+                      .split("\n")
+                      .map((x) => x.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+            </label>
+          </div>
+        </details>
+
         <section className="basic-pricing-panel">
           <div className="section-title">
             <div>
@@ -293,7 +371,10 @@ export default function ProductEditor({
                   {t("Cost + markup", "التكلفة + الزيادة")}
                 </option>
                 <option value="LIST_DISCOUNT">
-                  {t("Public/List price - discount", "السعر العام/القائمة - الخصم")}
+                  {t(
+                    "Public/List price - discount",
+                    "السعر العام/القائمة - الخصم",
+                  )}
                 </option>
               </select>
             </label>
@@ -381,11 +462,21 @@ export default function ProductEditor({
           </div>
           <div className="price-pair preview-prices">
             <div>
-              <label>{t("Main selling price excl. VAT", "سعر البيع الرئيسي قبل الضريبة")}</label>
+              <label>
+                {t(
+                  "Main selling price excl. VAT",
+                  "سعر البيع الرئيسي قبل الضريبة",
+                )}
+              </label>
               <strong>{defaultExcl}</strong>
             </div>
             <div>
-              <label>{t("Main selling price incl. VAT", "سعر البيع الرئيسي شامل الضريبة")}</label>
+              <label>
+                {t(
+                  "Main selling price incl. VAT",
+                  "سعر البيع الرئيسي شامل الضريبة",
+                )}
+              </label>
               <strong>{defaultIncl}</strong>
             </div>
           </div>
@@ -439,7 +530,8 @@ export default function ProductEditor({
                     checked={!!level?.active}
                     onChange={(e) => {
                       if (level) edit("active", e.target.checked);
-                      else replaceLevels([...p.levels, { ...emptyLevel(code) }]);
+                      else
+                        replaceLevels([...p.levels, { ...emptyLevel(code) }]);
                     }}
                   />
                   {t("Available to staff", "متاح للموظفين")}

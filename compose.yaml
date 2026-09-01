@@ -7,6 +7,8 @@ x-app-environment: &app-environment
   APP_BASE_PATH: /amt_price_list
   APP_RELEASE: ${APP_RELEASE:-local}
   SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
+  AI_SECRET_ENCRYPTION_KEY: ${AI_SECRET_ENCRYPTION_KEY:?Generate AI_SECRET_ENCRYPTION_KEY}
+  OPENAI_PRODUCT_MODEL: ${OPENAI_PRODUCT_MODEL:-gpt-5.4-nano}
   UPLOAD_DIR: /data/uploads
   BACKUP_DIR: /data/backups
   DB_HOST: ${DB_HOST:-127.0.0.1}

@@ -43,6 +43,7 @@ export function toInput(row: Record<string, any>): ProductInput {
     unit: row.unit,
     quantityPrecision: row.quantity_precision,
     active: row.active,
+    details: row.details ?? {},
     ...(row.levels
       ? { levels: row.levels, defaultLevel: row.default_level }
       : {}),
@@ -88,6 +89,7 @@ export function staffProduct(
           levelPrice(p, l).mul(new Decimal(1).add(new Decimal(p.vat).div(100))),
         ),
       })),
+    details: p.details,
   };
   if (has(actor, "MIN_PRICE_VIEW") || settings.minimumVisible) {
     result.minimumEnabled = p.minimumEnabled;
@@ -187,7 +189,7 @@ export async function saveProduct(
   const productId = id ?? randomUUID();
   if (old)
     await db.query(
-      "UPDATE products SET part_number=$2,normalized_part=$3,description=$4,brand_id=$5,category_id=$6,keywords=$7,unit=$8,quantity_precision=$9,active=$10,version=version+1,updated_by=$11,updated_at=now() WHERE id=$1",
+      "UPDATE products SET part_number=$2,normalized_part=$3,description=$4,brand_id=$5,category_id=$6,keywords=$7,unit=$8,quantity_precision=$9,active=$10,version=version+1,updated_by=$11,updated_at=now(),details=$12 WHERE id=$1",
       [
         productId,
         p.partNumber,
@@ -200,11 +202,12 @@ export async function saveProduct(
         p.quantityPrecision,
         p.active,
         actor.id,
+        json(p.details ?? {}),
       ],
     );
   else
     await db.query(
-      "INSERT INTO products(id,part_number,normalized_part,description,brand_id,category_id,keywords,unit,quantity_precision,active,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)",
+      "INSERT INTO products(id,part_number,normalized_part,description,brand_id,category_id,keywords,unit,quantity_precision,active,created_by,updated_by,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12)",
       [
         productId,
         p.partNumber,
@@ -217,6 +220,7 @@ export async function saveProduct(
         p.quantityPrecision,
         p.active,
         actor.id,
+        json(p.details ?? {}),
       ],
     );
   await db.query(
@@ -370,7 +374,9 @@ export async function deleteProduct(
   );
   await db.query("DELETE FROM price_history WHERE product_id=$1", [id]);
   await db.query("DELETE FROM product_aliases WHERE product_id=$1", [id]);
-  await db.query("DELETE FROM product_selling_levels WHERE product_id=$1", [id]);
+  await db.query("DELETE FROM product_selling_levels WHERE product_id=$1", [
+    id,
+  ]);
   await db.query("DELETE FROM product_pricing WHERE product_id=$1", [id]);
   await db.query("DELETE FROM products WHERE id=$1", [id]);
   await audit(
@@ -475,14 +481,12 @@ async function countRankedPartMatches(
   escaped: string,
 ) {
   return Number(
-    (
-      await one(
-        db,
-        partRankedCte(activeClause) +
-          " SELECT count(*)::int AS n FROM part_ranked",
-        [q, escaped + "%", "%" + escaped + "%"],
-      )
-    )!.n,
+    (await one(
+      db,
+      partRankedCte(activeClause) +
+        " SELECT count(*)::int AS n FROM part_ranked",
+      [q, escaped + "%", "%" + escaped + "%"],
+    ))!.n,
   );
 }
 
@@ -514,14 +518,12 @@ async function countRankedTextMatches(
   excludedIds: string[],
 ) {
   return Number(
-    (
-      await one(
-        db,
-        textRankedCte(activeClause) +
-          " SELECT count(*)::int AS n FROM text_ranked",
-        [wildcard, excludedIds],
-      )
-    )!.n,
+    (await one(
+      db,
+      textRankedCte(activeClause) +
+        " SELECT count(*)::int AS n FROM text_ranked",
+      [wildcard, excludedIds],
+    ))!.n,
   );
 }
 
@@ -645,11 +647,14 @@ function lookupProduct(
     quantityPrecision: row.quantity_precision,
     masterExcl,
     masterIncl: money(
-      new Decimal(masterExcl).mul(new Decimal(1).add(new Decimal(vat).div(100))),
+      new Decimal(masterExcl).mul(
+        new Decimal(1).add(new Decimal(vat).div(100)),
+      ),
     ),
     vat,
     defaultLevel: row.default_level ?? "END_CUSTOMER",
     sellingLevels: Array.isArray(row.selling_levels) ? row.selling_levels : [],
+    details: row.details ?? {},
   };
   if (has(actor, "MIN_PRICE_VIEW") || settings.minimumVisible) {
     result.minimumEnabled = row.minimum_enabled;
@@ -675,10 +680,13 @@ export async function search(
         minimumFilter?: "ALL" | "PROTECTED" | "UNPROTECTED";
         statusFilter?: "ALL" | "ACTIVE" | "ARCHIVED";
         methodFilter?: "ALL" | "COST_MARKUP" | "LIST_DISCOUNT" | "FIXED";
+        contentFilter?: "ALL" | "MISSING" | "COMPLETE";
       } = false,
 ) {
   const options =
-    typeof adminOrOptions === "boolean" ? { admin: adminOrOptions } : adminOrOptions;
+    typeof adminOrOptions === "boolean"
+      ? { admin: adminOrOptions }
+      : adminOrOptions;
   const admin = options.admin ?? false;
   requirePermission(actor, "PRODUCT_VIEW");
   if (admin) requirePermission(actor, "PRODUCT_EDIT");
@@ -689,10 +697,10 @@ export async function search(
   const page = Math.max(options.page ?? 0, 0);
   const offset = page * pageSize;
   const minimumFilter =
-    options.minimumFilter ??
-    (options.protectedOnly ? "PROTECTED" : "ALL");
+    options.minimumFilter ?? (options.protectedOnly ? "PROTECTED" : "ALL");
   const statusFilter = options.statusFilter ?? "ALL";
   const methodFilter = options.methodFilter ?? "ALL";
+  const contentFilter = options.contentFilter ?? "ALL";
   const selectionLimit = Math.min(
     Math.max(options.selectionLimit ?? 5000, 1),
     5000,
@@ -732,7 +740,14 @@ export async function search(
         WHERE pp.product_id = p.id
           AND pp.method = '${methodFilter}'
       )`;
-  const productWhere = `${activeClause} AND ${minimumClause} AND ${statusClause} AND ${methodClause}`;
+  const missingContent = `(btrim(p.description)='' OR upper(regexp_replace(btrim(p.description),'\s+',' ','g'))=upper(regexp_replace(btrim(p.part_number),'\s+',' ','g')) OR upper(regexp_replace(btrim(p.description),'[.\s]+','','g')) IN ('N/A','NA','UNKNOWN','NODESCRIPTION'))`;
+  const contentClause =
+    contentFilter === "MISSING"
+      ? missingContent
+      : contentFilter === "COMPLETE"
+        ? `NOT ${missingContent}`
+        : "true";
+  const productWhere = `${activeClause} AND ${minimumClause} AND ${statusClause} AND ${methodClause} AND ${contentClause}`;
   const mapRows = (rows: Record<string, any>[]) =>
     rows.map((r) =>
       admin && has(actor, "COST_VIEW")
@@ -748,15 +763,13 @@ export async function search(
       return mapRows(rows.rows);
     }
     const totalRows = Number(
-      (
-        await one(
-          db,
-          `SELECT count(*)::int AS n
+      (await one(
+        db,
+        `SELECT count(*)::int AS n
            FROM products p
            JOIN product_pricing pp ON pp.product_id = p.id
            WHERE ${productWhere}`,
-        )
-      )!.n,
+      ))!.n,
     );
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const safePage = Math.min(page, totalPages - 1);
@@ -787,6 +800,7 @@ export async function search(
       minimumFilter,
       statusFilter,
       methodFilter,
+      contentFilter,
       selectableItems,
       selectionLimitReached: totalRows > selectionLimit,
       selectionOffset,
@@ -903,6 +917,7 @@ export async function search(
     minimumFilter,
     statusFilter,
     methodFilter,
+    contentFilter,
     selectableItems,
     selectionLimitReached: totalRows > selectionLimit,
     selectionOffset,

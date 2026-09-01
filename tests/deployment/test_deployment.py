@@ -864,6 +864,9 @@ www.softwaresolver.online {
         compose = (ROOT / 'compose.yaml').read_text()
         env = m.new_env(18180)
         rendered = m.env_text(env)
+        self.assertRegex(env['AI_SECRET_ENCRYPTION_KEY'], r'^[a-f0-9]{64}$')
+        self.assertIn('AI_SECRET_ENCRYPTION_KEY=', rendered)
+        self.assertIn('OPENAI_PRODUCT_MODEL=gpt-5.4-nano', rendered)
         self.assertIn('?host=%2Fvar%2Frun%2Fpostgresql', rendered)
         self.assertNotIn('@db:', rendered)
         pm2_rendered = m.env_text(m.new_env(18180, runtime='pm2'))
@@ -1233,6 +1236,7 @@ www.softwaresolver.online {
             shared.mkdir(parents=True)
             d.envfile = shared / '.env'
             d.env = m.new_env(18180, runtime='compose')
+            original_ai_encryption_key = d.env['AI_SECRET_ENCRYPTION_KEY']
             d.envfile.write_text(m.env_text(d.env))
             (root / '.amt-owner').write_text(m.PROJECT + '\n')
             current_release = root / 'releases' / 'aaaaaaaaaaaa-11111111'
@@ -1274,6 +1278,7 @@ www.softwaresolver.online {
             d.stop_runtime.assert_called_once_with('compose')
             d.snapshot.assert_called_once()
             self.assertEqual(d.env['APP_RUNTIME'], 'pm2')
+            self.assertEqual(d.env['AI_SECRET_ENCRYPTION_KEY'], original_ai_encryption_key)
 
     def test_status_healthy_installation(self):
         with tempfile.TemporaryDirectory() as temp:

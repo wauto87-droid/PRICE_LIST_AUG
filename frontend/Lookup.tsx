@@ -898,6 +898,42 @@ export default function Lookup({
                   <div>
                     <h2>{selected.partNumber}</h2>
                     <p>{selected.description}</p>
+                    {(selected.details?.manufacturer ||
+                      selected.details?.specifications?.length ||
+                      selected.details?.applications?.length) && (
+                      <details className="lookup-product-details">
+                        <summary>
+                          {t("Product details", "تفاصيل المنتج")}
+                        </summary>
+                        <p>
+                          {[
+                            selected.details.manufacturer,
+                            selected.details.productType,
+                            selected.details.series,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                        {!!selected.details.specifications?.length && (
+                          <dl>
+                            {selected.details.specifications.map(
+                              (spec: any, index: number) => (
+                                <div key={index}>
+                                  <dt>{spec.label}</dt>
+                                  <dd>{spec.value}</dd>
+                                </div>
+                              ),
+                            )}
+                          </dl>
+                        )}
+                        {!!selected.details.applications?.length && (
+                          <p>
+                            {t("Applications", "الاستخدامات")}:{" "}
+                            {selected.details.applications.join(", ")}
+                          </p>
+                        )}
+                      </details>
+                    )}
                   </div>
                   <span className="pill">
                     {[selected.brand, selected.category]

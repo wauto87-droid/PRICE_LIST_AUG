@@ -37,6 +37,7 @@ export const PERMISSIONS = [
   "QUANTITY_FINDER",
   "REUSABLE_CUSTOM_MANAGE",
   "PRICE_WATCHER",
+  "AI_PRODUCT_ENRICH",
 ] as const;
 export type Actor = {
   id: string;

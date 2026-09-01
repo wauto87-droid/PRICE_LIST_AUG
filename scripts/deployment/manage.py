@@ -229,7 +229,7 @@ PM2_PROCESSES = ('amt-pricelist-app', 'amt-pricelist-worker')
 MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
 DEFAULT_DB_PORT = '15432'
 MIN_PM2_NODE = (24, 0, 0)
-ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
+ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'AI_SECRET_ENCRYPTION_KEY', 'OPENAI_PRODUCT_MODEL', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
 
 class DeployError(Exception):
     pass
@@ -316,6 +316,8 @@ def read_env(path):
     require(re.fullmatch(r'[a-z][a-z0-9_]{0,31}', values.get('POSTGRES_DB', '')), 'Invalid dedicated database name')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('POSTGRES_PASSWORD', '')), 'Database password must be a generated 64-character hex secret')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('SETUP_TOKEN', '')), 'Setup token must be generated hex')
+    if values.get('AI_SECRET_ENCRYPTION_KEY'):
+        require(re.fullmatch(r'[a-f0-9]{64}', values['AI_SECRET_ENCRYPTION_KEY']), 'AI encryption key must be generated hex')
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
     values.setdefault('APP_BASE_PATH', BASE_PATH)
     require(values['APP_BASE_PATH'] == BASE_PATH, 'Unexpected application base path')
@@ -342,7 +344,7 @@ def env_text(values):
 
 def new_env(port, runtime='compose'):
     return dict(POSTGRES_USER='amt', POSTGRES_DB='amt_pricelist', POSTGRES_PASSWORD=secrets.token_hex(32),
-                SETUP_TOKEN=secrets.token_hex(32), APP_PORT=str(port), APP_ORIGIN=f'http://localhost:{port}',
+                SETUP_TOKEN=secrets.token_hex(32), AI_SECRET_ENCRYPTION_KEY=secrets.token_hex(32), OPENAI_PRODUCT_MODEL='gpt-5.4-nano', APP_PORT=str(port), APP_ORIGIN=f'http://localhost:{port}',
                 APP_BASE_PATH=BASE_PATH, COOKIE_SECURE='false', PDF_MAX_PAGES='100', UPLOAD_MAX_MB='20', BACKUP_RETENTION_DAYS='14',
                 UPLOAD_DIR='/data/uploads', BACKUP_DIR='/data/backups', APP_RUNTIME=runtime,
                 DB_HOST='127.0.0.1', DB_PORT=DEFAULT_DB_PORT, PM2_APP_INSTANCES='2')
@@ -1271,6 +1273,8 @@ class Deployment:
         self.env.setdefault('DB_HOST', '127.0.0.1')
         self.env.setdefault('DB_PORT', DEFAULT_DB_PORT)
         self.env.setdefault('PM2_APP_INSTANCES', '2')
+        self.env.setdefault('AI_SECRET_ENCRYPTION_KEY', secrets.token_hex(32))
+        self.env.setdefault('OPENAI_PRODUCT_MODEL', 'gpt-5.4-nano')
         previous = self.release
         if recovery and recovery.get('candidate'):
             require(re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', recovery['candidate']), 'Invalid recovery release')

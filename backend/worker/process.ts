@@ -13,6 +13,7 @@ import { processAnalysis } from "../sales-checks/service";
 import { processAnalysis as processQuantityAnalysis } from "../quantity-finder/service";
 import { exportQuantityXlsx, quantityHtml } from "./quantity-finder";
 import { exportPriceWatcherXlsx, priceWatcherHtml } from "./price-watcher";
+import { processJob as processProductEnrichment } from "../product-enrichment/service";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -35,7 +36,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF','PRODUCT_AI_ENRICH') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -317,6 +318,8 @@ export async function runJob(db: DB) {
         job.payload.actor,
         job.payload.filters,
       );
+    else if (job.kind === "PRODUCT_AI_ENRICH")
+      await processProductEnrichment(db, job.payload.enrichmentJobId);
     else if (
       job.kind === "SALES_CHECK_PDF" ||
       job.kind === "QUANTITY_PDF" ||
@@ -513,6 +516,11 @@ export async function runJob(db: DB) {
             : importFailureMessage(failure),
           json({ phase: "FAILED", remainingSeconds: null }),
         ],
+      );
+    if (job.kind === "PRODUCT_AI_ENRICH")
+      await db.query(
+        "UPDATE product_enrichment_jobs SET status='FAILED',error='AI research failed. Check configuration and worker logs.',updated_at=now() WHERE id=$1 AND status IN ('PENDING','RUNNING')",
+        [job.payload.enrichmentJobId],
       );
   }
   return true;

@@ -18,6 +18,7 @@ import * as quantityFinder from "../quantity-finder/service";
 import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import * as priceWatcher from "../price-watcher/service";
+import * as productEnrichment from "../product-enrichment/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
@@ -303,6 +304,43 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         format: job.kind.endsWith("PDF") ? "PDF" : "XLSX",
       });
     }
+    if (root === "product-enrichment") {
+      if (!id && method === "GET")
+        return response(await productEnrichment.list(db, actor));
+      if (!id && method === "POST")
+        return response(
+          await productEnrichment.queue(db, actor, await body(req)),
+        );
+      if (id === "configuration" && method === "GET")
+        return response(await productEnrichment.configuration(db, actor));
+      if (id === "configuration" && method === "PUT")
+        return response(
+          await productEnrichment.saveConfiguration(db, actor, await body(req)),
+        );
+      if (id === "configuration" && action === "test" && method === "POST")
+        return response(await productEnrichment.testConfiguration(db, actor));
+      if (id === "random" && method === "POST")
+        return response(
+          await productEnrichment.randomSelection(db, actor, await body(req)),
+        );
+      if (id && !action && method === "GET")
+        return response(await productEnrichment.get(db, actor, uuid(id)));
+      if (id && action === "confirm" && method === "POST")
+        return response(
+          await productEnrichment.confirm(db, actor, uuid(id), await body(req)),
+        );
+      if (id && action === "suggestion" && method === "PUT")
+        return response(
+          await productEnrichment.editSuggestion(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
+        );
+      if (id && !action && method === "DELETE")
+        return response(await productEnrichment.remove(db, actor, uuid(id)));
+    }
     if (root === "discount-requests") {
       if (!id && method === "POST")
         return response(
@@ -358,6 +396,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .enum(["ALL", "COST_MARKUP", "LIST_DISCOUNT", "FIXED"])
                 .catch("ALL")
                 .parse(url.searchParams.get("methodFilter") ?? undefined),
+              contentFilter: z
+                .enum(["ALL", "MISSING", "COMPLETE"])
+                .catch("ALL")
+                .parse(url.searchParams.get("contentFilter") ?? undefined),
               page: z.coerce
                 .number()
                 .int()

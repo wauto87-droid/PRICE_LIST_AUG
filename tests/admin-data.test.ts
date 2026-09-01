@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sectionData, validateAdminData } from "../frontend/admin-data";
+import {
+  sectionData,
+  selfLoadingAdminSections,
+  validateAdminData,
+} from "../frontend/admin-data";
+test("Specialized Admin tools do not use generic admin section endpoints", () => {
+  assert.equal(selfLoadingAdminSections.includes("price-watcher"), true);
+});
 test("Admin never renders dashboard or stale responses as a brands array", () => {
   const dashboard = {
     section: "dashboard",
@@ -48,7 +55,14 @@ test("Admin never renders dashboard or stale responses as a brands array", () =>
   );
 });
 test("Admin validates each endpoint shape before map or nested property access", () => {
-  for (const section of ["brands", "categories", "users", "history", "audit", "backups"]) {
+  for (const section of [
+    "brands",
+    "categories",
+    "users",
+    "history",
+    "audit",
+    "backups",
+  ]) {
     assert.deepEqual(validateAdminData(section, []), []);
     for (const wrong of [null, {}, { roles: [] }, "error"])
       assert.throws(() => validateAdminData(section, wrong), /Unexpected/);
@@ -65,6 +79,7 @@ test("Admin validates each endpoint shape before map or nested property access",
       minimumFilter: "ALL",
       statusFilter: "ALL",
       methodFilter: "ALL",
+      contentFilter: "ALL",
       selectionOffset: 0,
       selectionHasMore: false,
       selectionLimitReached: false,
@@ -80,6 +95,7 @@ test("Admin validates each endpoint shape before map or nested property access",
       minimumFilter: "ALL",
       statusFilter: "ALL",
       methodFilter: "ALL",
+      contentFilter: "ALL",
       selectionOffset: 0,
       selectionHasMore: false,
       selectionLimitReached: false,

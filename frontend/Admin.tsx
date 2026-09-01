@@ -1,6 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { sectionData, validateAdminData, type AdminResult } from "./admin-data";
+import {
+  sectionData,
+  selfLoadingAdminSections,
+  validateAdminData,
+  type AdminResult,
+} from "./admin-data";
 import { api, type Translate } from "./api";
 import {
   AdminActionModal,
@@ -25,6 +30,7 @@ import SalesPriceCheck from "./SalesPriceCheck";
 import QuantityFinder from "./QuantityFinder";
 import ReusableCustomItems from "./ReusableCustomItems";
 import PriceWatcher from "./PriceWatcher";
+import ProductEnrichmentPanel from "./ProductEnrichmentPanel";
 import AdminDashboard from "./AdminDashboard";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
@@ -33,6 +39,7 @@ import { showConfirm } from "./confirm";
 type ProductMinimumFilter = "ALL" | "PROTECTED" | "UNPROTECTED";
 type ProductStatusFilter = "ALL" | "ACTIVE" | "ARCHIVED";
 type ProductMethodFilter = "ALL" | "COST_MARKUP" | "LIST_DISCOUNT" | "FIXED";
+type ProductContentFilter = "ALL" | "MISSING" | "COMPLETE";
 const sections = [
   ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
   [
@@ -141,6 +148,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       useState<ProductStatusFilter>("ALL"),
     [productMethodFilter, setProductMethodFilter] =
       useState<ProductMethodFilter>("ALL"),
+    [productContentFilter, setProductContentFilter] =
+      useState<ProductContentFilter>("ALL"),
     [edit, setEdit] = useState<any>(null),
     [busy, setBusy] = useState(false),
     [actionState, setActionState] = useState<AdminActionState>({
@@ -187,24 +196,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     minimumFilter?: ProductMinimumFilter;
     statusFilter?: ProductStatusFilter;
     methodFilter?: ProductMethodFilter;
+    contentFilter?: ProductContentFilter;
     minimumProtectedPage?: number;
     minimumProtectedSelectionOffset?: number;
   }) {
     if (currentSection.current !== section) return;
     const generation = ++requestGeneration.current;
     setError("");
-    if (
-      [
-        "imports",
-        "rules",
-        "quotation-settings",
-        "discount-requests",
-        "sales-price-check",
-        "quantity-finder",
-        "reusable-custom-items",
-      ].includes(section)
-    )
-      return;
+    if (selfLoadingAdminSections.includes(section as any)) return;
     try {
       const payload = await api(
         section === "products"
@@ -219,6 +218,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 minimumFilter: overrides?.minimumFilter ?? productMinimumFilter,
                 statusFilter: overrides?.statusFilter ?? productStatusFilter,
                 methodFilter: overrides?.methodFilter ?? productMethodFilter,
+                contentFilter: overrides?.contentFilter ?? productContentFilter,
               }).toString()
           : section === "dashboard"
             ? "admin/dashboard?minimumProtectedPage=" +
@@ -251,6 +251,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
         );
         setProductMethodFilter(
           overrides?.methodFilter ?? payload.methodFilter ?? "ALL",
+        );
+        setProductContentFilter(
+          overrides?.contentFilter ?? payload.contentFilter ?? "ALL",
         );
         setLoadedProductQuery(overrides?.query ?? productQuery);
       }
@@ -514,6 +517,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setProductMinimumFilter(minimumFilter);
       setProductStatusFilter(options.statusFilter ?? "ALL");
       setProductMethodFilter(options.methodFilter ?? "ALL");
+      setProductContentFilter("ALL");
       setQuery(options.query ?? "");
       setProductQuery(options.query ?? "");
       setProductPage(0);
@@ -525,6 +529,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setProductMinimumFilter("ALL");
       setProductStatusFilter("ALL");
       setProductMethodFilter("ALL");
+      setProductContentFilter("ALL");
       setQuery("");
       setProductQuery("");
     }
@@ -701,6 +706,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         setProductMinimumFilter("ALL");
                         setProductStatusFilter("ALL");
                         setProductMethodFilter("ALL");
+                        setProductContentFilter("ALL");
                         setQuery("");
                         setProductQuery("");
                         setProductPage(0);
@@ -714,6 +720,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                           minimumFilter: "ALL",
                           statusFilter: "ALL",
                           methodFilter: "ALL",
+                          contentFilter: "ALL",
                         });
                       }}
                     >
@@ -916,6 +923,35 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     <option value="LIST_DISCOUNT">LIST_DISCOUNT</option>
                     <option value="FIXED">FIXED</option>
                   </select>
+                  <select
+                    aria-label={t("Content filter", "تصفية المحتوى")}
+                    value={productContentFilter}
+                    onChange={(e) => {
+                      const contentFilter = e.target
+                        .value as ProductContentFilter;
+                      setSelected({});
+                      setPreview(null);
+                      setProductContentFilter(contentFilter);
+                      setProductPage(0);
+                      setProductSelectionOffset(0);
+                      void load({
+                        query,
+                        page: 0,
+                        selectionOffset: 0,
+                        contentFilter,
+                      });
+                    }}
+                  >
+                    <option value="ALL">
+                      {t("All content", "كل المحتوى")}
+                    </option>
+                    <option value="MISSING">
+                      {t("Missing description", "الوصف مفقود")}
+                    </option>
+                    <option value="COMPLETE">
+                      {t("Complete description", "الوصف مكتمل")}
+                    </option>
+                  </select>
                   <button onClick={() => triggerProductSearch(query)}>
                     {t("Search", "بحث")}
                   </button>
@@ -978,6 +1014,21 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </span>
                     ))}
                 </div>
+                {user.permissions.includes("AI_PRODUCT_ENRICH") && (
+                  <ProductEnrichmentPanel
+                    t={t}
+                    selected={selected}
+                    setSelected={setSelected}
+                    filters={{
+                      query: productQuery,
+                      minimumFilter: productMinimumFilter,
+                      statusFilter: productStatusFilter,
+                      methodFilter: productMethodFilter,
+                      contentFilter: productContentFilter,
+                    }}
+                    onConfirmed={() => void load()}
+                  />
+                )}
                 <div className="table-scroll">
                   {showProductSelectionBar && (
                     <div className="review-panel admin-selection-panel">

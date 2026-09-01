@@ -61,6 +61,30 @@ const actions: Record<string, [string, string]> = {
   PERMISSION_CHANGE: ["Role permissions updated", "تم تحديث صلاحيات الدور"],
   TAXONOMY_CHANGE: ["Brand or category updated", "تم تحديث العلامة أو الفئة"],
   SETTINGS_CHANGE: ["Company settings updated", "تم تحديث إعدادات الشركة"],
+  AI_CONFIGURATION_CHANGE: [
+    "AI product finder configuration updated",
+    "تم تحديث إعداد باحث المنتجات بالذكاء الاصطناعي",
+  ],
+  AI_CONFIGURATION_TEST: [
+    "AI product finder connection tested",
+    "تم اختبار اتصال باحث المنتجات بالذكاء الاصطناعي",
+  ],
+  PRODUCT_AI_ENRICH_QUEUE: [
+    "AI product research started",
+    "بدأ بحث المنتجات بالذكاء الاصطناعي",
+  ],
+  PRODUCT_AI_SUGGESTION_EDIT: [
+    "AI product suggestion edited",
+    "تم تعديل اقتراح المنتج بالذكاء الاصطناعي",
+  ],
+  PRODUCT_AI_ENRICH_CONFIRM: [
+    "AI product details confirmed",
+    "تم تأكيد تفاصيل المنتج بالذكاء الاصطناعي",
+  ],
+  PRODUCT_AI_ENRICH_DELETE: [
+    "AI product research deleted",
+    "تم حذف بحث المنتجات بالذكاء الاصطناعي",
+  ],
   BACKUP_REQUEST: ["Backup requested", "تم طلب نسخة احتياطية"],
   LOGIN: ["Signed in", "تم تسجيل الدخول"],
   SETUP: ["Company setup completed", "اكتمل إعداد الشركة"],
@@ -157,6 +181,10 @@ const permissions: Record<string, [string, string]> = {
   REUSABLE_CUSTOM_MANAGE: [
     "Manage reusable custom items",
     "إدارة الأصناف المخصصة المحفوظة",
+  ],
+  AI_PRODUCT_ENRICH: [
+    "Research and confirm AI product details",
+    "البحث عن تفاصيل المنتجات وتأكيدها بالذكاء الاصطناعي",
   ],
 };
 const object = (v: any): Record<string, any> =>

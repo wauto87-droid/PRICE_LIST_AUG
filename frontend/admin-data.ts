@@ -1,4 +1,14 @@
 export type AdminResult = { section: string; payload: any } | null;
+export const selfLoadingAdminSections = [
+  "imports",
+  "rules",
+  "quotation-settings",
+  "discount-requests",
+  "sales-price-check",
+  "quantity-finder",
+  "price-watcher",
+  "reusable-custom-items",
+] as const;
 export function sectionData(result: AdminResult, section: string) {
   return result?.section === section ? result.payload : null;
 }
@@ -20,8 +30,7 @@ export function validateAdminData(section: string, value: any) {
           "updatedTodayItems",
           "draftQuotations",
           "issuedTodayItems",
-        ].every((key) => Array.isArray(value[key]))
-        &&
+        ].every((key) => Array.isArray(value[key])) &&
         Number.isInteger(value.minimumProtectedPage) &&
         Number.isInteger(value.minimumProtectedPageSize) &&
         Number.isInteger(value.minimumProtectedTotalRows) &&
@@ -48,12 +57,13 @@ export function validateAdminData(section: string, value: any) {
             ["ALL", "COST_MARKUP", "LIST_DISCOUNT", "FIXED"].includes(
               value.methodFilter,
             ) &&
+            ["ALL", "MISSING", "COMPLETE"].includes(value.contentFilter) &&
             Number.isInteger(value.selectionOffset) &&
             typeof value.selectionHasMore === "boolean" &&
             typeof value.selectionLimitReached === "boolean"
-        : section === "settings"
-          ? object
-          : Array.isArray(value);
+          : section === "settings"
+            ? object
+            : Array.isArray(value);
   if (!valid)
     throw new Error(
       "Unexpected administration response. Refresh this section or try again.",

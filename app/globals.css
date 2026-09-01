@@ -1213,6 +1213,119 @@ strong + small {
   max-height: 86vh;
   overflow: auto;
 }
+.product-enrichment-panel {
+  margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+.ai-config {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+.ai-config summary,
+.product-details-editor summary,
+.lookup-product-details summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inline-field input {
+  width: 80px;
+}
+.ai-job-history {
+  max-height: 130px;
+  overflow: auto;
+}
+.ai-review {
+  display: grid;
+  gap: 12px;
+}
+.ai-review progress {
+  width: 100%;
+  height: 12px;
+}
+.ai-review-list {
+  display: grid;
+  gap: 12px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.ai-review-row {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+.ai-review-row.uncertain {
+  border-color: #d9a514;
+}
+.ai-review-row.failed,
+.ai-review-row.not_found {
+  border-color: var(--danger);
+}
+.ai-review-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ai-review-select > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ai-original {
+  background: var(--surface-muted);
+  padding: 10px;
+  border-radius: 10px;
+}
+.ai-original p {
+  margin: 4px 0 0;
+}
+.ai-suggestion .span-all {
+  grid-column: 1 / -1;
+}
+.ai-suggestion textarea {
+  min-height: 78px;
+}
+.product-details-editor {
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+}
+.product-details-editor .form-grid {
+  margin-top: 12px;
+}
+.lookup-product-details {
+  margin-top: 6px;
+  max-width: 680px;
+}
+.lookup-product-details dl {
+  margin: 8px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 12px;
+}
+.lookup-product-details dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lookup-product-details dt {
+  font-weight: 700;
+}
+.lookup-product-details dd {
+  margin: 0;
+  text-align: end;
+}
 @media (max-width: 720px) {
   .watcher-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));

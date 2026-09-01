@@ -45,6 +45,30 @@ export const productInput = z
     unit: z.string().trim().min(1).max(20).default("pcs"),
     quantityPrecision: z.number().int().min(0).max(3).default(0),
     active: z.boolean().default(true),
+    details: z
+      .object({
+        manufacturer: z.string().trim().max(200).default(""),
+        productName: z.string().trim().max(300).default(""),
+        productType: z.string().trim().max(200).default(""),
+        series: z.string().trim().max(200).default(""),
+        specifications: z
+          .array(
+            z
+              .object({
+                label: z.string().trim().min(1).max(120),
+                value: z.string().trim().min(1).max(300),
+              })
+              .strict(),
+          )
+          .max(30)
+          .default([]),
+        applications: z
+          .array(z.string().trim().min(1).max(300))
+          .max(20)
+          .default([]),
+      })
+      .strict()
+      .optional(),
     levels: z.array(levelInput).min(1).max(3).optional(),
     defaultLevel: levelCode.optional(),
   })
