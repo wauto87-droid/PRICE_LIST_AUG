@@ -10,6 +10,8 @@ import {
 } from "../backend/auth/service";
 import { mapRows } from "../backend/imports/service";
 import { json } from "../backend/core/audit";
+import { productInput } from "../backend/pricing/engine";
+import { importCandidate } from "../backend/pricing/transfer";
 
 test("supplier quote imports require exactly one unit-price destination", async () => {
   const db = await embedded();
@@ -126,4 +128,35 @@ test("supplier quote imports require exactly one unit-price destination", async 
   assert.deepEqual(row!.errors, []);
   assert.equal(row!.proposed.levels[0].fixedPrice, "60.94");
   await db.close?.();
+});
+
+test("supplier cost mapping replaces an existing default level with staff markup pricing", () => {
+  const existing = productInput.parse({
+    partNumber: "3RU2126-1GB0",
+    description: "Existing relay",
+    method: "LIST_DISCOUNT",
+    cost: "20",
+    listPrice: "100",
+    vat: "15",
+    unit: "Piece",
+    defaultLevel: "END_CUSTOMER",
+    levels: [
+      {
+        code: "END_CUSTOMER",
+        method: "LIST_DISCOUNT",
+        listPrice: "100",
+        baseDiscount: "0",
+      },
+    ],
+  });
+  const updated = importCandidate(
+    { cost: "77.22" },
+    { method: "COST_MARKUP", markup: "0", baseDiscount: "0" },
+    existing,
+    true,
+  );
+  const level = updated.levels!.find((item) => item.code === "END_CUSTOMER")!;
+  assert.equal(updated.cost, "77.22");
+  assert.equal(level.method, "COST_MARKUP");
+  assert.equal(level.markup, "0");
 });

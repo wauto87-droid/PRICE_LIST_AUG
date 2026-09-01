@@ -155,6 +155,7 @@ async function stageImportRow(
   guidedImport: z.infer<typeof guidedImportSchema> | null,
   mode: "UPDATE_ONLY" | "CREATE_UPDATE",
   quickImport: boolean,
+  applyPricingDefaultsToExisting = false,
 ) {
   let proposed = extractMappedValues(row.raw, mapping);
   const errors: string[] = [];
@@ -191,7 +192,12 @@ async function stageImportRow(
       if (partNumber && !trimMappedValue(proposed.description))
         proposed.description = current?.description || partNumber;
     }
-    proposed = importCandidate(proposed, productDefaults, current);
+    proposed = importCandidate(
+      proposed,
+      productDefaults,
+      current,
+      applyPricingDefaultsToExisting,
+    );
     const parsed = validateProduct(productInput.parse(proposed));
     if (!quickImport && !duplicate && mode === "UPDATE_ONLY")
       errors.push(
@@ -592,6 +598,9 @@ export async function mapRows(
     assert(job.version === data.version, 409, "Import changed. Reload");
     const mode = data.mode ?? job.mode;
     const quickImport = data.quickImport ?? quickImportEnabled(job.defaults);
+    const applyPricingDefaultsToExisting =
+      job.summary?.profile === "SUPPLIER_QUOTE" &&
+      data.mapping.cost === "Unit price";
     if (job.summary?.profile === "SUPPLIER_QUOTE") {
       const quotePriceMappings = supplierQuotePriceTargets.filter(
         (field) => data.mapping[field] === "Unit price",
@@ -621,6 +630,7 @@ export async function mapRows(
         guidedImport,
         mode,
         quickImport,
+        applyPricingDefaultsToExisting,
       );
       await tx.query(
         "UPDATE import_rows SET proposed=$2,errors=$3,duplicate_id=$4,expected_version=$5,decision='REVIEW',verified=false WHERE id=$1",

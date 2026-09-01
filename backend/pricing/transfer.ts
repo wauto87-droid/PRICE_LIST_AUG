@@ -25,8 +25,21 @@ export function importCandidate(
   mapped: Record<string, any>,
   defaults: Record<string, any>,
   existing?: ProductInput,
+  applyPricingDefaultsToExisting = false,
 ) {
-  const p: Record<string, any> = { ...(existing ?? defaults), ...mapped };
+  const pricingDefaults = applyPricingDefaultsToExisting
+    ? Object.fromEntries(
+        ["method", "markup", "listPrice", "baseDiscount"].flatMap((key) =>
+          defaults[key] === undefined ? [] : [[key, defaults[key]]],
+        ),
+      )
+    : {};
+  const pricingInputs = { ...pricingDefaults, ...mapped };
+  const p: Record<string, any> = {
+    ...(existing ?? defaults),
+    ...pricingDefaults,
+    ...mapped,
+  };
   for (const key of ["active", "minimumEnabled"])
     if (p[key] !== undefined) p[key] = booleanValue(p[key]);
   if (p.quantityPrecision !== undefined)
@@ -56,15 +69,16 @@ export function importCandidate(
     if (
       existing &&
       ["method", "markup", "listPrice", "baseDiscount"].some(
-        (k) => mapped[k] !== undefined,
+        (k) => pricingInputs[k] !== undefined,
       )
     ) {
       const current = levels.find((l) => l.code === existing.defaultLevel)!;
-      if (mapped.method !== undefined) current.method = mapped.method;
+      if (pricingInputs.method !== undefined)
+        current.method = pricingInputs.method;
       for (const k of ["markup", "listPrice", "baseDiscount"] as const)
-        if (mapped[k] !== undefined) current[k] = mapped[k];
-      if (current.method === "FIXED" && mapped.listPrice !== undefined)
-        current.fixedPrice = mapped.listPrice;
+        if (pricingInputs[k] !== undefined) current[k] = pricingInputs[k];
+      if (current.method === "FIXED" && pricingInputs.listPrice !== undefined)
+        current.fixedPrice = pricingInputs.listPrice;
     }
     for (const change of changes) {
       const index = levels.findIndex((l) => l.code === change.code);

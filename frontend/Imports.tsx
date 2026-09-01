@@ -494,7 +494,7 @@ export default function Imports({
     guidedGroupPresets[groupValue] || guidedDefaultPreset;
   const supplierQuotePricingDefaults =
     supplierQuotePriceRole === "cost"
-      ? { method: "COST_MARKUP" }
+      ? { method: "COST_MARKUP", markup: "0", baseDiscount: "0" }
       : supplierQuotePriceRole === "listPrice"
         ? { method: "LIST_DISCOUNT" }
         : supplierQuotePriceRole
