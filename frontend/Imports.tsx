@@ -420,7 +420,11 @@ export default function Imports({
     setConfirmation(null);
     setPage(j.page || 0);
     setRowView("all");
-    setReviewSection("summary");
+    // Completed imports cannot be edited, but their staged rows remain useful
+    // for auditing, including after a rollback.
+    setReviewSection(
+      ["IMPORTED", "ROLLED_BACK"].includes(j.status) ? "all" : "summary",
+    );
     setQuickActionMessage("");
     setGroupValues(j.groupValues || []);
     setDefaults(
@@ -1505,8 +1509,12 @@ export default function Imports({
                 {!reviewEditable && (
                   <span className="muted">
                     {t(
-                      "These rows are read-only because this import was already completed. Review the problems here, then re-upload or remap the file to fix them.",
-                      "هذه الصفوف للقراءة فقط لأن هذا الاستيراد اكتمل بالفعل. راجع المشكلات هنا ثم أعد رفع الملف أو أعد ربطه لإصلاحها.",
+                      job?.status === "ROLLED_BACK"
+                        ? "This import was rolled back. The original staged rows are retained here for review only."
+                        : "These rows are read-only because this import was already completed. Review the problems here, then re-upload or remap the file to fix them.",
+                      job?.status === "ROLLED_BACK"
+                        ? "تم التراجع عن هذا الاستيراد. يتم الاحتفاظ بالصفوف المرحلية الأصلية هنا للمراجعة فقط."
+                        : "هذه الصفوف للقراءة فقط لأن هذا الاستيراد اكتمل بالفعل. راجع المشكلات هنا ثم أعد رفع الملف أو أعد ربطه لإصلاحها.",
                     )}
                   </span>
                 )}

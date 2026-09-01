@@ -28,6 +28,7 @@ import {
   reviewRows,
   confirmImport,
   rollback,
+  getImportPage,
   previewConfirmation,
 } from "../backend/imports/service";
 import { saveDraft, reviewIssue, issue } from "../backend/quotations/service";
@@ -332,6 +333,8 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           ),
         );
         await rollback(db, actor, id);
+        const rolledBack = await getImportPage(db, actor, id, 0, 50, "all");
+        assert.equal(rolledBack.rows.length, 1);
       },
     );
     await t.test(

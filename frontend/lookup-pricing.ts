@@ -8,6 +8,7 @@ import {
 type LookupLevel = {
   code: LevelCode;
   masterExcl: string;
+  method?: string;
 };
 
 type LookupProduct = {
@@ -36,6 +37,7 @@ export type LookupLineRequest = {
   sellingLevel: LevelCode;
   quantity: string;
   discount: string;
+  markup?: string;
   override: boolean;
   reason: string;
 };
@@ -118,18 +120,26 @@ export function buildLookupLineRequest(
   sellingLevel: LevelCode,
   quantity: string,
   discount: string,
+  markup?: string,
 ): LookupLineRequest {
   const normalizedQuantity = normalizeLookupQuantityInput(quantity);
   const normalizedDiscount = normalizeLookupDiscountInput(discount);
+  const normalizedMarkup =
+    markup === undefined ? undefined : normalizeLookupDiscountInput(markup);
   if (!normalizedQuantity)
     throw new Error("Quantity must be a positive decimal value");
   if (!normalizedDiscount)
     throw new Error("Discount must be a positive decimal value");
+  if (markup !== undefined && !normalizedMarkup)
+    throw new Error("Markup must be a positive decimal value");
   return {
     productId,
     sellingLevel,
     quantity: normalizedQuantity,
     discount: normalizedDiscount,
+    ...(normalizedMarkup === null || normalizedMarkup === undefined
+      ? {}
+      : { markup: normalizedMarkup }),
     override: false,
     reason: "",
   };

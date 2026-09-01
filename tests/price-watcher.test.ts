@@ -111,6 +111,46 @@ test("Price Watcher settles revisions and promotes one interaction without doubl
   assert.equal(report.summary.events, 1);
   assert.equal(report.summary.quantity, "2.000000");
   assert.equal(Number(report.groups[0].weighted_average), 80);
+  const costProduct: any = await db.transaction((tx) =>
+    saveProduct(tx, actor, {
+      partNumber: "WATCH-COST-1",
+      description: "Cost watcher item",
+      brand: "",
+      category: "",
+      keywords: "",
+      aliases: [],
+      method: "COST_MARKUP",
+      cost: "50",
+      markup: "25",
+      listPrice: "0",
+      baseDiscount: "0",
+      vat: "15",
+      minimumEnabled: false,
+      minimum: "0",
+      unit: "pcs",
+      quantityPrecision: 0,
+      active: true,
+    }),
+  );
+  const markupInteractionId = randomUUID();
+  await captureLookup(db, actor, {
+    interactionId: markupInteractionId,
+    line: {
+      productId: costProduct.id,
+      sellingLevel: "END_CUSTOMER",
+      quantity: "1",
+      discount: "0",
+      markup: "10",
+      override: false,
+      reason: "",
+    },
+  });
+  event = await one(db, "SELECT * FROM price_watch_events WHERE id=$1", [
+    markupInteractionId,
+  ]);
+  assert.equal(event.final_excl, "55.00");
+  assert.equal(event.requested_markup, "10.000000");
+  assert.equal(event.effective_markup, "10.000000");
   await db.close?.();
 });
 

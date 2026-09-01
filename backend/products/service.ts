@@ -593,6 +593,7 @@ async function hydrateLookupProductsByIds(db: DB, ids: string[]) {
           SELECT json_agg(
             json_build_object(
               'code',l.code,
+              'method',l.method,
               'masterExcl', level_price.master_excl,
               'masterIncl', level_price.master_incl
             )

@@ -31,6 +31,17 @@ test("Blank discount normalizes to zero for lookup requests", () => {
   );
 });
 
+test("Lookup requests retain an optional staff markup", () => {
+  const request = buildLookupLineRequest(
+    product.id,
+    "END_CUSTOMER",
+    "1",
+    "0",
+    "10",
+  );
+  assert.equal(request.markup, "10");
+});
+
 test("Lookup quantity normalization accepts draft decimals and rejects blanks", () => {
   assert.equal(normalizeLookupQuantityInput("1"), "1");
   assert.equal(normalizeLookupQuantityInput("1.250"), "1.250");

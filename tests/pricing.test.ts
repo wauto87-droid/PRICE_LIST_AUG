@@ -26,6 +26,31 @@ test("Cost + markup example", () => {
   assert.equal(p.vatAmount, "18.75");
   assert.equal(p.finalIncl, "143.75");
 });
+test("Cost-based Lookup uses the staff markup percentage from supplier cost", () => {
+  const p = calculate(
+    { ...product, cost: "50", markup: "25" },
+    { maxDiscount: "20", canOverride: false },
+    { ...input, markup: "10" },
+  );
+  assert.equal(p.pricingMode, "STAFF_MARKUP");
+  assert.equal(p.finalExcl, "55.00");
+  assert.equal(p.finalIncl, "63.25");
+  assert.equal(p.requestedMarkup, "10");
+  assert.equal(p.effectiveMarkup, "10");
+  assert.equal(p.maxMarkup, "20");
+});
+test("Cost-based Lookup caps staff markup and rejects a separate discount", () => {
+  const p = calculate(
+    { ...product, cost: "50" },
+    { maxDiscount: "10", canOverride: false },
+    { ...input, markup: "25" },
+  );
+  assert.equal(p.finalExcl, "55.00");
+  assert.equal(p.markupLimited, true);
+  assert.throws(() =>
+    calculate(product, policy, { ...input, discount: "5", markup: "10" }),
+  );
+});
 test("Custom quotation prices use exact line rounding and allow a full discount", () => {
   const priced = calculateCustom(
     {

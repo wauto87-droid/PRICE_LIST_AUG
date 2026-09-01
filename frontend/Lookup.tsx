@@ -37,9 +37,15 @@ export default function Lookup({
     [sellingLevel, setSellingLevel] = useState("END_CUSTOMER"),
     [categoryFilter, setCategoryFilter] = useState(""),
     [discount, setDiscount] = useState(""),
+    [markup, setMarkup] = useState(""),
     [quantity, setQuantity] = useState("1"),
     [price, setPrice] = useState<{
-      input: { sellingLevel: string; quantity: string; discount: string };
+      input: {
+        sellingLevel: string;
+        quantity: string;
+        discount: string;
+        markup?: string;
+      };
       value: any;
     } | null>(null),
     [error, setError] = useState(""),
@@ -63,6 +69,10 @@ export default function Lookup({
     pricingGeneration = useRef(0),
     searchGeneration = useRef(0),
     watcherEventId = useRef("");
+  const selectedLevel = selected
+    ? visibleLevels(selected).find((level) => level.code === sellingLevel)
+    : undefined;
+  const staffMarkupMode = selectedLevel?.method === "COST_MARKUP";
   useEffect(() => {
     if (!online && !settings.allowOfflineCache) {
       setSelected(null);
@@ -126,6 +136,7 @@ export default function Lookup({
                 defaultLevel,
                 sellingLevels: sellingLevels?.map((l: any) => ({
                   code: l.code,
+                  method: l.method,
                   masterExcl: l.masterExcl,
                   masterIncl: l.masterIncl,
                 })),
@@ -175,7 +186,7 @@ export default function Lookup({
     setRequestDialogOpen(false);
     setDiscountRequestReason("");
     setRequestFeedback("");
-  }, [selected?.id, sellingLevel, quantity, discount]);
+  }, [selected?.id, sellingLevel, quantity, discount, markup]);
   useEffect(() => {
     if (!selected || !online) {
       setPricingBusy(false);
@@ -184,21 +195,29 @@ export default function Lookup({
     const current = ++pricingGeneration.current;
     setPricingBusy(true);
     setPrice(null);
-    api("pricing", "POST", {
-      productId: selected.id,
-      sellingLevel: selected.defaultLevel ?? "END_CUSTOMER",
-      quantity: "1",
-      discount: "0",
-      override: false,
-      reason: "",
-    })
+    let input;
+    try {
+      input = buildLookupLineRequest(
+        selected.id,
+        sellingLevel as any,
+        quantity,
+        staffMarkupMode ? "0" : discount,
+        staffMarkupMode ? markup : undefined,
+      );
+    } catch (e) {
+      setPricingBusy(false);
+      setError((e as Error).message);
+      return;
+    }
+    api("pricing", "POST", input)
       .then((p) => {
         if (current !== pricingGeneration.current) return;
         setPrice({
           input: {
-            sellingLevel: selected.defaultLevel ?? "END_CUSTOMER",
-            quantity: "1",
-            discount: "0",
+            sellingLevel: input.sellingLevel,
+            quantity: input.quantity,
+            discount: input.discount,
+            markup: input.markup,
           },
           value: p,
         });
@@ -210,7 +229,15 @@ export default function Lookup({
       .finally(() => {
         if (current === pricingGeneration.current) setPricingBusy(false);
       });
-  }, [selected?.id, online]);
+  }, [
+    selected?.id,
+    sellingLevel,
+    quantity,
+    discount,
+    markup,
+    staffMarkupMode,
+    online,
+  ]);
   useEffect(() => {
     if (selected) discountRef.current?.focus();
   }, [selected?.id]);
@@ -242,7 +269,8 @@ export default function Lookup({
             selected.id,
             sellingLevel as any,
             quantity,
-            discount,
+            staffMarkupMode ? "0" : discount,
+            staffMarkupMode ? markup : undefined,
           ),
           watcherEventId: interactionId,
         };
@@ -255,7 +283,16 @@ export default function Lookup({
       }
     }, 2000);
     return () => window.clearTimeout(timer);
-  }, [selected?.id, sellingLevel, quantity, discount, online, attentionTick]);
+  }, [
+    selected?.id,
+    sellingLevel,
+    quantity,
+    discount,
+    markup,
+    staffMarkupMode,
+    online,
+    attentionTick,
+  ]);
   useEffect(() => {
     setHighlightedIndex((current) =>
       clampHighlightedIndex(current, filteredSuggestions.length),
@@ -275,6 +312,7 @@ export default function Lookup({
     setSellingLevel(p.defaultLevel ?? "END_CUSTOMER");
     setQuantity("1");
     setDiscount("");
+    setMarkup("");
     setPrice(null);
     setError("");
     setSuggestionsOpen(false);
@@ -287,7 +325,7 @@ export default function Lookup({
   }
   async function add() {
     if (!selected || adding) return;
-    if (!online && !settings.allowOfflineCache) return;
+    if (!online && (!settings.allowOfflineCache || staffMarkupMode)) return;
     let input;
     try {
       input = {
@@ -295,7 +333,8 @@ export default function Lookup({
           selected.id,
           sellingLevel as any,
           quantity,
-          discount,
+          staffMarkupMode ? "0" : discount,
+          staffMarkupMode ? markup : undefined,
         ),
         ...(watcherEventId.current
           ? { watcherEventId: watcherEventId.current }
@@ -347,6 +386,7 @@ export default function Lookup({
           sellingLevel: input.sellingLevel,
           quantity: input.quantity,
           discount: input.discount,
+          markup: input.markup,
         },
         value: validated,
       });
@@ -425,8 +465,7 @@ export default function Lookup({
       setRequestBusy(false);
     }
   }
-  const selectedPrice =
-    selected && visibleLevels(selected).find((l) => l.code === sellingLevel);
+  const selectedPrice = selectedLevel;
   const normalizedSelectedPart = normalizeLookupQuery(selected?.partNumber);
   const filteredResults = categoryFilter
     ? results.filter(
@@ -458,6 +497,7 @@ export default function Lookup({
     setShowRelatedMatches(false);
     setHighlightedIndex(-1);
     setPrice(null);
+    setMarkup("");
     setError("");
     setRequestFeedback("");
     setRequestDialogOpen(false);
@@ -494,14 +534,16 @@ export default function Lookup({
         selected.id,
         sellingLevel as any,
         quantity,
-        discount,
+        staffMarkupMode ? "0" : discount,
+        staffMarkupMode ? markup : undefined,
       );
       const matchesValidated =
         price?.input &&
         price.input.sellingLevel === input.sellingLevel &&
         price.input.quantity === input.quantity &&
-        price.input.discount === input.discount;
-      if (!matchesValidated) {
+        price.input.discount === input.discount &&
+        price.input.markup === input.markup;
+      if (!matchesValidated && !staffMarkupMode) {
         displayPrice = previewLookupPrice(selected, user, {
           sellingLevel: input.sellingLevel,
           quantity: input.quantity,
@@ -517,7 +559,7 @@ export default function Lookup({
     displayPrice = null;
   }
   const activeError = previewError || error;
-  const estimate = selectedPrice
+  const estimate = selectedPrice && !staffMarkupMode
     ? new Decimal(selectedPrice.masterExcl)
         .mul(
           new Decimal(1).sub(
@@ -960,7 +1002,9 @@ export default function Lookup({
               <div className="lookup-selected-side">
                 <div className="field-pair lookup-compact-fields">
                   <label>
-                    {t("DISCOUNT %", "الخصم %")}
+                    {staffMarkupMode
+                      ? t("MARKUP %", "نسبة الزيادة %")
+                      : t("DISCOUNT %", "الخصم %")}
                     <input
                       ref={discountRef}
                       inputMode="decimal"
@@ -969,9 +1013,13 @@ export default function Lookup({
                       max="100"
                       step="0.01"
                       {...wheelSafeNumberInputProps}
-                      value={discount}
+                      value={staffMarkupMode ? markup : discount}
                       placeholder="0"
-                      onChange={(e) => setDiscount(e.target.value)}
+                      onChange={(e) =>
+                        staffMarkupMode
+                          ? setMarkup(e.target.value)
+                          : setDiscount(e.target.value)
+                      }
                     />
                   </label>
                   <label>
@@ -1010,12 +1058,18 @@ export default function Lookup({
                           "تقدير دون اتصال — غير معتمد",
                         )}
                   </div>
-                  {displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
+                  {!staffMarkupMode &&
+                    displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
                     <p className="muted">
                       No minimum-price restriction; discount up to 100%
                     </p>
                   )}
-                  {displayPrice?.maxDiscount !== undefined &&
+                  {staffMarkupMode && displayPrice?.maxMarkup !== undefined && (
+                    <p className="muted">
+                      {t("Markup limit", "حد الزيادة")}: {displayPrice.maxMarkup}%
+                    </p>
+                  )}
+                  {!staffMarkupMode && displayPrice?.maxDiscount !== undefined &&
                     displayPrice.discountLimitSource !== "ZERO_FLOOR" && (
                       <p className="muted">
                         {t("Salesman limit", "حد المندوب")}:{" "}
@@ -1046,7 +1100,7 @@ export default function Lookup({
                           )}
                         </p>
                       )}
-                      {displayPrice.minimumReached && (
+                      {!staffMarkupMode && displayPrice.minimumReached && (
                         <p className="notice">
                           {t(
                             "Minimum selling price reached",
@@ -1054,7 +1108,15 @@ export default function Lookup({
                           )}
                         </p>
                       )}
-                      {displayPrice.discountLimited && (
+                      {staffMarkupMode && displayPrice.markupLimited && (
+                        <p className="notice">
+                          {t(
+                            `Markup adjusted to the current allowed limit of ${displayPrice.maxMarkup ?? user.maxDiscount}%.`,
+                            `تم تعديل الزيادة إلى الحد المسموح الحالي ${displayPrice.maxMarkup ?? user.maxDiscount}%.`,
+                          )}
+                        </p>
+                      )}
+                      {!staffMarkupMode && displayPrice.discountLimited && (
                         <p className="notice">
                           {t(
                             `Discount adjusted to the current allowed limit of ${displayPrice.maxDiscount ?? user.maxDiscount}%.`,
@@ -1062,7 +1124,7 @@ export default function Lookup({
                           )}
                         </p>
                       )}
-                      {displayPrice.overridden && (
+                      {!staffMarkupMode && displayPrice.overridden && (
                         <p className="notice error">
                           {t(
                             "Authorized minimum-price override",
@@ -1099,14 +1161,22 @@ export default function Lookup({
                         ? t(
                             pricingBusy
                               ? "Loading base validation…"
+                            : staffMarkupMode
+                              ? "Enter a valid quantity and markup to preview the price."
                               : "Enter a valid quantity and discount to preview the price.",
                             pricingBusy
                               ? "جارٍ تحميل التحقق الأساسي…"
+                            : staffMarkupMode
+                              ? "أدخل كمية ونسبة زيادة صالحتين لمعاينة السعر."
                               : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
                           )
                         : t(
-                            `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
-                            `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
+                          staffMarkupMode
+                            ? "Cost-based markup requires online price validation."
+                            : `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
+                          staffMarkupMode
+                            ? "تسعير الزيادة حسب التكلفة يتطلب التحقق عبر الإنترنت."
+                            : `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
                           )}
                     </p>
                   )}
@@ -1115,7 +1185,7 @@ export default function Lookup({
                   <div className="notice">{requestFeedback}</div>
                 )}
                 <div className="lookup-action-row">
-                  {displayPrice?.minimumReached && (
+                  {!staffMarkupMode && displayPrice?.minimumReached && (
                     <button
                       className="link-button"
                       onClick={() => {
@@ -1133,7 +1203,7 @@ export default function Lookup({
                     disabled={
                       adding ||
                       !!previewError ||
-                      (!online && !settings.allowOfflineCache)
+                      (!online && (!settings.allowOfflineCache || staffMarkupMode))
                     }
                   >
                     {t("＋ ADD TO CART", "＋ أضف إلى السلة")}

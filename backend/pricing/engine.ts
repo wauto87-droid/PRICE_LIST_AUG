@@ -81,6 +81,7 @@ export const lineInput = z
     sellingLevel: levelCode.optional(),
     quantity: decimal,
     discount: percent.default("0"),
+    markup: percent.optional(),
     override: z.boolean().default(false),
     reason: z.string().trim().max(500).default(""),
     watcherEventId: z.string().uuid().optional(),
@@ -192,7 +193,7 @@ export function calculate(
   policy: PricePolicy,
   input: Pick<
     LineInput,
-    "quantity" | "discount" | "override" | "reason" | "sellingLevel"
+    "quantity" | "discount" | "markup" | "override" | "reason" | "sellingLevel"
   >,
 ) {
   validateProduct(p);
@@ -205,18 +206,29 @@ export function calculate(
     throw new Error(
       `Quantity must be positive with at most ${p.quantityPrecision} decimals`,
     );
+  const level = selectedLevel(p, input.sellingLevel);
+  const staffMarkup = level.method === "COST_MARKUP" && input.markup !== undefined;
   const requested = new Decimal(input.discount);
   if (requested.lt(0) || requested.gt(100))
     throw new Error("Discount must be between 0 and 100");
+  if (staffMarkup && !requested.isZero())
+    throw new Error("Cost-based Lookup pricing uses markup, not discount");
+  const requestedMarkup = new Decimal(input.markup ?? "0");
+  if (requestedMarkup.lt(0) || requestedMarkup.gt(100))
+    throw new Error("Markup must be between 0 and 100");
+  const allowedMarkup = staffMarkup
+    ? Decimal.min(requestedMarkup, new Decimal(policy.maxDiscount))
+    : new Decimal(0);
   const unrestricted = !p.minimumEnabled || new Decimal(p.minimum).isZero();
   const effectiveLimit = unrestricted
     ? new Decimal(100)
     : new Decimal(policy.maxDiscount);
   const allowed = Decimal.min(requested, effectiveLimit);
-  const level = selectedLevel(p, input.sellingLevel);
-  const master = levelPrice(p, level);
+  const master = staffMarkup
+    ? new Decimal(p.cost).mul(new Decimal(1).add(allowedMarkup.div(100)))
+    : levelPrice(p, level);
   let final = new Decimal(
-    money(master.mul(new Decimal(1).sub(allowed.div(100)))),
+    money(staffMarkup ? master : master.mul(new Decimal(1).sub(allowed.div(100)))),
   );
   let overridden = false;
   const below = p.minimumEnabled && final.lt(p.minimum);
@@ -232,6 +244,7 @@ export function calculate(
   const unitVat = money(final.mul(p.vat).div(100));
   return {
     sellingLevel: level.code,
+    pricingMode: staffMarkup ? ("STAFF_MARKUP" as const) : ("DISCOUNT" as const),
     masterExcl: master.toFixed(2),
     masterIncl: money(
       master.mul(new Decimal(1).add(new Decimal(p.vat).div(100))),
@@ -241,6 +254,11 @@ export function calculate(
     effectiveDiscount: master.isZero()
       ? "0"
       : master.sub(final).div(master).mul(100).toDecimalPlaces(6).toString(),
+    requestedMarkup: requestedMarkup.toString(),
+    allowedMarkup: allowedMarkup.toString(),
+    // A minimum-price floor can raise the final price further; retain the staff
+    // markup that was requested and applied rather than treating the floor as markup.
+    effectiveMarkup: staffMarkup ? allowedMarkup.toString() : "0",
     finalExcl: final.toFixed(2),
     finalIncl: money(final.add(unitVat)),
     vatRate: new Decimal(p.vat).toString(),
@@ -250,6 +268,7 @@ export function calculate(
     quantity: qty.toString(),
     minimumReached: below && !overridden,
     discountLimited: allowed.lt(requested),
+    markupLimited: allowedMarkup.lt(requestedMarkup),
     discountLimitSource: unrestricted
       ? ("ZERO_FLOOR" as const)
       : ("ROLE_LIMIT" as const),
@@ -266,6 +285,7 @@ export function calculate(
         )
           .toDecimalPlaces(6)
           .toString(),
+    maxMarkup: staffMarkup ? new Decimal(policy.maxDiscount).toString() : "0",
   };
 }
 export type Calculation = ReturnType<typeof calculate>;

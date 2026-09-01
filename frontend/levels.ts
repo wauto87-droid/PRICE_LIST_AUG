@@ -9,7 +9,7 @@ export function levelLabel(code: string | undefined, t: Translate) {
 }
 export function visibleLevels(
   product: any,
-): { code: string; masterExcl: string; masterIncl: string }[] {
+): { code: string; masterExcl: string; masterIncl: string; method?: string }[] {
   return (
     product.sellingLevels ?? [
       {
