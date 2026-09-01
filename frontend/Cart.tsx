@@ -670,6 +670,10 @@ export default function Cart({
                     <div className="actions">
                       <button
                         title={t("Move up", "للأعلى")}
+                        aria-label={t(
+                          `Move ${l.partNumber} up`,
+                          `نقل ${l.partNumber} للأعلى`,
+                        )}
                         disabled={i === 0}
                         onClick={() => {
                           const lines = [...cart.lines];
@@ -678,6 +682,21 @@ export default function Cart({
                         }}
                       >
                         ↑
+                      </button>
+                      <button
+                        title={t("Move down", "للأسفل")}
+                        aria-label={t(
+                          `Move ${l.partNumber} down`,
+                          `نقل ${l.partNumber} للأسفل`,
+                        )}
+                        disabled={i === cart.lines.length - 1}
+                        onClick={() => {
+                          const lines = [...cart.lines];
+                          [lines[i], lines[i + 1]] = [lines[i + 1], lines[i]];
+                          setCart({ ...cart, lines });
+                        }}
+                      >
+                        ↓
                       </button>
                       <button
                         title={t("Remove", "حذف")}
