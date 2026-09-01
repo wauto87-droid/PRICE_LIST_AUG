@@ -694,6 +694,15 @@ export default function Imports({
                 {t("Problem rows", "صفوف بها مشاكل")}: {job.reviewStats.problemRows}
               </p>
             )}
+            {job.status === "AWAITING_REVIEW" &&
+              job.reviewStats?.readyRows === 0 && (
+                <div className="notice warning">
+                  {t(
+                    "This file has not changed the catalog yet. Apply the mapping, mark the verified rows ready, then import the ready rows before checking Lookup.",
+                    "لم يغيّر هذا الملف الكتالوج بعد. طبّق الربط، جهّز الصفوف التي تحققت منها، ثم استورد الصفوف الجاهزة قبل فحص البحث.",
+                  )}
+                </div>
+              )}
             {job.summary.warnings?.map((w: string) => (
               <div className="notice" key={w}>
                 {w}
