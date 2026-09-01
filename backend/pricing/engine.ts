@@ -3,11 +3,7 @@ import { z } from "zod";
 Decimal.set({ precision: 32, rounding: Decimal.ROUND_HALF_UP });
 export const decimal = z.preprocess(
   (v) =>
-    typeof v === "number"
-      ? String(v)
-      : typeof v === "string"
-        ? v.trim()
-        : v,
+    typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : v,
   z
     .string()
     .regex(/^\d{1,12}(\.\d{1,6})?$/, "Use a positive decimal, without commas"),
@@ -63,6 +59,7 @@ export const lineInput = z
     discount: percent.default("0"),
     override: z.boolean().default(false),
     reason: z.string().trim().max(500).default(""),
+    watcherEventId: z.string().uuid().optional(),
     importMeta: z.any().optional(),
   })
   .strict();
@@ -78,6 +75,7 @@ export const customLineInput = z
     discount: percent.default("0"),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
+    watcherEventId: z.string().uuid().optional(),
     importMeta: z.any().optional(),
   })
   .strict();

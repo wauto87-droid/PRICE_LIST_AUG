@@ -48,10 +48,13 @@ const unresolvedImportedCustomLineInput = z
     description: z.string().trim().min(1).max(1000),
     unit: z.string().trim().min(1).max(20).default("pcs"),
     quantity: decimal,
-    unitPriceExcl: z.union([z.literal(""), z.undefined(), z.literal("0"), decimal]).default("0"),
+    unitPriceExcl: z
+      .union([z.literal(""), z.undefined(), z.literal("0"), decimal])
+      .default("0"),
     discount: percent.default("0"),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
+    watcherEventId: z.string().uuid().optional(),
     importMeta: deliveryImportMeta.extend({
       unresolved: z.literal(true),
     }),
@@ -71,6 +74,7 @@ const quoteAdjustmentInput = z
 import { getProduct, toInput } from "../products/service";
 import { allocateNumber } from "./settings";
 import { attachToSavedQuote } from "../reusable-custom/service";
+import { syncQuotationEvents } from "../price-watcher/service";
 export const quoteInput = z
   .object({
     customer: z
@@ -108,7 +112,9 @@ const unresolvedImportedCustom = (line: any) =>
   !String(line?.unitPriceExcl ?? "").trim();
 
 function computeTotals(lines: any[], targetTotalInput = "") {
-  const base = totals(lines.flatMap((line) => (line.price ? [line.price] : [])));
+  const base = totals(
+    lines.flatMap((line) => (line.price ? [line.price] : [])),
+  );
   const unresolvedLines = lines.filter((line) => !line.price).length;
   const targetRaw = String(targetTotalInput ?? "").trim();
   if (!targetRaw)
@@ -189,6 +195,7 @@ export async function snapshot(
     [[...new Set(catalogLines.map((l) => l.productId))]],
   );
   for (const input of lines) {
+    const watcherEventId = input.watcherEventId ?? randomUUID();
     if (input.type === "CUSTOM") {
       const capturedVat = input.vat ?? settings.vat;
       const importMeta = input.importMeta
@@ -209,7 +216,7 @@ export async function snapshot(
           description: input.description,
           unit: input.unit,
           quantityPrecision: 6,
-          input: { ...input, vat: capturedVat, importMeta },
+          input: { ...input, watcherEventId, vat: capturedVat, importMeta },
           price: null,
           unresolved: true,
           timestamp: new Date().toISOString(),
@@ -245,7 +252,7 @@ export async function snapshot(
         unit: input.unit,
         quantityPrecision: 6,
         importMeta,
-        input: { ...input, vat: capturedVat, importMeta },
+        input: { ...input, watcherEventId, vat: capturedVat, importMeta },
         price,
         timestamp: new Date().toISOString(),
       });
@@ -267,6 +274,7 @@ export async function snapshot(
       importMeta: input.importMeta,
       input: {
         ...input,
+        watcherEventId,
         sellingLevel: calculation.sellingLevel,
         importMeta: input.importMeta,
       },
@@ -440,7 +448,9 @@ export async function saveDraft(
           }),
         ],
       );
-    return publicQuote(await getQuote(tx, actor, quoteId), actor);
+    const saved = await getQuote(tx, actor, quoteId);
+    await syncQuotationEvents(tx, saved);
+    return publicQuote(saved, actor);
   });
 }
 const fingerprint = (q: any, lines: any[], actor: Actor, settings: any) =>
@@ -551,6 +561,8 @@ export async function issue(
           line.input.type === "CUSTOM" ? null : line.input.reason,
         );
     await audit(tx, actor.id, "QUOTATION_ISSUE", "quotations", id);
-    return publicQuote(await getQuote(tx, actor, id), actor);
+    const issued = await getQuote(tx, actor, id);
+    await syncQuotationEvents(tx, issued);
+    return publicQuote(issued, actor);
   });
 }

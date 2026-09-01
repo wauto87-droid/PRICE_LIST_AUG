@@ -53,14 +53,16 @@ export default function Lookup({
     [stamp, setStamp] = useState(""),
     [requestDialogOpen, setRequestDialogOpen] = useState(false),
     [discountRequestReason, setDiscountRequestReason] = useState(""),
-    [requestFeedback, setRequestFeedback] = useState("");
+    [requestFeedback, setRequestFeedback] = useState(""),
+    [attentionTick, setAttentionTick] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
     comboboxId = useRef(
       `lookup-combobox-${Math.random().toString(36).slice(2)}`,
     ),
     pricingGeneration = useRef(0),
-    searchGeneration = useRef(0);
+    searchGeneration = useRef(0),
+    watcherEventId = useRef("");
   useEffect(() => {
     if (!online && !settings.allowOfflineCache) {
       setSelected(null);
@@ -213,6 +215,48 @@ export default function Lookup({
     if (selected) discountRef.current?.focus();
   }, [selected?.id]);
   useEffect(() => {
+    const changed = () => {
+      if (document.visibilityState === "visible" && document.hasFocus())
+        setAttentionTick((value) => value + 1);
+    };
+    window.addEventListener("focus", changed);
+    document.addEventListener("visibilitychange", changed);
+    return () => {
+      window.removeEventListener("focus", changed);
+      document.removeEventListener("visibilitychange", changed);
+    };
+  }, []);
+  useEffect(() => {
+    if (!selected || !online || !watcherEventId.current) return;
+    const interactionId = watcherEventId.current;
+    const timer = window.setTimeout(() => {
+      if (
+        document.visibilityState !== "visible" ||
+        !document.hasFocus() ||
+        interactionId !== watcherEventId.current
+      )
+        return;
+      try {
+        const line = {
+          ...buildLookupLineRequest(
+            selected.id,
+            sellingLevel as any,
+            quantity,
+            discount,
+          ),
+          watcherEventId: interactionId,
+        };
+        void api("price-watcher/capture", "POST", {
+          interactionId,
+          line,
+        }).catch(() => undefined);
+      } catch {
+        // Invalid/transient input is deliberately not captured.
+      }
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [selected?.id, sellingLevel, quantity, discount, online, attentionTick]);
+  useEffect(() => {
     setHighlightedIndex((current) =>
       clampHighlightedIndex(current, filteredSuggestions.length),
     );
@@ -225,6 +269,7 @@ export default function Lookup({
     node?.scrollIntoView({ block: "nearest" });
   }, [highlightedIndex, suggestionsOpen]);
   function choose(p: any) {
+    watcherEventId.current = crypto.randomUUID();
     setSelected(p);
     setQuery(p.partNumber);
     setSellingLevel(p.defaultLevel ?? "END_CUSTOMER");
@@ -245,12 +290,17 @@ export default function Lookup({
     if (!online && !settings.allowOfflineCache) return;
     let input;
     try {
-      input = buildLookupLineRequest(
-        selected.id,
-        sellingLevel as any,
-        quantity,
-        discount,
-      );
+      input = {
+        ...buildLookupLineRequest(
+          selected.id,
+          sellingLevel as any,
+          quantity,
+          discount,
+        ),
+        ...(watcherEventId.current
+          ? { watcherEventId: watcherEventId.current }
+          : {}),
+      };
     } catch (e) {
       setError((e as Error).message);
       return;
@@ -288,6 +338,10 @@ export default function Lookup({
     setError("");
     try {
       const validated = await api("pricing", "POST", input);
+      void api("price-watcher/cart", "POST", {
+        interactionId: input.watcherEventId,
+        line: input,
+      }).catch(() => undefined);
       setPrice({
         input: {
           sellingLevel: input.sellingLevel,
@@ -315,6 +369,7 @@ export default function Lookup({
       setAdding(false);
     }
     setSelected(null);
+    watcherEventId.current = "";
     setQuery("");
     setResults([]);
     setSuggestionsOpen(false);
@@ -649,32 +704,30 @@ export default function Lookup({
             </div>
             {selected && (
               <div className="lookup-selected-actions actions wrap">
-                  {hasRelatedMatches && (
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() =>
-                        setShowRelatedMatches((current) => !current)
-                      }
-                    >
-                      {showRelatedMatches
-                        ? t(
-                            `Hide similar matches (${visibleResults.length})`,
-                            `إخفاء النتائج المشابهة (${visibleResults.length})`,
-                          )
-                        : t(
-                            `Show similar matches (${visibleResults.length})`,
-                            `عرض النتائج المشابهة (${visibleResults.length})`,
-                          )}
-                    </button>
-                  )}
+                {hasRelatedMatches && (
                   <button
                     type="button"
                     className="link-button"
-                    onClick={resetLookup}
+                    onClick={() => setShowRelatedMatches((current) => !current)}
                   >
-                    {t("New search", "بحث جديد")}
+                    {showRelatedMatches
+                      ? t(
+                          `Hide similar matches (${visibleResults.length})`,
+                          `إخفاء النتائج المشابهة (${visibleResults.length})`,
+                        )
+                      : t(
+                          `Show similar matches (${visibleResults.length})`,
+                          `عرض النتائج المشابهة (${visibleResults.length})`,
+                        )}
                   </button>
+                )}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={resetLookup}
+                >
+                  {t("New search", "بحث جديد")}
+                </button>
               </div>
             )}
             {suggestionsOpen && !!filteredSuggestions.length && (
@@ -941,8 +994,8 @@ export default function Lookup({
                       </div>
                       <div className="unit-price-details">
                         <span>
-                          {t("VAT per unit", "ضريبة الوحدة")} {displayPrice.vatRate}%
-                          <b>SAR {unitVat}</b>
+                          {t("VAT per unit", "ضريبة الوحدة")}{" "}
+                          {displayPrice.vatRate}%<b>SAR {unitVat}</b>
                         </span>
                         <span>
                           {t("Unit incl. VAT", "الوحدة شاملة الضريبة")}
@@ -989,11 +1042,17 @@ export default function Lookup({
                           </b>
                         </span>
                         <span>
-                          {t("LINE TOTAL EXCL. VAT", "إجمالي السطر قبل الضريبة")}{" "}
+                          {t(
+                            "LINE TOTAL EXCL. VAT",
+                            "إجمالي السطر قبل الضريبة",
+                          )}{" "}
                           <b>SAR {displayPrice.subtotal}</b>
                         </span>
                         <span>
-                          {t("LINE TOTAL INCL. VAT", "إجمالي السطر شامل الضريبة")}{" "}
+                          {t(
+                            "LINE TOTAL INCL. VAT",
+                            "إجمالي السطر شامل الضريبة",
+                          )}{" "}
                           <b>SAR {displayPrice.total}</b>
                         </span>
                       </div>

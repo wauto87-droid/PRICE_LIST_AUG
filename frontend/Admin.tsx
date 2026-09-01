@@ -24,6 +24,7 @@ import DiscountRequestsAdmin from "./DiscountRequestsAdmin";
 import SalesPriceCheck from "./SalesPriceCheck";
 import QuantityFinder from "./QuantityFinder";
 import ReusableCustomItems from "./ReusableCustomItems";
+import PriceWatcher from "./PriceWatcher";
 import AdminDashboard from "./AdminDashboard";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
@@ -56,6 +57,7 @@ const sections = [
     "SALES_PRICE_CHECK",
   ],
   ["quantity-finder", "Quantity Finder", "تجميع الكميات", "QUANTITY_FINDER"],
+  ["price-watcher", "Price Watcher", "مراقبة الأسعار", "PRICE_WATCHER"],
   [
     "reusable-custom-items",
     "Reusable Custom Items",
@@ -651,6 +653,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <SalesPriceCheck t={t} />
         ) : section === "quantity-finder" ? (
           <QuantityFinder t={t} />
+        ) : section === "price-watcher" ? (
+          <PriceWatcher t={t} />
         ) : section === "reusable-custom-items" ? (
           <ReusableCustomItems t={t} />
         ) : !data ? (

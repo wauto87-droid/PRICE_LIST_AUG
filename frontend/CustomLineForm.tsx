@@ -130,7 +130,15 @@ export default function CustomLineForm({
           return;
         }
       }
-      const input = customLineInput.parse({ type: "CUSTOM", ...value });
+      const input = customLineInput.parse({
+        type: "CUSTOM",
+        ...value,
+        watcherEventId: crypto.randomUUID(),
+      });
+      void api("price-watcher/cart", "POST", {
+        interactionId: input.watcherEventId,
+        line: input,
+      }).catch(() => undefined);
       onAdd({
         source: "CUSTOM",
         partNumber: input.partNumber || "CUSTOM",

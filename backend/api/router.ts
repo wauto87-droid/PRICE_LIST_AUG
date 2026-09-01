@@ -17,6 +17,7 @@ import * as salesChecks from "../sales-checks/service";
 import * as quantityFinder from "../quantity-finder/service";
 import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
+import * as priceWatcher from "../price-watcher/service";
 import { calculate, lineInput, productInput } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
@@ -219,6 +220,87 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       return response({
         ...price,
         ...(settings.showMaxDiscount ? { maxDiscount } : {}),
+      });
+    }
+    if (root === "price-watcher") {
+      if (id === "capture" && method === "POST")
+        return response(
+          await priceWatcher.captureLookup(db, actor, await body(req)),
+        );
+      if (id === "cart" && method === "POST")
+        return response(
+          await priceWatcher.captureCart(
+            db,
+            actor,
+            await body(req),
+            settings.vat,
+          ),
+        );
+      const filters = {
+        from: url.searchParams.get("from") || undefined,
+        to: url.searchParams.get("to") || undefined,
+        actorId: url.searchParams.get("actorId") || undefined,
+        query: url.searchParams.get("query") ?? "",
+        customer: url.searchParams.get("customer") ?? "",
+        stage: url.searchParams.get("stage") ?? "ALL",
+        source: url.searchParams.get("source") ?? "ALL",
+        sellingLevel: url.searchParams.get("sellingLevel") ?? "ALL",
+        minDiscount: url.searchParams.get("minDiscount") || undefined,
+        maxDiscount: url.searchParams.get("maxDiscount") || undefined,
+        itemKey: url.searchParams.get("itemKey") || undefined,
+        page: url.searchParams.get("page") ?? 0,
+        pageSize: url.searchParams.get("pageSize") ?? 25,
+      };
+      if (!id && method === "GET")
+        return response(await priceWatcher.dashboard(db, actor, filters));
+      if (id === "details" && method === "GET")
+        return response(await priceWatcher.details(db, actor, filters));
+      if (id === "excel" && method === "POST")
+        return response(
+          await priceWatcher.queueExport(db, actor, filters, "XLSX"),
+        );
+      if (id === "pdf" && method === "POST")
+        return response(
+          await priceWatcher.queueExport(db, actor, filters, "PDF"),
+        );
+    }
+    if (root === "price-watcher-exports" && id) {
+      auth.requirePermission(actor, "PRICE_WATCHER");
+      uuid(id);
+      const job = await one(
+        db,
+        "SELECT * FROM jobs WHERE id=$1 AND kind IN ('PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF')",
+        [id],
+      );
+      assert(job && job.payload.ownerId === actor.id, 404, "Export not found");
+      if (action === "download") {
+        assert(job.status === "DONE", 409, "Export is not ready");
+        const pdf = job.kind.endsWith("PDF"),
+          ext = pdf ? "pdf" : "xlsx";
+        return new Response(
+          await fs.readFile(
+            path.join(
+              path.resolve(process.env.UPLOAD_DIR || ".data/uploads"),
+              "price-watcher-exports",
+              `${id}.${ext}`,
+            ),
+          ),
+          {
+            headers: {
+              "Content-Type": pdf
+                ? "application/pdf"
+                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "Content-Disposition": `attachment; filename="AMT-price-watcher.${ext}"`,
+              "Cache-Control": "no-store",
+            },
+          },
+        );
+      }
+      return response({
+        id: job.id,
+        status: job.status,
+        error: job.error,
+        format: job.kind.endsWith("PDF") ? "PDF" : "XLSX",
       });
     }
     if (root === "discount-requests") {

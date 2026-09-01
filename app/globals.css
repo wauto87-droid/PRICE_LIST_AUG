@@ -1162,6 +1162,62 @@ strong + small {
   overflow-x: auto;
   margin-top: 20px;
 }
+.price-watcher {
+  display: grid;
+  gap: 16px;
+}
+.watcher-filters .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.watcher-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+.watcher-summary article {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  display: grid;
+  gap: 5px;
+}
+.watcher-summary strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+.watcher-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.price-watcher td {
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+.price-watcher td small {
+  display: block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watcher-exception {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.danger-text {
+  color: var(--danger);
+}
+.watcher-detail {
+  width: min(1100px, calc(100vw - 32px));
+  max-height: 86vh;
+  overflow: auto;
+}
+@media (max-width: 720px) {
+  .watcher-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .quote-inline-add td,
 .quote-inline-results td {
   background: #fffaf7;
@@ -2370,7 +2426,10 @@ fieldset label {
   .workspace-compact-main .lookup-card.has-selection .lookup-selected-actions {
     min-height: 18px;
   }
-  .workspace-compact-main .lookup-card.has-selection .lookup-selected-actions button {
+  .workspace-compact-main
+    .lookup-card.has-selection
+    .lookup-selected-actions
+    button {
     padding-block: 1px;
     font-size: 11px;
   }

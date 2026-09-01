@@ -12,6 +12,7 @@ import { exportSalesCheckXlsx, salesCheckHtml } from "./sales-check";
 import { processAnalysis } from "../sales-checks/service";
 import { processAnalysis as processQuantityAnalysis } from "../quantity-finder/service";
 import { exportQuantityXlsx, quantityHtml } from "./quantity-finder";
+import { exportPriceWatcherXlsx, priceWatcherHtml } from "./price-watcher";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -34,7 +35,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -250,7 +251,9 @@ export async function runJob(db: DB) {
         );
         if (!imp) throw new Error("Delivery-note quotation import missing");
         if (!["UPLOADED", "PROCESSING"].includes(imp.status))
-          throw new Error("Delivery-note quotation import cannot be re-extracted in this state");
+          throw new Error(
+            "Delivery-note quotation import cannot be re-extracted in this state",
+          );
         await db.query(
           "UPDATE delivery_quote_jobs SET status='PROCESSING',updated_at=now() WHERE id=$1",
           [imp.id],
@@ -270,7 +273,9 @@ export async function runJob(db: DB) {
           !Array.isArray(extracted.rows) ||
           extracted.rows.length > IMPORT_MAX_ROWS
         )
-          throw new Error(`Maximum ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows per import`);
+          throw new Error(
+            `Maximum ${IMPORT_MAX_ROWS.toLocaleString("en-US")} rows per import`,
+          );
         await db.transaction(async (tx) => {
           await tx.query("DELETE FROM delivery_quote_rows WHERE job_id=$1", [
             imp.id,
@@ -305,12 +310,56 @@ export async function runJob(db: DB) {
       await exportSalesCheckXlsx(db, job.id, job.payload.reportId);
     else if (job.kind === "QUANTITY_XLSX")
       await exportQuantityXlsx(db, job.id, job.payload.reportId);
+    else if (job.kind === "PRICE_WATCHER_XLSX")
+      await exportPriceWatcherXlsx(
+        db,
+        job.id,
+        job.payload.actor,
+        job.payload.filters,
+      );
     else if (
       job.kind === "SALES_CHECK_PDF" ||
       job.kind === "QUANTITY_PDF" ||
-      job.kind === "QUOTE_PDF"
+      job.kind === "QUOTE_PDF" ||
+      job.kind === "PRICE_WATCHER_PDF"
     ) {
-      if (job.kind === "SALES_CHECK_PDF") {
+      if (job.kind === "PRICE_WATCHER_PDF") {
+        const { chromium } = await import("playwright"),
+          browser = await chromium.launch({
+            headless: true,
+            executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
+            args: ["--disable-dev-shm-usage"],
+          });
+        try {
+          const page = await browser.newPage();
+          await page.setContent(
+            await priceWatcherHtml(db, job.payload.actor, job.payload.filters),
+          );
+          const target = path.join(
+            path.resolve(process.env.UPLOAD_DIR || ".data/uploads"),
+            "price-watcher-exports",
+          );
+          await fs.mkdir(target, { recursive: true });
+          await page.pdf({
+            path: path.join(target, job.id + ".pdf"),
+            format: "A4",
+            landscape: true,
+            printBackground: true,
+            displayHeaderFooter: true,
+            headerTemplate: "<span></span>",
+            footerTemplate:
+              '<div style="font:9px Arial;color:#777;width:100%;text-align:center">Price Watcher | <span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+            margin: {
+              top: "12mm",
+              bottom: "14mm",
+              left: "10mm",
+              right: "10mm",
+            },
+          });
+        } finally {
+          await browser.close();
+        }
+      } else if (job.kind === "SALES_CHECK_PDF") {
         const { chromium } = await import("playwright"),
           browser = await chromium.launch({
             headless: true,
