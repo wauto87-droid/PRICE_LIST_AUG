@@ -1069,6 +1069,7 @@ class Deployment:
         }
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         metadata = {'commit': commit, 'migrations': self.migration_files(release)}
+        self.stage('Validate release configuration')
         self.compose('config', '--quiet', release=release)
         if self.runtime() == 'pm2':
             metadata.update(self.build_native_release(release, self.release))
@@ -1275,6 +1276,12 @@ class Deployment:
         self.env.setdefault('PM2_APP_INSTANCES', '2')
         self.env.setdefault('AI_SECRET_ENCRYPTION_KEY', secrets.token_hex(32))
         self.env.setdefault('OPENAI_PRODUCT_MODEL', 'gpt-5.4-nano')
+        # Release validation reads the shared env file. Persist newly introduced
+        # deployment defaults before compose config runs, and preserve them even
+        # if a later build stage fails.
+        atomic(self.envfile, env_text(self.env))
+        if REPORT:
+            REPORT.protect(self.env)
         previous = self.release
         if recovery and recovery.get('candidate'):
             require(re.fullmatch(r'[a-f0-9]{12}-[a-f0-9]{8}', recovery['candidate']), 'Invalid recovery release')

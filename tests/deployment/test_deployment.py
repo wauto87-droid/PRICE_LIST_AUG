@@ -1280,6 +1280,70 @@ www.softwaresolver.online {
             self.assertEqual(d.env['APP_RUNTIME'], 'pm2')
             self.assertEqual(d.env['AI_SECRET_ENCRYPTION_KEY'], original_ai_encryption_key)
 
+    def test_upgrade_persists_new_ai_secret_before_release_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            d = self.deployment()
+            d.args = m.arguments(['upgrade', '--runtime', 'pm2', '--yes', '--access-verified'])
+            d.root = root
+            d.state = root / 'state'
+            d.state.mkdir(parents=True)
+            shared = root / 'shared'
+            shared.mkdir(parents=True)
+            d.envfile = shared / '.env'
+            d.env = m.new_env(18180, runtime='pm2')
+            d.env.pop('AI_SECRET_ENCRYPTION_KEY')
+            d.env.pop('OPENAI_PRODUCT_MODEL')
+            d.envfile.write_text(m.env_text(d.env))
+            (root / '.amt-owner').write_text(m.PROJECT + '\n')
+            current_release = root / 'releases' / 'aaaaaaaaaaaa-11111111'
+            next_release = root / 'releases' / 'bbbbbbbbbbbb-22222222'
+            current_release.mkdir(parents=True)
+            next_release.mkdir(parents=True)
+            for release in (current_release, next_release):
+                (release / 'database').mkdir()
+                (release / 'database' / '001_initial.sql').write_text('-- migration')
+            (current_release / 'release.json').write_text(json.dumps({'commit': 'a' * 40}))
+            d.load_environment = Mock()
+            d.source = Mock(return_value=(ROOT, 'b' * 40))
+
+            def validate_env_before_release(*_args):
+                saved = dict(
+                    line.split('=', 1)
+                    for line in d.envfile.read_text().splitlines()
+                    if line and not line.startswith('#')
+                )
+                self.assertRegex(saved['AI_SECRET_ENCRYPTION_KEY'], r'^[a-f0-9]{64}$')
+                self.assertEqual(saved['OPENAI_PRODUCT_MODEL'], 'gpt-5.4-nano')
+                return next_release
+
+            d.prepare_release = Mock(side_effect=validate_env_before_release)
+            d.stop_runtime = Mock()
+            d.snapshot = Mock()
+            d.initialize_volumes = Mock()
+            d.compose = Mock(return_value=result())
+            d.verify_limits = Mock()
+            d.wait_db = Mock()
+            d.verify_database_runtime = Mock()
+            d.run_native_migrate = Mock()
+            d.start = Mock()
+            d.activate = Mock(side_effect=lambda release: setattr(d, 'release', release))
+            d._sync_startup_units = Mock()
+            d.refresh_proxy = Mock()
+            d.auto_cleanup_after_upgrade = Mock()
+            d.event = Mock()
+            (root / 'current').mkdir()
+            original_resolve = Path.resolve
+
+            def resolve_override(path_obj, strict=False):
+                if path_obj == root / 'current':
+                    return current_release
+                return original_resolve(path_obj, strict=strict)
+
+            with patch.object(Path, 'resolve', resolve_override), patch.object(m, 'run', return_value=result()):
+                d.deploy(False)
+            d.prepare_release.assert_called_once()
+
     def test_status_healthy_installation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
