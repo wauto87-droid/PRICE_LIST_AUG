@@ -313,6 +313,21 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         { customer: {}, lines: [{ ...line, price: "1" }] },
         400,
       );
+      const targetPrice = (
+        await request("pricing", "POST", {
+          productId,
+          sellingLevel: "END_CUSTOMER",
+          quantity: "1",
+          targetFinalExcl: "120.00",
+          override: false,
+          reason: "",
+        })
+      ).data;
+      assert.equal(targetPrice.pricingMode, "STAFF_MARKUP");
+      assert.equal(targetPrice.requestedMarkup, "20");
+      assert.equal(targetPrice.requestedDiscount, "0");
+      assert.equal(targetPrice.finalExcl, "120.00");
+      assert.equal("cost" in targetPrice, false);
     },
   );
   await t.test(
@@ -727,6 +742,8 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(Array.isArray(results[0].sellingLevels), true);
       assert.equal(typeof results[0].sellingLevels[0].masterExcl, "string");
       assert.equal(typeof results[0].sellingLevels[0].masterIncl, "string");
+      assert.equal(results[0].sellingLevels[0].entryMode, "MARKUP");
+      assert.equal("method" in results[0].sellingLevels[0], false);
       assert.equal("version" in results[0], false);
       assert.equal("aliases" in results[0], false);
       assert.equal("keywords" in results[0], false);

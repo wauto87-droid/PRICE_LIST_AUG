@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   cartLineHasBlockingError,
   catalogLivePricingInput,
-  discountForTargetPrice,
+  normalizeTargetPrice,
   livePricingSignature,
 } from "../frontend/cart-live-pricing";
 
@@ -28,26 +28,42 @@ test("Catalog live pricing accepts valid cart edits", () => {
   assert.equal(cartLineHasBlockingError(line), false);
 });
 
-test("Catalog final-price entry derives an exact bounded discount", () => {
-  assert.deepEqual(discountForTargetPrice("192", "77"), {
+test("Catalog live pricing preserves markup and supports target-price requests", () => {
+  const line = {
+    productId: "11111111-1111-1111-1111-111111111111",
+    input: { quantity: "1", discount: "0", markup: "54" },
+  };
+  assert.equal((catalogLivePricingInput(line) as any).markup, "54");
+  assert.deepEqual(
+    catalogLivePricingInput({
+      ...line,
+      targetPriceRequested: "77.00",
+    }),
+    {
+      productId: line.productId,
+      sellingLevel: "END_CUSTOMER",
+      quantity: "1",
+      targetFinalExcl: "77.00",
+      override: false,
+      reason: "",
+    },
+  );
+});
+
+test("Catalog final-price entry validates and canonicalizes money", () => {
+  assert.deepEqual(normalizeTargetPrice("77"), {
     ok: true,
     target: "77.00",
-    discount: "59.895833",
-    aboveBase: false,
   });
-  assert.deepEqual(discountForTargetPrice("192", "200"), {
+  assert.deepEqual(normalizeTargetPrice("200."), {
     ok: true,
     target: "200.00",
-    discount: "0",
-    aboveBase: true,
   });
-  assert.equal(discountForTargetPrice("192", "12.345").ok, false);
-  assert.equal(discountForTargetPrice("192", "1,200").ok, false);
-  assert.deepEqual(discountForTargetPrice("192", "0"), {
+  assert.equal(normalizeTargetPrice("12.345").ok, false);
+  assert.equal(normalizeTargetPrice("1,200").ok, false);
+  assert.deepEqual(normalizeTargetPrice("0"), {
     ok: true,
     target: "0.00",
-    discount: "100",
-    aboveBase: false,
   });
 });
 

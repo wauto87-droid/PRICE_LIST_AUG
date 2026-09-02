@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   calculate,
+  calculateTargetPrice,
   calculateCustom,
   masterPrice,
   normalizePart,
@@ -222,6 +223,47 @@ test("Zero price and VAT do not produce division errors", () => {
 test("Normalization preserves meaningful internal punctuation", () => {
   assert.equal(normalizePart(" lc1d09m7 "), "LC1D09M7");
   assert.notEqual(normalizePart("A-1"), normalizePart("A1"));
+});
+test("Direct final-price entry derives markup for cost-based staff pricing", () => {
+  const priced = calculateTargetPrice(
+    { ...product, cost: "50" },
+    { maxDiscount: "100", canOverride: false },
+    {
+      productId: "11111111-1111-1111-8111-111111111111",
+      sellingLevel: "END_CUSTOMER",
+      quantity: "1",
+      targetFinalExcl: "77",
+      override: false,
+      reason: "",
+    },
+  );
+  assert.equal(priced.pricingMode, "STAFF_MARKUP");
+  assert.equal(priced.requestedMarkup, "54");
+  assert.equal(priced.requestedDiscount, "0");
+  assert.equal(priced.finalExcl, "77.00");
+});
+test("Direct final-price entry derives discount for list pricing and keeps limits", () => {
+  const listProduct = productInput.parse({
+    partNumber: "LIST-DIRECT",
+    description: "Direct list price",
+    method: "LIST_DISCOUNT",
+    listPrice: "192",
+    baseDiscount: "0",
+    vat: "15",
+    minimumEnabled: true,
+    minimum: "80",
+  });
+  const priced = calculateTargetPrice(listProduct, policy, {
+    productId: "11111111-1111-1111-8111-111111111111",
+    sellingLevel: "END_CUSTOMER",
+    quantity: "1",
+    targetFinalExcl: "77",
+    override: false,
+    reason: "",
+  });
+  assert.equal(priced.requestedDiscount, "59.895833");
+  assert.equal(priced.finalExcl, "80.00");
+  assert.equal(priced.minimumReached, true);
 });
 
 test("Lookup normalization ignores only common part separators", () => {

@@ -86,6 +86,7 @@ export function staffProduct(
       .filter((l) => l.active)
       .map((l) => ({
         code: l.code,
+        entryMode: l.method === "COST_MARKUP" ? "MARKUP" : "DISCOUNT",
         masterExcl: levelPrice(p, l).toFixed(2),
         masterIncl: money(
           levelPrice(p, l).mul(new Decimal(1).add(new Decimal(p.vat).div(100))),
@@ -725,7 +726,7 @@ async function hydrateLookupProductsByIds(db: DB, ids: string[]) {
           SELECT json_agg(
             json_build_object(
               'code',l.code,
-              'method',l.method,
+              'entryMode',CASE WHEN l.method='COST_MARKUP' THEN 'MARKUP' ELSE 'DISCOUNT' END,
               'masterExcl', level_price.master_excl,
               'masterIncl', level_price.master_incl
             )

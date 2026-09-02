@@ -1,5 +1,3 @@
-import Decimal from "decimal.js";
-
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const moneyInputPattern = /^\d{1,12}(?:\.\d{0,2})?$/;
 
@@ -14,22 +12,41 @@ export function catalogLivePricingInput(line: any) {
     return null;
   const quantity = decimalField(line.input.quantity);
   const discount = decimalField(line.input.discount || "0");
-  if (!decimalPattern.test(quantity) || !decimalPattern.test(discount))
+  const markup =
+    line.input.markup === undefined
+      ? undefined
+      : decimalField(line.input.markup || "0");
+  if (
+    !decimalPattern.test(quantity) ||
+    !decimalPattern.test(discount) ||
+    (markup !== undefined && !decimalPattern.test(markup))
+  )
     return null;
-  if (Number(discount) > 100) return null;
+  if (Number(discount) > 100 || (markup !== undefined && Number(markup) > 100))
+    return null;
+  if (line.targetPriceRequested)
+    return {
+      productId: line.productId,
+      sellingLevel:
+        line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
+      quantity,
+      targetFinalExcl: line.targetPriceRequested,
+      override: false,
+      reason: "",
+    };
   return {
     productId: line.productId,
     sellingLevel:
       line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
     quantity,
     discount,
+    ...(markup === undefined ? {} : { markup }),
     override: false,
     reason: "",
   };
 }
 
-export function discountForTargetPrice(masterValue: unknown, targetValue: unknown) {
-  const masterRaw = decimalField(masterValue);
+export function normalizeTargetPrice(targetValue: unknown) {
   const targetRaw = decimalField(targetValue);
   if (!targetRaw)
     return { ok: false as const, error: "Enter a final unit price before VAT." };
@@ -38,34 +55,10 @@ export function discountForTargetPrice(masterValue: unknown, targetValue: unknow
       ok: false as const,
       error: "Final price must be zero or positive, with no commas and at most two decimals.",
     };
-  if (!decimalPattern.test(masterRaw))
-    return { ok: false as const, error: "The selected selling-level price is unavailable." };
-  const master = new Decimal(masterRaw);
-  const target = new Decimal(targetRaw.endsWith(".") ? targetRaw.slice(0, -1) : targetRaw);
-  if (target.gt(master))
-    return {
-      ok: true as const,
-      target: target.toFixed(2),
-      discount: "0",
-      aboveBase: true,
-    };
-  if (master.isZero())
-    return {
-      ok: true as const,
-      target: "0.00",
-      discount: "0",
-      aboveBase: false,
-    };
+  const [whole, fraction = ""] = targetRaw.split(".");
   return {
     ok: true as const,
-    target: target.toFixed(2),
-    discount: master
-      .minus(target)
-      .div(master)
-      .mul(100)
-      .toDecimalPlaces(6)
-      .toString(),
-    aboveBase: false,
+    target: `${whole}.${fraction.padEnd(2, "0")}`,
   };
 }
 
@@ -95,9 +88,6 @@ export function livePricingSignature(line: any) {
   const input = catalogLivePricingInput(line);
   if (!input) return "";
   return JSON.stringify([
-    input.productId,
-    input.sellingLevel,
-    input.quantity,
-    input.discount,
+    input,
   ]);
 }

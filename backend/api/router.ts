@@ -19,7 +19,13 @@ import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import * as priceWatcher from "../price-watcher/service";
 import * as productEnrichment from "../product-enrichment/service";
-import { calculate, lineInput, productInput } from "../pricing/engine";
+import {
+  calculate,
+  calculateTargetPrice,
+  lineInput,
+  productInput,
+  targetLineInput,
+} from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
 const response = (
@@ -210,14 +216,22 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       );
     if (root === "pricing" && method === "POST") {
       auth.requirePermission(actor, "PRODUCT_VIEW");
-      const input = lineInput.parse(await body(req));
+      const raw = await body(req);
+      const direct = raw && typeof raw === "object" && "targetFinalExcl" in raw;
+      const input = direct ? targetLineInput.parse(raw) : lineInput.parse(raw);
       const p = await products.getProduct(db, input.productId);
       assert(p.active, 409, "Product is archived");
-      const { maxDiscount, ...price } = calculate(
-        products.toInput(p),
-        auth.pricingPolicy(actor),
-        input,
-      );
+      const { maxDiscount, ...price } = direct
+        ? calculateTargetPrice(
+            products.toInput(p),
+            auth.pricingPolicy(actor),
+            input as any,
+          )
+        : calculate(
+            products.toInput(p),
+            auth.pricingPolicy(actor),
+            input as any,
+          );
       return response({
         ...price,
         ...(settings.showMaxDiscount ? { maxDiscount } : {}),

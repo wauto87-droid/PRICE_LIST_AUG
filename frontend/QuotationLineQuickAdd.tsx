@@ -55,12 +55,20 @@ export default function QuotationLineQuickAdd({
     setBusy(true);
     setError("");
     try {
-      const input = buildLookupLineRequest(
+      const baseInput = buildLookupLineRequest(
         item.id,
         item.defaultLevel ?? "END_CUSTOMER",
         quantity,
         "0",
       );
+      const selectedLevel = visibleLevels(item).find(
+        (level) => level.code === (item.defaultLevel ?? "END_CUSTOMER"),
+      );
+      const input =
+        selectedLevel?.entryMode === "MARKUP" ||
+        selectedLevel?.method === "COST_MARKUP"
+          ? { ...baseInput, markup: "0" }
+          : baseInput;
       const price = await api("pricing", "POST", input);
       onAdd({
         productId: item.id,
@@ -107,7 +115,7 @@ export default function QuotationLineQuickAdd({
             onChange={(e) => setQuantity(e.target.value)}
           />
         </td>
-        <td>0</td>
+        <td></td>
         <td>—</td>
         <td>—</td>
         <td>

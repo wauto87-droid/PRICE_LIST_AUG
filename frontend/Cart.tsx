@@ -19,7 +19,7 @@ import {
 import {
   cartLineHasBlockingError,
   catalogLivePricingInput,
-  discountForTargetPrice,
+  normalizeTargetPrice,
   livePricingSignature,
 } from "./cart-live-pricing";
 
@@ -35,6 +35,18 @@ const unresolvedImportedCustom = (line: any) =>
   importedDeliveryMeta(line)?.unresolved === true;
 export const blankZeroDiscount = (value: unknown) =>
   Number(String(value ?? "").trim() || "0") === 0 ? "" : String(value);
+const catalogUsesMarkup = (line: any, loadedLevels: any[] = []) => {
+  const code = line.input?.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER";
+  const level = (loadedLevels.length ? loadedLevels : line.sellingLevels ?? []).find(
+    (candidate: any) => candidate.code === code,
+  );
+  return (
+    level?.entryMode === "MARKUP" ||
+    level?.method === "COST_MARKUP" ||
+    line.price?.pricingMode === "STAFF_MARKUP" ||
+    line.input?.markup !== undefined
+  );
+};
 export const normalizedCustomReference = (value: unknown) =>
   String(value ?? "").trim().toUpperCase();
 export function matchingCustomLineIndexes(
@@ -223,12 +235,20 @@ export default function Cart({
       indexes.map(async (lineIndex) => {
         const line = current.lines[lineIndex];
         const importMeta = importedDeliveryMeta(line);
-        const pricingInput = buildLookupLineRequest(
+        const basePricingInput = buildLookupLineRequest(
           product.id,
           product.defaultLevel ?? "END_CUSTOMER",
           String(line.input.quantity),
           "0",
         );
+        const selectedProductLevel = visibleLevels(product).find(
+          (level) => level.code === (product.defaultLevel ?? "END_CUSTOMER"),
+        );
+        const pricingInput =
+          selectedProductLevel?.entryMode === "MARKUP" ||
+          selectedProductLevel?.method === "COST_MARKUP"
+            ? { ...basePricingInput, markup: "0" }
+            : basePricingInput;
         const input = {
           ...pricingInput,
           type: "CATALOG" as const,
@@ -351,7 +371,6 @@ export default function Cart({
           livePriceError,
         };
       }
-      const { markup: _markup, ...catalogInput } = l.input;
       return {
         ...l,
         pending: true,
@@ -361,8 +380,12 @@ export default function Cart({
         targetPriceError: false,
         priceEntryNotice: "",
         input: {
-          ...catalogInput,
-          [key]: key === "discount" && !value.trim() ? "0" : value,
+          ...l.input,
+          [key]:
+            (key === "discount" || key === "markup") && !value.trim()
+              ? "0"
+              : value,
+          ...(key === "markup" ? { discount: "0" } : {}),
           override: false,
           reason: "",
         },
@@ -376,7 +399,7 @@ export default function Cart({
     delete pricingSignatures.current[index];
     const lines = cart.lines.map((line: any, lineIndex: number) => {
       if (lineIndex !== index || line.input?.type === "CUSTOM") return line;
-      const result = discountForTargetPrice(line.price?.masterExcl, value);
+      const result = normalizeTargetPrice(value);
       if (!result.ok)
         return {
           ...line,
@@ -386,7 +409,6 @@ export default function Cart({
           targetPriceError: true,
           priceEntryNotice: result.error,
         };
-      const { markup: _markup, ...input } = line.input;
       return {
         ...line,
         pending: true,
@@ -394,15 +416,8 @@ export default function Cart({
         targetPriceDraft: value,
         targetPriceRequested: result.target,
         targetPriceError: false,
-        priceEntryNotice: result.aboveBase
-          ? `Entered price exceeds the selected base price of SAR ${line.price.masterExcl}; the price will remain at the base price.`
-          : "",
-        input: {
-          ...input,
-          discount: result.discount,
-          override: false,
-          reason: "",
-        },
+        priceEntryNotice: "",
+        input: { ...line.input, override: false, reason: "" },
       };
     });
     setCart({ ...cart, lines });
@@ -455,8 +470,21 @@ export default function Cart({
                 (requested && requested !== price.finalExcl
                   ? `Requested SAR ${requested} was adjusted to SAR ${price.finalExcl} by pricing protection.`
                   : "");
+              const { markup: _markup, ...discountInput } = existing.input;
+              const synchronizedInput =
+                price.pricingMode === "STAFF_MARKUP"
+                  ? {
+                      ...existing.input,
+                      discount: "0",
+                      markup: price.requestedMarkup,
+                    }
+                  : {
+                      ...discountInput,
+                      discount: price.requestedDiscount,
+                    };
               return {
                 ...existing,
+                input: synchronizedInput,
                 price,
                 pending: false,
                 offline: false,
@@ -673,7 +701,7 @@ export default function Cart({
               <tr>
                 <th>{t("Part / description", "الصنف / الوصف")}</th>
                 <th>{t("Qty", "الكمية")}</th>
-                <th>{t("Discount %", "الخصم %")}</th>
+                <th>{t("Discount / Markup %", "الخصم / هامش الربح %")}</th>
                 <th>{t("Final excl. VAT", "النهائي قبل الضريبة")}</th>
                 <th>{t("Total incl. VAT", "الإجمالي شامل الضريبة")}</th>
                 <th>{t("Actions", "إجراءات")}</th>
@@ -848,8 +876,21 @@ export default function Cart({
                     />
                   </td>
                   <td>
+                    {l.input?.type !== "CUSTOM" && (
+                      <small>
+                        {catalogUsesMarkup(l, options[l.productId])
+                          ? t("Markup %", "هامش الربح %")
+                          : t("Discount %", "الخصم %")}
+                      </small>
+                    )}
                     <input
-                      aria-label={t("Discount", "الخصم") + " " + l.partNumber}
+                      aria-label={
+                        (catalogUsesMarkup(l, options[l.productId])
+                          ? t("Markup", "هامش الربح")
+                          : t("Discount", "الخصم")) +
+                        " " +
+                        l.partNumber
+                      }
                       className="compact"
                       type="number"
                       min="0"
@@ -858,8 +899,22 @@ export default function Cart({
                       {...discountSafeNumberInputProps}
                       data-cart-field="discount"
                       data-cart-row={i}
-                      value={blankZeroDiscount(l.input.discount)}
-                      onChange={(e) => change(i, "discount", e.target.value)}
+                      value={
+                        blankZeroDiscount(
+                          catalogUsesMarkup(l, options[l.productId])
+                            ? l.input.markup
+                            : l.input.discount,
+                        )
+                      }
+                      onChange={(e) =>
+                        change(
+                          i,
+                          catalogUsesMarkup(l, options[l.productId])
+                            ? "markup"
+                            : "discount",
+                          e.target.value,
+                        )
+                      }
                       onKeyDown={(e) => moveToNextEntry(e, i, "discount")}
                     />
                   </td>

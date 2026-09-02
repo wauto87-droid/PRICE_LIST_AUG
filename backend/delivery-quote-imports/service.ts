@@ -266,15 +266,17 @@ async function stageRow(
     if (matched) {
       const row = await getProduct(db, matched.id);
       const input = toInput(row);
+      const level = selectedLevel(input);
       resolution = "MATCHED_CATALOG";
       productId = matched.id;
       lineInput = {
         productId: matched.id,
         quantity,
         discount: "0",
+        ...(level.method === "COST_MARKUP" ? { markup: "0" } : {}),
         override: false,
         reason: "",
-        sellingLevel: selectedLevel(input).code,
+        sellingLevel: level.code,
         importMeta,
       };
     } else {

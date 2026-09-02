@@ -75,7 +75,9 @@ export default function Lookup({
   const selectedLevel = selected
     ? visibleLevels(selected).find((level) => level.code === sellingLevel)
     : undefined;
-  const staffMarkupMode = selectedLevel?.method === "COST_MARKUP";
+  const staffMarkupMode =
+    selectedLevel?.entryMode === "MARKUP" ||
+    selectedLevel?.method === "COST_MARKUP";
   useEffect(() => {
     if (!online && !settings.allowOfflineCache) {
       setSelected(null);

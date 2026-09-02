@@ -89,6 +89,16 @@ export const lineInput = z
   })
   .strict();
 export type LineInput = z.infer<typeof lineInput>;
+export const targetLineInput = lineInput
+  .omit({ discount: true, markup: true })
+  .extend({
+    targetFinalExcl: decimal.refine(
+      (value) => new Decimal(value).decimalPlaces() <= 2,
+      "Final price supports at most two decimal places",
+    ),
+  })
+  .strict();
+export type TargetLineInput = z.infer<typeof targetLineInput>;
 export const customLineInput = z
   .object({
     type: z.literal("CUSTOM"),
@@ -289,6 +299,34 @@ export function calculate(
           .toString(),
     maxMarkup: staffMarkup ? new Decimal(policy.maxDiscount).toString() : "0",
   };
+}
+export function calculateTargetPrice(
+  p: ProductInput,
+  policy: PricePolicy,
+  raw: TargetLineInput,
+) {
+  const input = targetLineInput.parse(raw);
+  const level = selectedLevel(p, input.sellingLevel);
+  const target = new Decimal(input.targetFinalExcl);
+  if (level.method === "COST_MARKUP") {
+    const base = new Decimal(p.cost);
+    const requestedMarkup = base.isZero()
+      ? new Decimal(0)
+      : Decimal.max(0, target.sub(base).div(base).mul(100));
+    return calculate(p, policy, {
+      ...input,
+      discount: "0",
+      markup: Decimal.min(requestedMarkup, 100).toDecimalPlaces(6).toString(),
+    });
+  }
+  const base = levelPrice(p, level);
+  const requestedDiscount = base.isZero()
+    ? new Decimal(0)
+    : Decimal.max(0, base.sub(target).div(base).mul(100));
+  return calculate(p, policy, {
+    ...input,
+    discount: Decimal.min(requestedDiscount, 100).toDecimalPlaces(6).toString(),
+  });
 }
 export type Calculation = ReturnType<typeof calculate>;
 export function calculateCustom(
