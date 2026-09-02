@@ -177,7 +177,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
     [jobId, filePath, actor.id, json({ columns: ["Date", "Doc", "Customer", "Item", "Description", "Qty", "Price"] })],
   );
   await db.query(
-    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5)",
+    "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5),($6,$2,3,$7)",
     [
       randomUUID(),
       jobId,
@@ -200,6 +200,16 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
         Qty: "1",
         Price: "",
       }),
+      randomUUID(),
+      json({
+        Date: "2026-08-30",
+        Doc: "1463",
+        Customer: "ACME",
+        Item: "LC1D09M7",
+        Description: "Returned contactor",
+        Qty: "1",
+        Price: "99",
+      }),
     ],
   );
   await mapRows(db, actor, jobId, {
@@ -215,9 +225,10 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   let opened: any = await get(db, actor, jobId);
   assert.equal(opened.status, "AWAITING_REVIEW");
   assert.equal(opened.summary.customerName, "ACME");
-  assert.equal(opened.summary.matchedRows, 1);
+  assert.equal(opened.summary.matchedRows, 2);
   assert.equal(opened.summary.customRows, 1);
   const matched = opened.rows.find((row: any) => row.resolution === "MATCHED_CATALOG");
+  const returnedDelivery = opened.rows.find((row: any) => row.raw.Doc === "1463");
   const custom = opened.rows.find((row: any) => row.resolution === "UNMATCHED_CUSTOM");
   assert.equal(matched.completed, true);
   assert.equal(custom.completed, false);
@@ -237,6 +248,12 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   opened = await get(db, actor, jobId);
   await reviewRows(db, actor, jobId, {
     version: opened.version,
+    rowIds: [returnedDelivery.id],
+    action: "REMOVE",
+  });
+  opened = await get(db, actor, jobId);
+  await reviewRows(db, actor, jobId, {
+    version: opened.version,
     rowIds: [custom.id],
     completed: true,
     updates: {
@@ -252,6 +269,10 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   });
   assert.equal(quote.customer.name, "ACME");
   assert.match(quote.customer.reference, /DN-100/);
+  assert.doesNotMatch(quote.customer.reference, /1463/);
+  assert.match(quote.customer.notes, /Delivery dates: 2026-08-31/);
+  assert.match(quote.customer.notes, /Imported from delivery notes: DN-100/);
+  assert.doesNotMatch(quote.customer.notes, /1463|2026-08-30/);
   assert.equal(quote.lines.length, 2);
   assert.equal(quote.lines[0].source, "CATALOG");
   assert.equal(quote.lines[1].source, "CUSTOM");

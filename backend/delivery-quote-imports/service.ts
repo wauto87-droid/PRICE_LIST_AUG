@@ -813,12 +813,12 @@ export async function finalize(
         [id],
       )
     ).rows;
-    const header = job.mapping
-      ? headerFromRows(rows, job.mapping)
-      : normalizeDeliveryHeader(job.header);
-    assert(!header.blockedReason, 409, String(header.blockedReason));
     const included = rows.filter((row) => row.action === "ADD");
     assert(included.length > 0, 400, "Select at least one row for the quotation");
+    const header = job.mapping
+      ? headerFromRows(included, job.mapping)
+      : normalizeDeliveryHeader(job.header);
+    assert(!header.blockedReason, 409, String(header.blockedReason));
     const quote = await saveDraft(
       tx,
       actor,
