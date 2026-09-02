@@ -372,6 +372,34 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test(
+    "Quotation updates and Price Watcher accept markup above 100 percent",
+    async () => {
+      const q = (
+        await request("quotations", "POST", {
+          customer: { name: "High markup customer" },
+          lines: [{ ...line, discount: "0", markup: "200" }],
+        })
+      ).data;
+      assert.equal(q.lines[0].price.finalExcl, "300.00");
+      assert.equal(q.lines[0].price.effectiveMarkup, "200");
+      const updated = (
+        await request("quotations/" + q.id, "PUT", {
+          customer: q.customer,
+          lines: [{ ...line, discount: "0", markup: "205.549846" }],
+          version: q.version,
+        })
+      ).data;
+      assert.equal(updated.lines[0].price.effectiveMarkup, "205.549846");
+      const event = await one(
+        db,
+        "SELECT max(requested_markup)::text AS requested_markup,max(effective_markup)::text AS effective_markup FROM price_watch_events WHERE quotation_id=$1",
+        [q.id],
+      );
+      assert.equal(event!.requested_markup, "205.549846");
+      assert.equal(event!.effective_markup, "205.549846");
+    },
+  );
+  await t.test(
     "Custom-only and mixed drafts persist without bypassing catalog items",
     async () => {
       const custom = {

@@ -267,7 +267,9 @@ export function calculate(
     ),
     requestedDiscount: requested.toString(),
     allowedDiscount: allowed.toString(),
-    effectiveDiscount: master.isZero()
+    effectiveDiscount: staffMarkup
+      ? "0"
+      : master.isZero()
       ? "0"
       : master.sub(final).div(master).mul(100).toDecimalPlaces(6).toString(),
     requestedMarkup: requestedMarkup.toString(),
