@@ -256,6 +256,7 @@ async function stageRow(
     source: "DELIVERY_NOTE" as const,
     docNo,
     docDate,
+    sourcePartNumber: partNumber,
     unresolved: false,
   };
   if (!issues.length && action === "ADD" && partNumber) {

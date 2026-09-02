@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
 import { audit, json } from "../core/audit";
@@ -428,6 +429,66 @@ function partRankedCte(activeClause: string) {
     ) AS match
     GROUP BY match.id
   )`;
+}
+
+export async function addProductAlias(
+  db: DB,
+  actor: Actor,
+  productId: string,
+  raw: unknown,
+) {
+  requirePermission(actor, "PRODUCT_EDIT");
+  const input = z
+    .object({
+      alias: z.string().trim().min(1).max(100),
+      kind: z.literal("DELIVERY_NOTE"),
+    })
+    .strict()
+    .parse(raw);
+  const normalized = normalizePart(input.alias);
+  await db.query("SELECT id FROM settings WHERE id=1 FOR UPDATE");
+  const product = await getProduct(db, productId, true);
+  const collision = await one(
+    db,
+    `SELECT id,'PRODUCT' AS source FROM products WHERE normalized_part=$1
+     UNION ALL
+     SELECT product_id AS id,'ALIAS' AS source FROM product_aliases WHERE normalized=$1
+     LIMIT 1`,
+    [normalized],
+  );
+  assert(
+    !collision || collision.id === productId,
+    409,
+    `External code already belongs to another catalog product: ${input.alias}`,
+  );
+  if (collision)
+    return {
+      alias: input.alias,
+      productId,
+      partNumber: product.part_number,
+      version: product.version,
+      created: false,
+    };
+  await db.query(
+    "INSERT INTO product_aliases(normalized,product_id,label,kind) VALUES($1,$2,$3,$4)",
+    [normalized, productId, input.alias, input.kind],
+  );
+  await audit(
+    db,
+    actor.id,
+    "PRODUCT_ALIAS_ADD",
+    "products",
+    productId,
+    null,
+    { alias: input.alias, kind: input.kind, partNumber: product.part_number },
+  );
+  return {
+    alias: input.alias,
+    productId,
+    partNumber: product.part_number,
+    version: product.version,
+    created: true,
+  };
 }
 
 function lookupPartRankedCte(activeClause: string) {

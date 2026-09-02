@@ -108,3 +108,44 @@ test("Customer notes print once after totals and before quotation terms", () => 
   );
   assert.doesNotMatch(blank, /class="customer-notes"/);
 });
+
+test("Customer-facing quotation output omits internal discount percentages", () => {
+  const html = quotationHtml(
+    {
+      number: "DR-0003",
+      status: "DRAFT",
+      created_at: "2026-09-02T00:00:00Z",
+      customer: { name: "Customer", number: "", mobile: "", reference: "" },
+      lines: [
+        {
+          partNumber: "ITEM-1",
+          description: "Item",
+          source: "CATALOG",
+          unit: "pcs",
+          price: {
+            quantity: "1",
+            finalExcl: "80.00",
+            finalIncl: "92.00",
+            effectiveDiscount: "20",
+            subtotal: "80.00",
+            vatAmount: "12.00",
+            vatRate: "15",
+            total: "92.00",
+          },
+        },
+      ],
+      totals: { subtotal: "80.00", vat: "12.00", total: "92.00" },
+    },
+    {
+      companyName: "AMT",
+      companyArabic: "",
+      currency: "SAR",
+      pdfUnitPrices: "BOTH",
+      quotation: {},
+    },
+    "",
+  );
+  assert.doesNotMatch(html, /Discount|الخصم|20%/);
+  assert.match(html, /80\.00/);
+  assert.match(html, /92\.00/);
+});

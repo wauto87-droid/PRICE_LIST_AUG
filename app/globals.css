@@ -1351,6 +1351,106 @@ strong + small {
   border-radius: 12px;
   background: #fff;
 }
+.custom-catalog-find {
+  display: block;
+  margin-top: 6px;
+}
+.custom-catalog-resolver {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: min(430px, 70vw);
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffaf7;
+}
+.custom-catalog-resolver-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.custom-catalog-resolver-head button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px;
+}
+.custom-catalog-results {
+  display: grid;
+  max-height: 250px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.custom-catalog-results button {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 7px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  text-align: start;
+  background: white;
+}
+.custom-catalog-results button:last-child {
+  border-bottom: 0;
+}
+.custom-catalog-results button.active,
+.custom-catalog-results button:hover {
+  background: #fff0f1;
+}
+.custom-catalog-results span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-catalog-confirm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+}
+.custom-catalog-confirm > div:not(.actions) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.custom-catalog-confirm span {
+  overflow-wrap: anywhere;
+}
+.custom-catalog-confirm label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.custom-catalog-confirm label input {
+  width: auto;
+}
+.custom-catalog-remember {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 700px) {
+  .custom-catalog-resolver {
+    min-width: 0;
+    width: min(100%, 92vw);
+  }
+  .custom-catalog-results button,
+  .custom-catalog-confirm {
+    grid-template-columns: 1fr;
+  }
+  .custom-catalog-confirm > span {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+}
 .delivery-price-stack {
   display: grid;
   gap: 4px;

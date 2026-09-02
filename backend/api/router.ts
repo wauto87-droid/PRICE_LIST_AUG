@@ -422,6 +422,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
       if (id === "bulk" && method === "POST")
         return response(await admin.bulkPrice(db, actor, await body(req)));
+      if (id && action === "aliases" && method === "POST") {
+        const input = await body(req);
+        return response(
+          await db.transaction((tx) =>
+            products.addProductAlias(tx, actor, uuid(id), input),
+          ),
+        );
+      }
       if (id && method === "GET") {
         auth.requirePermission(actor, "PRODUCT_VIEW");
         return response(

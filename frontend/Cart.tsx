@@ -9,6 +9,8 @@ import {
 } from "./number-input";
 import CustomLineForm from "./CustomLineForm";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
+import CustomLineCatalogResolver from "./CustomLineCatalogResolver";
+import { buildLookupLineRequest } from "./lookup-pricing";
 import { humanizeCustomLineError } from "./custom-line-errors";
 import {
   formatDeliveryDocNo,
@@ -31,6 +33,22 @@ const unresolvedImportedCustom = (line: any) =>
   line?.input?.type === "CUSTOM" &&
   importedDeliveryMeta(line) &&
   !decimalPattern.test(String(line?.input?.unitPriceExcl ?? "").trim());
+export const normalizedCustomReference = (value: unknown) =>
+  String(value ?? "").trim().toUpperCase();
+export function matchingCustomLineIndexes(
+  lines: any[],
+  index: number,
+  scope: "ROW" | "ALL_IDENTICAL",
+) {
+  const reference = normalizedCustomReference(lines[index]?.input?.partNumber);
+  if (scope === "ROW" || !reference) return [index];
+  return lines.flatMap((line, lineIndex) =>
+    line.input?.type === "CUSTOM" &&
+    normalizedCustomReference(line.input.partNumber) === reference
+      ? [lineIndex]
+      : [],
+  );
+}
 
 function computeCartTotals(lines: any[], targetTotalValue: string) {
   const base = totals(lines.flatMap((line: any) => (line.price ? [line.price] : [])));
@@ -160,6 +178,97 @@ export default function Cart({
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  async function replaceCustomWithCatalog(
+    index: number,
+    product: any,
+    scope: "ROW" | "ALL_IDENTICAL",
+    remember: boolean,
+  ) {
+    const current = cartRef.current;
+    const source = current.lines[index];
+    if (!source || source.input?.type !== "CUSTOM")
+      throw new Error("This custom line is no longer available. Reload and try again.");
+    const indexes = matchingCustomLineIndexes(current.lines, index, scope);
+    const replacements = await Promise.all(
+      indexes.map(async (lineIndex) => {
+        const line = current.lines[lineIndex];
+        const importMeta = importedDeliveryMeta(line);
+        const pricingInput = buildLookupLineRequest(
+          product.id,
+          product.defaultLevel ?? "END_CUSTOMER",
+          String(line.input.quantity),
+          "0",
+        );
+        const input = {
+          ...pricingInput,
+          type: "CATALOG" as const,
+          ...(importMeta
+            ? {
+                importMeta: {
+                  ...importMeta,
+                  sourcePartNumber:
+                    importMeta.sourcePartNumber || line.input.partNumber,
+                  unresolved: false,
+                },
+              }
+            : {}),
+        };
+        return {
+          lineIndex,
+          line: {
+            productId: product.id,
+            sellingLevel: product.defaultLevel ?? "END_CUSTOMER",
+            partNumber: product.partNumber,
+            description: product.description,
+            unit: product.unit,
+            quantityPrecision: product.quantityPrecision,
+            sellingLevels: visibleLevels(product),
+            input,
+            price: await api("pricing", "POST", pricingInput),
+            pending: false,
+            offline: false,
+          },
+        };
+      }),
+    );
+    if (
+      indexes.some(
+        (lineIndex) => cartRef.current.lines[lineIndex] !== current.lines[lineIndex],
+      )
+    )
+      throw new Error(
+        "One of these quotation rows changed while pricing was checked. Review it and try again.",
+      );
+    if (remember) {
+      await api(`products/${product.id}/aliases`, "POST", {
+        alias: String(source.input.partNumber).trim(),
+        kind: "DELIVERY_NOTE",
+      });
+    }
+    const latest = cartRef.current;
+    if (
+      indexes.some((lineIndex) => latest.lines[lineIndex] !== current.lines[lineIndex])
+    )
+      throw new Error(
+        "One of these quotation rows changed before replacement. The cart was left unchanged.",
+      );
+    const replacementMap = new Map(
+      replacements.map((replacement) => [replacement.lineIndex, replacement.line]),
+    );
+    const lines = latest.lines.map((line: any, lineIndex: number) =>
+      replacementMap.get(lineIndex) ?? line,
+    );
+    const next = { ...latest, lines };
+    cartRef.current = next;
+    setCart(next);
+    setNotice(
+      t(
+        `${replacements.length} custom row(s) replaced with ${product.partNumber}.`,
+        `تم استبدال ${replacements.length} صف مخصص بالصنف ${product.partNumber}.`,
+      ),
+    );
   }
 
   function change(index: number, key: string, value: string) {
@@ -520,6 +629,24 @@ export default function Cart({
                             change(i, "description", e.target.value)
                           }
                         />
+                        <CustomLineCatalogResolver
+                          t={t}
+                          sourceReference={String(l.input.partNumber ?? "")}
+                          sourceDescription={String(l.input.description ?? "")}
+                          identicalCount={
+                            matchingCustomLineIndexes(
+                              cart.lines,
+                              i,
+                              "ALL_IDENTICAL",
+                            ).length
+                          }
+                          canRemember={user.permissions.includes("PRODUCT_EDIT")}
+                          online={online}
+                          disabled={busy}
+                          onReplace={(product, scope, remember) =>
+                            replaceCustomWithCatalog(i, product, scope, remember)
+                          }
+                        />
                       </>
                     ) : (
                       <>
@@ -531,6 +658,14 @@ export default function Cart({
                             {importedDeliveryMeta(l)?.rowNumber || "—"} ·{" "}
                             {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
                             {importedDeliveryMeta(l)?.docDate || "—"}
+                            {importedDeliveryMeta(l)?.sourcePartNumber &&
+                              importedDeliveryMeta(l)?.sourcePartNumber !==
+                                l.partNumber && (
+                                <>
+                                  {" · "}
+                                  {t("Source part", "صنف المصدر")}: {importedDeliveryMeta(l)?.sourcePartNumber}
+                                </>
+                              )}
                           </small>
                         )}
                       </>

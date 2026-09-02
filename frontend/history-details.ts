@@ -10,6 +10,10 @@ import type { Translate } from "./api";
 const actions: Record<string, [string, string]> = {
   PRODUCT_CREATE: ["Product added", "تمت إضافة صنف"],
   PRODUCT_EDIT: ["Product updated", "تم تحديث الصنف"],
+  PRODUCT_ALIAS_ADD: [
+    "Delivery-note product alias saved",
+    "تم حفظ رمز بديل للصنف من إذن التسليم",
+  ],
   PRODUCT_ARCHIVE: ["Product archived", "تمت أرشفة الصنف"],
   PRODUCT_REACTIVATE: ["Product reactivated", "تمت إعادة تفعيل الصنف"],
   PRICE_CHANGE: ["Pricing updated", "تم تحديث الأسعار"],

@@ -207,6 +207,68 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
   const staffCookie = cookie,
     staffCsrf = csrf;
   await t.test(
+    "Only Admin can remember a delivery code as a product alias",
+    async () => {
+      await request(
+        `products/${productId}/aliases`,
+        "POST",
+        { alias: "ERP-LC1D09", kind: "DELIVERY_NOTE" },
+        403,
+      );
+      cookie = adminCookie;
+      csrf = adminCsrf;
+      const saved = (
+        await request(`products/${productId}/aliases`, "POST", {
+          alias: "ERP-LC1D09",
+          kind: "DELIVERY_NOTE",
+        })
+      ).data;
+      assert.equal(saved.created, true);
+      assert.equal(saved.partNumber, "LC1D09M7");
+      assert.equal(
+        (
+          await request(`products/${productId}/aliases`, "POST", {
+            alias: "ERP-LC1D09",
+            kind: "DELIVERY_NOTE",
+          })
+        ).data.created,
+        false,
+      );
+      assert.equal(
+        (await one(db, "SELECT kind FROM product_aliases WHERE normalized='ERP-LC1D09'"))!
+          .kind,
+        "DELIVERY_NOTE",
+      );
+      assert.equal(
+        Number(
+          (
+            await one(
+              db,
+              "SELECT count(*) AS n FROM audit_logs WHERE action='PRODUCT_ALIAS_ADD' AND entity_id=$1",
+              [productId],
+            )
+          )!.n,
+        ),
+        1,
+      );
+      await request("products", "POST", {
+        ...base,
+        partNumber: "OTHER-CATALOG-CODE",
+        description: "Other product for alias collision",
+        aliases: [],
+      });
+      await request(
+        `products/${productId}/aliases`,
+        "POST",
+        { alias: "OTHER-CATALOG-CODE", kind: "DELIVERY_NOTE" },
+        409,
+      );
+      cookie = staffCookie;
+      csrf = staffCsrf;
+      assert.equal((await request("search?q=ERP-LC1D09")).data[0].id, productId);
+    },
+  );
+  await t.test(
     "Staff cannot retrieve confidential fields or admin endpoints",
     async () => {
       const results = (await request("search?q=LC1D")).data;

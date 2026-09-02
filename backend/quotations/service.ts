@@ -30,6 +30,7 @@ const deliveryImportMeta = z
     rowNumber: z.coerce.number().int().positive().optional(),
     docNo: z.string().max(200).default(""),
     docDate: z.string().max(100).default(""),
+    sourcePartNumber: z.string().max(100).optional(),
     unresolved: z.boolean().default(false),
   })
   .passthrough();
