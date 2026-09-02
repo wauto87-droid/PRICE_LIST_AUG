@@ -1381,9 +1381,27 @@ strong + small {
   display: grid;
   max-height: 250px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #bd7c86 transparent;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: white;
+}
+.custom-catalog-results::-webkit-scrollbar {
+  width: 8px;
+}
+.custom-catalog-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-catalog-results::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #bd7c86;
+  background-clip: padding-box;
+}
+.custom-catalog-results::-webkit-scrollbar-thumb:hover {
+  background-color: #a95f6b;
 }
 .custom-catalog-results button {
   display: grid;

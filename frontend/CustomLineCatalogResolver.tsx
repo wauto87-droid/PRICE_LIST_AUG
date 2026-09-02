@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, type Translate } from "./api";
+import { nextCatalogResultHighlight } from "./catalog-result-navigation";
 
 export default function CustomLineCatalogResolver({
   t,
@@ -35,6 +36,11 @@ export default function CustomLineCatalogResolver({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const listId = useId();
+  const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    resultRefs.current[highlighted]?.scrollIntoView({ block: "nearest" });
+  }, [highlighted, results]);
 
   useEffect(() => {
     if (!open || selected || !online || !query.trim()) {
@@ -46,7 +52,7 @@ export default function CustomLineCatalogResolver({
       void api("search?q=" + encodeURIComponent(query.trim()))
         .then((items) => {
           if (!active) return;
-          setResults(items.slice(0, 5));
+          setResults(items);
           setHighlighted(0);
           setError("");
         })
@@ -105,17 +111,30 @@ export default function CustomLineCatalogResolver({
             role="combobox"
             aria-controls={listId}
             aria-expanded={!!results.length}
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-activedescendant={
+              results.length ? `${listId}-option-${highlighted}` : undefined
+            }
             placeholder={t("Search part number or description", "ابحث برقم الصنف أو الوصف")}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") close();
               if (!results.length) return;
-              if (event.key === "ArrowDown") {
+              if (
+                [
+                  "ArrowDown",
+                  "ArrowUp",
+                  "Home",
+                  "End",
+                  "PageDown",
+                  "PageUp",
+                ].includes(event.key)
+              ) {
                 event.preventDefault();
-                setHighlighted((value) => (value + 1) % results.length);
-              } else if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setHighlighted((value) => (value - 1 + results.length) % results.length);
+                setHighlighted((value) =>
+                  nextCatalogResultHighlight(value, results.length, event.key),
+                );
               } else if (event.key === "Enter") {
                 event.preventDefault();
                 setSelected(results[highlighted]);
@@ -129,9 +148,14 @@ export default function CustomLineCatalogResolver({
                 <button
                   type="button"
                   role="option"
+                  id={`${listId}-option-${index}`}
+                  tabIndex={-1}
                   aria-selected={index === highlighted}
                   className={index === highlighted ? "active" : ""}
                   key={item.id}
+                  ref={(element) => {
+                    resultRefs.current[index] = element;
+                  }}
                   onMouseEnter={() => setHighlighted(index)}
                   onClick={() => {
                     setSelected(item);
