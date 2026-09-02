@@ -15,6 +15,7 @@ import {
   get,
   reviewRows,
   finalize,
+  reopen,
   history,
   historyDateBounds,
 } from "../backend/delivery-quote-imports/service";
@@ -280,6 +281,37 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   assert.equal(
     (await one(db, "SELECT status,quote_id FROM delivery_quote_jobs WHERE id=$1", [jobId]))!.status,
     "COMPLETED",
+  );
+  const completed: any = await get(db, actor, jobId);
+  await reopen(db, actor, jobId, { version: completed.version });
+  const reopened: any = await get(db, actor, jobId);
+  assert.equal(reopened.status, "AWAITING_MAPPING");
+  assert.equal(reopened.mapping.docNo, "Doc");
+  assert.equal(reopened.rows.length, 3);
+  assert.equal(
+    (await one(db, "SELECT status FROM quotations WHERE id=$1", [quote.id]))!.status,
+    "DELETED",
+  );
+  const editedQuoteId = randomUUID();
+  await db.query(
+    "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals,version) VALUES($1,$2,'DRAFT',$3,$4,$5,$6,2)",
+    [
+      editedQuoteId,
+      "DRAFT-EDITED-" + randomUUID(),
+      actor.id,
+      json({}),
+      json([]),
+      json({}),
+    ],
+  );
+  await db.query(
+    "UPDATE delivery_quote_jobs SET status='COMPLETED',quote_id=$2,version=version+1 WHERE id=$1",
+    [jobId, editedQuoteId],
+  );
+  const edited: any = await get(db, actor, jobId);
+  await assert.rejects(
+    reopen(db, actor, jobId, { version: edited.version }),
+    /unchanged draft/i,
   );
   assert.equal(productId.length > 0, true);
   await db.close?.();

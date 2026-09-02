@@ -822,6 +822,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         if (action === "rollback" && method === "POST")
           return response(await imports.rollback(db, actor, id));
+        if (action === "reopen" && method === "POST")
+          return response(await imports.reopen(db, actor, id, await body(req)));
         if (action === "delete" && method === "POST")
           return response(await imports.deleteImport(db, actor, id));
       }
@@ -1083,6 +1085,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (action === "finalize" && method === "POST")
           return response(
             await deliveryQuoteImports.finalize(db, actor, id, await body(req)),
+          );
+        if (action === "reopen" && method === "POST")
+          return response(
+            await deliveryQuoteImports.reopen(db, actor, id, await body(req)),
           );
         if (!action && method === "DELETE")
           return response(await deliveryQuoteImports.remove(db, actor, id));

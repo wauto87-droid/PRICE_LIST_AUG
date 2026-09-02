@@ -490,6 +490,36 @@ export default function Imports({
         "",
     );
   }
+  async function reopenForMapping() {
+    if (!job) return;
+    if (
+      !(await showConfirm(
+        t(
+          "Reopen this import for mapping? Imported product changes will be rolled back first. Later product edits can block this action.",
+          "إعادة فتح هذا الاستيراد للربط؟ سيتم التراجع عن تغييرات الأصناف المستوردة أولاً. قد تمنع تعديلات الأصناف اللاحقة هذا الإجراء.",
+        ),
+      ))
+    )
+      return;
+    await onAction(
+      {
+        saving: t("Reopening import…", "جارٍ إعادة فتح الاستيراد…"),
+        success: t("Import reopened", "تمت إعادة فتح الاستيراد"),
+        successDetail: t(
+          "The original file is ready for mapping again.",
+          "الملف الأصلي جاهز للربط مرة أخرى.",
+        ),
+        error: t("Import could not be reopened", "تعذر إعادة فتح الاستيراد"),
+      },
+      async () => {
+        await api("imports/" + job.id + "/reopen", "POST", {
+          version: job.version,
+        });
+        await open(job.id);
+        await load();
+      },
+    );
+  }
   const presetForGroup = (groupValue: string) =>
     guidedGroupPresets[groupValue] || guidedDefaultPreset;
   const supplierQuotePricingDefaults =
@@ -2124,7 +2154,21 @@ export default function Imports({
                 >
                   {t("Roll back import", "التراجع عن الاستيراد")}
                 </button>
+                <button
+                  disabled={busy || actionBusy}
+                  onClick={() => void reopenForMapping()}
+                >
+                  {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+                </button>
               </>
+            )}
+            {job.status === "ROLLED_BACK" && (
+              <button
+                disabled={busy || actionBusy}
+                onClick={() => void reopenForMapping()}
+              >
+                {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+              </button>
             )}
             {error && <div className="notice error">{error}</div>}
           </section>

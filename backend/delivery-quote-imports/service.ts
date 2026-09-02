@@ -63,6 +63,8 @@ const finalizeSchema = z
   })
   .strict();
 
+const reopenSchema = finalizeSchema;
+
 const historyDateSchema = z
   .string()
   .refine((value) => !value || Boolean(isoDate(value)), "Enter a valid date");
@@ -891,6 +893,57 @@ export async function finalize(
       { quoteId: quote.id },
     );
     return quote;
+  });
+}
+
+export async function reopen(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  permission(actor);
+  const data = reopenSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const job = await loadJob(tx, actor, id, true);
+    assert(
+      job.status === "COMPLETED",
+      409,
+      "Only completed delivery-note imports can be reopened",
+    );
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    assert(job.quote_id, 409, "Completed import is missing its quotation");
+    await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [
+      job.quote_id,
+    ]);
+    const quote = await getQuote(tx, actor, job.quote_id, true);
+    assert(
+      quote.status === "DRAFT" && quote.version === 1,
+      409,
+      "Reopen is available only while the generated quotation is an unchanged draft",
+    );
+    await tx.query(
+      "UPDATE quotations SET status='DELETED',version=version+1 WHERE id=$1",
+      [quote.id],
+    );
+    await audit(tx, actor.id, "QUOTATION_DELETE", "quotations", quote.id);
+    await tx.query(
+      `UPDATE delivery_quote_jobs
+       SET status='AWAITING_MAPPING',quote_id=NULL,header='{}'::jsonb,
+           version=version+1,updated_at=now()
+       WHERE id=$1`,
+      [id],
+    );
+    await audit(
+      tx,
+      actor.id,
+      "DELIVERY_QUOTE_REOPEN",
+      "delivery_quote_jobs",
+      id,
+      { quoteId: quote.id },
+      { status: "AWAITING_MAPPING" },
+    );
+    return { ok: true };
   });
 }
 

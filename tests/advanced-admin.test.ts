@@ -28,6 +28,7 @@ import {
   reviewRows,
   confirmImport,
   rollback,
+  reopen as reopenImport,
   getImportPage,
   previewConfirmation,
 } from "../backend/imports/service";
@@ -332,9 +333,24 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
             "SELECT id FROM products WHERE normalized_part='UNKNOWN'",
           ),
         );
-        await rollback(db, actor, id);
-        const rolledBack = await getImportPage(db, actor, id, 0, 50, "all");
-        assert.equal(rolledBack.rows.length, 1);
+        const imported = await one(
+          db,
+          "SELECT version FROM import_jobs WHERE id=$1",
+          [id],
+        );
+        await reopenImport(db, actor, id, { version: imported!.version });
+        const reopened = await getImportPage(db, actor, id, 0, 50, "all");
+        assert.equal(reopened.rows.length, 1);
+        assert.equal(
+          (await one(db, "SELECT status FROM import_jobs WHERE id=$1", [id]))!
+            .status,
+          "AWAITING_REVIEW",
+        );
+        assert.equal(
+          (await one(db, "SELECT active FROM products WHERE normalized_part='UNKNOWN'"))!
+            .active,
+          false,
+        );
       },
     );
     await t.test(
@@ -596,6 +612,17 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
             "WHOLESALE",
           ).toFixed(2),
           masterPrice(before, "WHOLESALE").toFixed(2),
+        );
+        const rolledBack = await one(
+          db,
+          "SELECT version FROM import_jobs WHERE id=$1",
+          [id],
+        );
+        await reopenImport(db, actor, id, { version: rolledBack!.version });
+        assert.equal(
+          (await one(db, "SELECT status FROM import_jobs WHERE id=$1", [id]))!
+            .status,
+          "AWAITING_REVIEW",
         );
       },
     );

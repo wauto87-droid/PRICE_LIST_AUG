@@ -950,36 +950,83 @@ export async function rollback(db: DB, actor: Actor, id: string) {
       409,
       "Only completed imports can be rolled back",
     );
-    const changes = (
-      await tx.query(
-        "SELECT * FROM price_history WHERE import_id=$1 ORDER BY created_at DESC",
-        [id],
-      )
-    ).rows;
-    for (const change of changes) {
-      const current = await getProduct(tx, change.product_id);
-      assert(
-        current.version === change.resulting_version,
-        409,
-        `Rollback blocked: ${current.part_number} was edited after import. Review it manually`,
-      );
-    }
-    for (const change of changes) {
-      const current = await getProduct(tx, change.product_id);
-      await saveProduct(
-        tx,
-        actor,
-        change.before_value ?? { ...toInput(current), active: false },
-        change.product_id,
-        current.version,
-        "ROLLBACK",
-      );
-    }
+    await rollbackImportedJob(tx, actor, job);
     await tx.query(
       "UPDATE import_jobs SET status='ROLLED_BACK',version=version+1 WHERE id=$1",
       [id],
     );
     await audit(tx, actor.id, "IMPORT_ROLLBACK", "import_jobs", id);
+    return { ok: true };
+  });
+}
+
+async function rollbackImportedJob(tx: DB, actor: Actor, job: any) {
+  const changes = (
+    await tx.query(
+      "SELECT * FROM price_history WHERE import_id=$1 ORDER BY created_at DESC",
+      [job.id],
+    )
+  ).rows;
+  for (const change of changes) {
+    const current = await getProduct(tx, change.product_id);
+    assert(
+      current.version === change.resulting_version,
+      409,
+      `Rollback blocked: ${current.part_number} was edited after import. Review it manually`,
+    );
+  }
+  for (const change of changes) {
+    const current = await getProduct(tx, change.product_id);
+    await saveProduct(
+      tx,
+      actor,
+      change.before_value ?? { ...toInput(current), active: false },
+      change.product_id,
+      current.version,
+      "ROLLBACK",
+    );
+  }
+}
+
+export async function reopen(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  requirePermission(actor, "IMPORT_CONFIRM");
+  requirePermission(actor, "PRODUCT_EDIT");
+  const data = z
+    .object({ version: importVersionSchema })
+    .strict()
+    .parse(input);
+  return db.transaction(async (tx) => {
+    const job = await one(
+      tx,
+      "SELECT * FROM import_jobs WHERE id=$1 FOR UPDATE",
+      [id],
+    );
+    assert(job, 404, "Import not found");
+    assert(
+      ["IMPORTED", "ROLLED_BACK"].includes(job.status),
+      409,
+      "Only completed or rolled-back imports can be reopened",
+    );
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    if (job.status === "IMPORTED") await rollbackImportedJob(tx, actor, job);
+    await tx.query(
+      "UPDATE import_jobs SET status='AWAITING_REVIEW',version=version+1,updated_at=now() WHERE id=$1",
+      [id],
+    );
+    await audit(
+      tx,
+      actor.id,
+      "IMPORT_REOPEN",
+      "import_jobs",
+      id,
+      { status: job.status },
+      { status: "AWAITING_REVIEW" },
+    );
     return { ok: true };
   });
 }

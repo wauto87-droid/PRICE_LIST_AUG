@@ -5,6 +5,7 @@ import {
   formatDeliveryDocNo,
   formatDeliveryDate,
 } from "@/backend/pricing/normalize";
+import { showConfirm } from "./confirm";
 import { deliveryQuoteMappingDefaults } from "./delivery-quote-mapping";
 
 type HistoryScope = "converted" | "admin";
@@ -149,6 +150,26 @@ export default function DeliveryQuoteImport({
     };
     await api(`delivery-quote-imports/${job.id}/mapping`, "POST", payload);
     await open(job.id);
+  }
+
+  async function reopenForMapping() {
+    if (!job) return;
+    if (
+      !(await showConfirm(
+        t(
+          "Reopen this import for mapping? Its unchanged draft quotation will be removed. Edited or issued quotations cannot be reopened.",
+          "إعادة فتح هذا الاستيراد للربط؟ سيتم حذف عرض السعر المسودة غير المعدل. لا يمكن إعادة فتح عروض الأسعار المعدلة أو المصدرة.",
+        ),
+      ))
+    )
+      return;
+    await run(async () => {
+      await api(`delivery-quote-imports/${job.id}/reopen`, "POST", {
+        version: job.version,
+      });
+      setTab("IMPORT");
+      await open(job.id);
+    });
   }
 
   const selectedIds = Object.entries(selected)
@@ -884,10 +905,15 @@ export default function DeliveryQuoteImport({
       )}
       {job?.status === "COMPLETED" && (
         <div className="notice success">
-          {t(
-            "Quotation created from this delivery note. Opened in the current quotation workspace.",
-            "تم إنشاء عرض السعر من إذن التسليم هذا وتم فتحه في مساحة عرض السعر الحالية.",
-          )}
+          <span>
+            {t(
+              "Quotation created from this delivery note. Opened in the current quotation workspace.",
+              "تم إنشاء عرض السعر من إذن التسليم هذا وتم فتحه في مساحة عرض السعر الحالية.",
+            )}
+          </span>
+          <button type="button" disabled={busy} onClick={() => void reopenForMapping()}>
+            {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+          </button>
         </div>
       )}
       {error && <div className="notice error">{error}</div>}
