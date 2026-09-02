@@ -21,7 +21,7 @@ test("Enter navigation finds the next editable row for discounts and prices", ()
     { input: { type: "CUSTOM" } },
   ];
   assert.equal(nextEditableRow(lines, 0, "discount"), 1);
-  assert.equal(nextEditableRow(lines, 0, "unitPriceExcl"), 2);
+  assert.equal(nextEditableRow(lines, 0, "unitPriceExcl"), 1);
   assert.equal(nextEditableRow(lines, 2, "discount"), -1);
 });
 

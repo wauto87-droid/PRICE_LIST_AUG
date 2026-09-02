@@ -19,6 +19,7 @@ import {
 import {
   cartLineHasBlockingError,
   catalogLivePricingInput,
+  discountForTargetPrice,
   livePricingSignature,
 } from "./cart-live-pricing";
 
@@ -56,7 +57,7 @@ export function nextEditableRow(
   field: "discount" | "unitPriceExcl",
 ) {
   for (let index = currentIndex + 1; index < lines.length; index++) {
-    if (field === "discount" || lines[index]?.input?.type === "CUSTOM") return index;
+    if (field === "discount" || field === "unitPriceExcl") return index;
   }
   return -1;
 }
@@ -350,13 +351,55 @@ export default function Cart({
           livePriceError,
         };
       }
+      const { markup: _markup, ...catalogInput } = l.input;
       return {
         ...l,
         pending: true,
         livePriceError: "",
+        targetPriceDraft: undefined,
+        targetPriceRequested: undefined,
+        targetPriceError: false,
+        priceEntryNotice: "",
         input: {
-          ...l.input,
+          ...catalogInput,
           [key]: key === "discount" && !value.trim() ? "0" : value,
+          override: false,
+          reason: "",
+        },
+      };
+    });
+    setCart({ ...cart, lines });
+  }
+
+  function changeCatalogFinalPrice(index: number, value: string) {
+    setError("");
+    delete pricingSignatures.current[index];
+    const lines = cart.lines.map((line: any, lineIndex: number) => {
+      if (lineIndex !== index || line.input?.type === "CUSTOM") return line;
+      const result = discountForTargetPrice(line.price?.masterExcl, value);
+      if (!result.ok)
+        return {
+          ...line,
+          pending: false,
+          targetPriceDraft: value,
+          targetPriceRequested: undefined,
+          targetPriceError: true,
+          priceEntryNotice: result.error,
+        };
+      const { markup: _markup, ...input } = line.input;
+      return {
+        ...line,
+        pending: true,
+        livePriceError: "",
+        targetPriceDraft: value,
+        targetPriceRequested: result.target,
+        targetPriceError: false,
+        priceEntryNotice: result.aboveBase
+          ? `Entered price exceeds the selected base price of SAR ${line.price.masterExcl}; the price will remain at the base price.`
+          : "",
+        input: {
+          ...input,
+          discount: result.discount,
           override: false,
           reason: "",
         },
@@ -405,13 +448,25 @@ export default function Cart({
               livePricingSignature(current) !== signature
             )
               return;
-            setCartLine(index, (existing) => ({
-              ...existing,
-              price,
-              pending: false,
-              offline: false,
-              livePriceError: "",
-            }));
+            setCartLine(index, (existing) => {
+              const requested = existing.targetPriceRequested;
+              const adjusted =
+                existing.priceEntryNotice ||
+                (requested && requested !== price.finalExcl
+                  ? `Requested SAR ${requested} was adjusted to SAR ${price.finalExcl} by pricing protection.`
+                  : "");
+              return {
+                ...existing,
+                price,
+                pending: false,
+                offline: false,
+                livePriceError: "",
+                targetPriceDraft: undefined,
+                targetPriceRequested: undefined,
+                targetPriceError: false,
+                priceEntryNotice: adjusted,
+              };
+            });
             setError("");
           })
           .catch((e) => {
@@ -838,14 +893,39 @@ export default function Cart({
                       !unresolvedImportedCustom(l) && (
                         <small>{l.pending ? "—" : l.price?.finalExcl}</small>
                       )
-                    ) : l.pending ? (
-                      <small>
-                        {repricingRows[i]
-                          ? t("Refreshing…", "جارٍ التحديث…")
-                          : "—"}
-                      </small>
                     ) : (
-                      (l.price?.finalExcl ?? "—")
+                      <>
+                        <input
+                          aria-label={
+                            t("Final unit price before VAT", "سعر الوحدة النهائي قبل الضريبة") +
+                            " " +
+                            l.partNumber
+                          }
+                          className="compact"
+                          type="text"
+                          inputMode="decimal"
+                          maxLength={15}
+                          data-cart-field="unitPriceExcl"
+                          data-cart-row={i}
+                          value={
+                            l.targetPriceDraft ?? l.price?.finalExcl ?? ""
+                          }
+                          onChange={(e) =>
+                            changeCatalogFinalPrice(i, e.target.value)
+                          }
+                          onKeyDown={(e) =>
+                            moveToNextEntry(e, i, "unitPriceExcl")
+                          }
+                        />
+                        {repricingRows[i] && (
+                          <small>{t("Refreshing…", "جارٍ التحديث…")}</small>
+                        )}
+                        {!!l.priceEntryNotice && (
+                          <small className="sales-check-error">
+                            {l.priceEntryNotice}
+                          </small>
+                        )}
+                      </>
                     )}
                   </td>
                   <td>
