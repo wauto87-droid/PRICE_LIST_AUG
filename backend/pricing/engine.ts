@@ -12,6 +12,9 @@ export const percent = decimal.refine(
   (v) => new Decimal(v).lte(100),
   "Maximum is 100%",
 );
+// Markup increases a price and is not a discount. Values above 100% are valid;
+// the final supported monetary range remains the safety boundary.
+export const markupPercent = decimal;
 export const levelCode = z.enum(["WHOLESALE", "RETAIL", "END_CUSTOMER"]);
 export type LevelCode = z.infer<typeof levelCode>;
 export const levelInput = z
@@ -81,7 +84,7 @@ export const lineInput = z
     sellingLevel: levelCode.optional(),
     quantity: decimal,
     discount: percent.default("0"),
-    markup: percent.optional(),
+    markup: markupPercent.optional(),
     override: z.boolean().default(false),
     reason: z.string().trim().max(500).default(""),
     watcherEventId: z.string().uuid().optional(),
@@ -226,11 +229,8 @@ export function calculate(
   if (staffMarkup && !requested.isZero())
     throw new Error("Cost-based Lookup pricing uses markup, not discount");
   const requestedMarkup = new Decimal(input.markup ?? "0");
-  if (requestedMarkup.lt(0) || requestedMarkup.gt(100))
-    throw new Error("Markup must be between 0 and 100");
-  const allowedMarkup = staffMarkup
-    ? Decimal.min(requestedMarkup, new Decimal(policy.maxDiscount))
-    : new Decimal(0);
+  if (requestedMarkup.lt(0)) throw new Error("Markup cannot be negative");
+  const allowedMarkup = staffMarkup ? requestedMarkup : new Decimal(0);
   const unrestricted = !p.minimumEnabled || new Decimal(p.minimum).isZero();
   const effectiveLimit = unrestricted
     ? new Decimal(100)
@@ -239,6 +239,8 @@ export function calculate(
   const master = staffMarkup
     ? new Decimal(p.cost).mul(new Decimal(1).add(allowedMarkup.div(100)))
     : levelPrice(p, level);
+  if (master.gt("999999999999.99"))
+    throw new Error("Calculated price exceeds the supported range");
   let final = new Decimal(
     money(staffMarkup ? master : master.mul(new Decimal(1).sub(allowed.div(100)))),
   );
@@ -256,6 +258,8 @@ export function calculate(
   const unitVat = money(final.mul(p.vat).div(100));
   return {
     sellingLevel: level.code,
+    adjustmentMode:
+      level.method === "COST_MARKUP" ? ("MARKUP" as const) : ("DISCOUNT" as const),
     pricingMode: staffMarkup ? ("STAFF_MARKUP" as const) : ("DISCOUNT" as const),
     masterExcl: master.toFixed(2),
     masterIncl: money(
@@ -280,7 +284,7 @@ export function calculate(
     quantity: qty.toString(),
     minimumReached: below && !overridden,
     discountLimited: allowed.lt(requested),
-    markupLimited: allowedMarkup.lt(requestedMarkup),
+    markupLimited: false,
     discountLimitSource: unrestricted
       ? ("ZERO_FLOOR" as const)
       : ("ROLE_LIMIT" as const),
@@ -297,7 +301,7 @@ export function calculate(
         )
           .toDecimalPlaces(6)
           .toString(),
-    maxMarkup: staffMarkup ? new Decimal(policy.maxDiscount).toString() : "0",
+    maxMarkup: undefined,
   };
 }
 export function calculateTargetPrice(
@@ -316,7 +320,7 @@ export function calculateTargetPrice(
     return calculate(p, policy, {
       ...input,
       discount: "0",
-      markup: Decimal.min(requestedMarkup, 100).toDecimalPlaces(6).toString(),
+      markup: requestedMarkup.toDecimalPlaces(6).toString(),
     });
   }
   const base = levelPrice(p, level);

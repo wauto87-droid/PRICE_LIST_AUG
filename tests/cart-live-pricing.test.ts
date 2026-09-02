@@ -79,6 +79,22 @@ test("Cart blocking rules reject invalid catalog and custom edits", () => {
   assert.equal(
     cartLineHasBlockingError({
       productId: "11111111-1111-1111-1111-111111111111",
+      price: { adjustmentMode: "MARKUP" },
+      input: { quantity: "1", discount: "20" },
+    }),
+    true,
+  );
+  assert.equal(
+    cartLineHasBlockingError({
+      productId: "11111111-1111-1111-1111-111111111111",
+      price: { adjustmentMode: "DISCOUNT" },
+      input: { quantity: "1", discount: "0", markup: "20" },
+    }),
+    true,
+  );
+  assert.equal(
+    cartLineHasBlockingError({
+      productId: "11111111-1111-1111-1111-111111111111",
       input: { quantity: "2", discount: "120" },
     }),
     true,

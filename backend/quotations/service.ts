@@ -327,6 +327,42 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
     403,
     "This quotation belongs to another user",
   );
+  if (q.status === "DRAFT") {
+    const productIds = [
+      ...new Set(
+        q.lines
+          .filter((line: any) => line.source !== "CUSTOM" && line.productId)
+          .map((line: any) => line.productId as string),
+      ),
+    ];
+    if (productIds.length) {
+      const levels = (
+        await db.query(
+          "SELECT product_id,code,method FROM product_selling_levels WHERE product_id=ANY($1::uuid[])",
+          [productIds],
+        )
+      ).rows;
+      const methods = new Map(
+        levels.map((level) => [`${level.product_id}:${level.code}`, level.method]),
+      );
+      q.lines = q.lines.map((line: any) => {
+        if (!line.price || line.source === "CUSTOM" || !line.productId) return line;
+        const code =
+          line.input?.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER";
+        const method = methods.get(`${line.productId}:${code}`);
+        return method
+          ? {
+              ...line,
+              price: {
+                ...line.price,
+                adjustmentMode:
+                  method === "COST_MARKUP" ? "MARKUP" : "DISCOUNT",
+              },
+            }
+          : line;
+      });
+    }
+  }
   return q;
 }
 export async function nextDraftNumber(db: DB, settings: any) {

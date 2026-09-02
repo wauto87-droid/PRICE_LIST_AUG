@@ -22,8 +22,7 @@ export function catalogLivePricingInput(line: any) {
     (markup !== undefined && !decimalPattern.test(markup))
   )
     return null;
-  if (Number(discount) > 100 || (markup !== undefined && Number(markup) > 100))
-    return null;
+  if (Number(discount) > 100) return null;
   if (line.targetPriceRequested)
     return {
       productId: line.productId,
@@ -81,6 +80,12 @@ export function cartLineHasBlockingError(line: any) {
       Number(decimalField(line.input.discount || "0")) > 100
     );
   }
+  if (
+    line.price?.adjustmentMode &&
+    (line.price.adjustmentMode === "MARKUP") !==
+      (line.input.markup !== undefined)
+  )
+    return true;
   return !catalogLivePricingInput(line);
 }
 

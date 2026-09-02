@@ -1015,7 +1015,7 @@ export default function Lookup({
                       inputMode="decimal"
                       type="number"
                       min="0"
-                      max="100"
+                      max={staffMarkupMode ? undefined : "100"}
                       step="0.01"
                       {...discountSafeNumberInputProps}
                       value={staffMarkupMode ? markup : discount}

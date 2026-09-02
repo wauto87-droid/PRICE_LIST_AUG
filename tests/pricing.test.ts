@@ -39,16 +39,17 @@ test("Cost-based Lookup uses the staff markup percentage from supplier cost", ()
   assert.equal(p.finalIncl, "63.25");
   assert.equal(p.requestedMarkup, "10");
   assert.equal(p.effectiveMarkup, "10");
-  assert.equal(p.maxMarkup, "20");
+  assert.equal(p.maxMarkup, undefined);
 });
-test("Cost-based Lookup caps staff markup and rejects a separate discount", () => {
+test("Cost-based Lookup permits markup above 100% and rejects a separate discount", () => {
   const p = calculate(
     { ...product, cost: "50" },
     { maxDiscount: "10", canOverride: false },
-    { ...input, markup: "25" },
+    { ...input, markup: "200" },
   );
-  assert.equal(p.finalExcl, "55.00");
-  assert.equal(p.markupLimited, true);
+  assert.equal(p.finalExcl, "150.00");
+  assert.equal(p.effectiveMarkup, "200");
+  assert.equal(p.markupLimited, false);
   assert.throws(() =>
     calculate(product, policy, { ...input, discount: "5", markup: "10" }),
   );

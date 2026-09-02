@@ -343,11 +343,25 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.match(q.number, /^DR-\d{4,}$/);
       assert.doesNotMatch(q.number, /^DR-\d{8}-/);
       assert.equal(q.lines[0].price.finalExcl, "110.00");
+      assert.equal(q.lines[0].price.adjustmentMode, "MARKUP");
       assert.equal(q.lines[0].price.maxDiscount, undefined);
       assert.equal(q.customer.notes, "Call before delivery");
       assert.equal(
         (await request("quotations/" + quoteId)).data.customer.notes,
         "Call before delivery",
+      );
+      await db.query(
+        "UPDATE product_selling_levels SET method='LIST_DISCOUNT',list_price='125',base_discount='0' WHERE product_id=$1 AND code='END_CUSTOMER'",
+        [productId],
+      );
+      assert.equal(
+        (await request("quotations/" + quoteId)).data.lines[0].price
+          .adjustmentMode,
+        "DISCOUNT",
+      );
+      await db.query(
+        "UPDATE product_selling_levels SET method='COST_MARKUP',markup='25' WHERE product_id=$1 AND code='END_CUSTOMER'",
+        [productId],
       );
       await request(
         "quotations/" + quoteId,

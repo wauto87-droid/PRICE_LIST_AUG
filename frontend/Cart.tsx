@@ -36,13 +36,16 @@ const unresolvedImportedCustom = (line: any) =>
 export const blankZeroDiscount = (value: unknown) =>
   Number(String(value ?? "").trim() || "0") === 0 ? "" : String(value);
 const catalogUsesMarkup = (line: any, loadedLevels: any[] = []) => {
+  // Current server configuration must override stale fields stored in a draft.
+  if (line.price?.adjustmentMode)
+    return line.price.adjustmentMode === "MARKUP";
   const code = line.input?.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER";
   const level = (loadedLevels.length ? loadedLevels : line.sellingLevels ?? []).find(
     (candidate: any) => candidate.code === code,
   );
+  if (level?.entryMode) return level.entryMode === "MARKUP";
+  if (level?.method) return level.method === "COST_MARKUP";
   return (
-    level?.entryMode === "MARKUP" ||
-    level?.method === "COST_MARKUP" ||
     line.price?.pricingMode === "STAFF_MARKUP" ||
     line.input?.markup !== undefined
   );
@@ -422,6 +425,34 @@ export default function Cart({
     });
     setCart({ ...cart, lines });
   }
+
+  useEffect(() => {
+    if (!online) return;
+    let changed = false;
+    const lines = cart.lines.map((line: any) => {
+      const currentMode = line.price?.adjustmentMode;
+      const savedMode =
+        line.input?.markup === undefined ? "DISCOUNT" : "MARKUP";
+      if (
+        line.input?.type === "CUSTOM" ||
+        line.targetPriceRequested ||
+        !currentMode ||
+        currentMode === savedMode ||
+        !line.price?.finalExcl
+      )
+        return line;
+      changed = true;
+      return {
+        ...line,
+        pending: true,
+        targetPriceDraft: line.price.finalExcl,
+        targetPriceRequested: line.price.finalExcl,
+        targetPriceError: false,
+        priceEntryNotice: `Refreshing this saved line with the current ${currentMode.toLowerCase()} pricing rules.`,
+      };
+    });
+    if (changed) setCart({ ...cart, lines });
+  }, [cart.lines, online]);
 
   useEffect(() => {
     for (const key of Object.keys(pricingTimers.current)) {
@@ -894,7 +925,11 @@ export default function Cart({
                       className="compact"
                       type="number"
                       min="0"
-                      max="100"
+                      max={
+                        catalogUsesMarkup(l, options[l.productId])
+                          ? undefined
+                          : "100"
+                      }
                       step="any"
                       {...discountSafeNumberInputProps}
                       data-cart-field="discount"
