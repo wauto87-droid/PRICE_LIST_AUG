@@ -931,6 +931,7 @@ export default function Cart({
                           : "100"
                       }
                       step="any"
+                      placeholder="0"
                       {...discountSafeNumberInputProps}
                       data-cart-field="discount"
                       data-cart-row={i}
