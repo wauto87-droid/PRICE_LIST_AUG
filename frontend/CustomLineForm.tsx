@@ -19,7 +19,7 @@ const blank = (partNumber = "") => ({
   unit: "pcs",
   quantity: "1",
   unitPriceExcl: "",
-  discount: "0",
+  discount: "",
   reusableItemId: undefined as string | undefined,
 });
 export default function CustomLineForm({
@@ -136,6 +136,7 @@ export default function CustomLineForm({
       const input = customLineInput.parse({
         type: "CUSTOM",
         ...value,
+        discount: String(value.discount ?? "").trim() || "0",
         watcherEventId: crypto.randomUUID(),
       });
       void api("price-watcher/cart", "POST", {
@@ -391,7 +392,11 @@ export default function CustomLineForm({
                 max="100"
                 step="0.01"
                 {...discountSafeNumberInputProps}
-                value={value.discount}
+                value={
+                  Number(String(value.discount ?? "").trim() || "0") === 0
+                    ? ""
+                    : value.discount
+                }
                 onChange={(e) =>
                   setValue({ ...value, discount: e.target.value })
                 }

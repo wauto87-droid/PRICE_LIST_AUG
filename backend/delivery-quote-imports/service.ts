@@ -722,7 +722,11 @@ export async function reviewRows(
         }
         if (rowUpdate.unitPriceExcl !== undefined) {
           const rawPrice = String(rowUpdate.unitPriceExcl).trim();
-          nextInput.unitPriceExcl = rawPrice === "" ? "0" : rawPrice;
+          nextInput.unitPriceExcl = rawPrice;
+          nextInput.importMeta = {
+            ...(nextInput.importMeta ?? {}),
+            unresolved: rawPrice === "",
+          };
         }
       }
       let issues: string[] = [];
@@ -733,18 +737,27 @@ export async function reviewRows(
           nextInput = { ...nextInput, ...parsed };
           issues = [];
         } else if (row.resolution === "UNMATCHED_CUSTOM") {
-          if (
+          const missingPrice =
             nextInput.unitPriceExcl === undefined ||
             nextInput.unitPriceExcl === null ||
-            String(nextInput.unitPriceExcl).trim() === ""
-          ) {
-            nextInput.unitPriceExcl = "0";
+            String(nextInput.unitPriceExcl).trim() === "";
+          if (missingPrice) {
+            nextInput.unitPriceExcl = "";
+            nextInput.importMeta = {
+              ...(nextInput.importMeta ?? {}),
+              unresolved: true,
+            };
+            issues = [];
           } else {
             nextInput.unitPriceExcl = String(nextInput.unitPriceExcl).trim();
+            nextInput.importMeta = {
+              ...(nextInput.importMeta ?? {}),
+              unresolved: false,
+            };
+            const parsed = customLineInput.passthrough().parse(nextInput);
+            nextInput = { ...nextInput, ...parsed };
+            issues = [];
           }
-          const parsed = customLineInput.passthrough().parse(nextInput);
-          nextInput = { ...nextInput, ...parsed };
-          issues = [];
         }
       } catch (error) {
         issues = [friendlyIssue(error)];
@@ -847,7 +860,9 @@ export async function finalize(
             rowNumber: row.row_number,
             docNo,
             docDate,
-            unresolved: false,
+            unresolved:
+              row.resolution === "UNMATCHED_CUSTOM" &&
+              baseInput.importMeta?.unresolved === true,
           };
           if (row.resolution === "MATCHED_CATALOG" || baseInput.productId) {
             return {
@@ -867,7 +882,10 @@ export async function finalize(
             description: String(baseInput.description || row.raw?.[job.mapping?.description] || "").trim(),
             unit: String(baseInput.unit || "pcs").trim() || "pcs",
             quantity: String(baseInput.quantity ?? "1").trim(),
-            unitPriceExcl: String(baseInput.unitPriceExcl ?? "0").trim() || "0",
+            unitPriceExcl:
+              importMeta.unresolved
+                ? ""
+                : String(baseInput.unitPriceExcl ?? "0").trim() || "0",
             discount: String(baseInput.discount ?? "0").trim(),
             vat: baseInput.vat !== undefined ? String(baseInput.vat).trim() : undefined,
             reusableItemId: baseInput.reusableItemId,

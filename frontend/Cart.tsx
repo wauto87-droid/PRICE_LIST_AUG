@@ -31,8 +31,9 @@ const importedDeliveryMeta = (line: any) =>
       : null;
 const unresolvedImportedCustom = (line: any) =>
   line?.input?.type === "CUSTOM" &&
-  importedDeliveryMeta(line) &&
-  !decimalPattern.test(String(line?.input?.unitPriceExcl ?? "").trim());
+  importedDeliveryMeta(line)?.unresolved === true;
+export const blankZeroDiscount = (value: unknown) =>
+  Number(String(value ?? "").trim() || "0") === 0 ? "" : String(value);
 export const normalizedCustomReference = (value: unknown) =>
   String(value ?? "").trim().toUpperCase();
 export function matchingCustomLineIndexes(
@@ -48,6 +49,16 @@ export function matchingCustomLineIndexes(
       ? [lineIndex]
       : [],
   );
+}
+export function nextEditableRow(
+  lines: any[],
+  currentIndex: number,
+  field: "discount" | "unitPriceExcl",
+) {
+  for (let index = currentIndex + 1; index < lines.length; index++) {
+    if (field === "discount" || lines[index]?.input?.type === "CUSTOM") return index;
+  }
+  return -1;
 }
 
 function computeCartTotals(lines: any[], targetTotalValue: string) {
@@ -171,6 +182,22 @@ export default function Cart({
     setCart(next);
   };
 
+  const moveToNextEntry = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+    index: number,
+    field: "discount" | "unitPriceExcl",
+  ) => {
+    if (event.key !== "Enter") return;
+    const nextIndex = nextEditableRow(cartRef.current.lines, index, field);
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    const next = document.querySelector<HTMLInputElement>(
+      `[data-cart-field="${field}"][data-cart-row="${nextIndex}"]`,
+    );
+    next?.focus();
+    next?.select();
+  };
+
   async function loadLevels(productId: string) {
     try {
       const p = await api("products/" + productId);
@@ -276,10 +303,19 @@ export default function Cart({
     const lines = cart.lines.map((l: any, i: number) => {
       if (i !== index) return l;
       if (l.input?.type === "CUSTOM") {
-        const input = {
+        let input = {
           ...sanitizeCustomInput(l.input),
-          [key]: value,
+          [key]: key === "discount" && !value.trim() ? "0" : value,
         };
+        if (key === "unitPriceExcl" && importedDeliveryMeta({ input })) {
+          input = {
+            ...input,
+            importMeta: {
+              ...input.importMeta,
+              unresolved: !value.trim(),
+            },
+          };
+        }
         const quantity = String(input.quantity ?? "").trim();
         const discount = String(input.discount ?? "0").trim();
         const unitPrice = String(input.unitPriceExcl ?? "").trim();
@@ -318,7 +354,12 @@ export default function Cart({
         ...l,
         pending: true,
         livePriceError: "",
-        input: { ...l.input, [key]: value, override: false, reason: "" },
+        input: {
+          ...l.input,
+          [key]: key === "discount" && !value.trim() ? "0" : value,
+          override: false,
+          reason: "",
+        },
       };
     });
     setCart({ ...cart, lines });
@@ -760,8 +801,11 @@ export default function Cart({
                       max="100"
                       step="any"
                       {...discountSafeNumberInputProps}
-                      value={l.input.discount}
+                      data-cart-field="discount"
+                      data-cart-row={i}
+                      value={blankZeroDiscount(l.input.discount)}
                       onChange={(e) => change(i, "discount", e.target.value)}
+                      onKeyDown={(e) => moveToNextEntry(e, i, "discount")}
                     />
                   </td>
                   <td>
@@ -775,14 +819,25 @@ export default function Cart({
                         min="0"
                         step="0.01"
                         {...wheelSafeNumberInputProps}
-                        value={l.input.unitPriceExcl}
+                        data-cart-field="unitPriceExcl"
+                        data-cart-row={i}
+                        value={
+                          unresolvedImportedCustom(l)
+                            ? ""
+                            : l.input.unitPriceExcl
+                        }
                         onChange={(e) =>
                           change(i, "unitPriceExcl", e.target.value)
+                        }
+                        onKeyDown={(e) =>
+                          moveToNextEntry(e, i, "unitPriceExcl")
                         }
                       />
                     )}
                     {l.input?.type === "CUSTOM" ? (
-                      <small>{l.pending ? "—" : l.price?.finalExcl}</small>
+                      !unresolvedImportedCustom(l) && (
+                        <small>{l.pending ? "—" : l.price?.finalExcl}</small>
+                      )
                     ) : l.pending ? (
                       <small>
                         {repricingRows[i]
@@ -794,7 +849,7 @@ export default function Cart({
                     )}
                   </td>
                   <td>
-                    {l.pending ? (
+                    {unresolvedImportedCustom(l) ? null : l.pending ? (
                       <small>
                         {repricingRows[i]
                           ? t("Refreshing…", "جارٍ التحديث…")

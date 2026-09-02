@@ -489,7 +489,7 @@ test("Delivery-note quotation import blocks finalize when customer names are mix
   await db.close?.();
 });
 
-test("Delivery-note quotation import preserves per-row updates and defaults empty price to 0", async () => {
+test("Delivery-note quotation import preserves updates and keeps an empty price unresolved", async () => {
   const db = await embedded();
   await migrate(db);
   process.env.SETUP_TOKEN = "delivery-quote-bulk-update-token-123456";
@@ -540,7 +540,7 @@ test("Delivery-note quotation import preserves per-row updates and defaults empt
   });
   let opened: any = await get(db, actor, jobId);
   assert.equal(opened.rows.length, 3);
-  // Bulk update prices and mark complete: row1 has 12, row2 has 11, row3 is empty (should default to 0)
+  // Bulk update prices and mark complete: row1 has 12, row2 has 11, row3 remains unresolved.
   await reviewRows(db, actor, jobId, {
     version: opened.version,
     rowIds: [row1Id, row2Id, row3Id],
@@ -559,14 +559,16 @@ test("Delivery-note quotation import preserves per-row updates and defaults empt
   assert.equal(r1.completed, true);
   assert.equal(r2.line_input.unitPriceExcl, "11");
   assert.equal(r2.completed, true);
-  assert.equal(r3.line_input.unitPriceExcl, "0");
+  assert.equal(r3.line_input.unitPriceExcl, "");
+  assert.equal(r3.line_input.importMeta.unresolved, true);
   assert.equal(r3.completed, true);
 
   const quote: any = await finalize(db, actor, jobId, { version: opened.version });
   assert.equal(quote.lines.length, 3);
   assert.equal(quote.lines[0].price.finalExcl, "12.00");
   assert.equal(quote.lines[1].price.finalExcl, "11.00");
-  assert.equal(quote.lines[2].price.finalExcl, "0.00");
+  assert.equal(quote.lines[2].input.unitPriceExcl, "");
+  assert.equal(quote.lines[2].price, null);
   await db.close?.();
 });
 
