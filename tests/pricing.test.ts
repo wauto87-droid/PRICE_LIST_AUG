@@ -5,6 +5,7 @@ import {
   calculateCustom,
   masterPrice,
   normalizePart,
+  normalizeLookupPart,
   productInput,
   validateProduct,
   totals,
@@ -221,6 +222,15 @@ test("Zero price and VAT do not produce division errors", () => {
 test("Normalization preserves meaningful internal punctuation", () => {
   assert.equal(normalizePart(" lc1d09m7 "), "LC1D09M7");
   assert.notEqual(normalizePart("A-1"), normalizePart("A1"));
+});
+
+test("Lookup normalization ignores only common part separators", () => {
+  assert.equal(normalizeLookupPart(" mc-9b.ac/120_v "), "MC9BAC120V");
+  assert.notEqual(
+    normalizeLookupPart("MC-9B-AC120V"),
+    normalizeLookupPart("MC-9B-AC220V"),
+  );
+  assert.notEqual(normalizeLookupPart("A+B"), normalizeLookupPart("AB"));
 });
 test("Totals use decimal arithmetic", () => {
   const p = calculate(

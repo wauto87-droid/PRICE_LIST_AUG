@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
-import { wheelSafeNumberInputProps } from "./number-input";
+import {
+  discountSafeNumberInputProps,
+  wheelSafeNumberInputProps,
+} from "./number-input";
 import CustomLineForm from "./CustomLineForm";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import { humanizeCustomLineError } from "./custom-line-errors";
@@ -621,7 +624,7 @@ export default function Cart({
                       min="0"
                       max="100"
                       step="any"
-                      {...wheelSafeNumberInputProps}
+                      {...discountSafeNumberInputProps}
                       value={l.input.discount}
                       onChange={(e) => change(i, "discount", e.target.value)}
                     />

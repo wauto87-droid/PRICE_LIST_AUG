@@ -109,6 +109,8 @@ export const money = (value: Decimal.Value) =>
   new Decimal(value).toDecimalPlaces(2).toFixed(2);
 export const normalizePart = (value: string) =>
   value.normalize("NFKC").trim().toUpperCase();
+export const normalizeLookupPart = (value: string) =>
+  normalizePart(value).replace(/[\s./_-]+/g, "");
 export function sellingLevels(p: ProductInput): SellingLevel[] {
   return (
     p.levels ?? [

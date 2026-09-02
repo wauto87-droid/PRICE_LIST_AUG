@@ -597,6 +597,66 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     },
   );
   await t.test(
+    "Staff Lookup ignores common part separators without changing letters or digits",
+    async () => {
+      for (const product of [
+        {
+          ...base,
+          partNumber: "MC-9b-AC120V",
+          description: "120 volt contactor",
+          aliases: ["LEGACY-MC.120"],
+        },
+        {
+          ...base,
+          partNumber: "AB-C",
+          description: "First ambiguous loose code",
+          aliases: [],
+        },
+        {
+          ...base,
+          partNumber: "A-BC",
+          description: "Second ambiguous loose code",
+          aliases: [],
+        },
+      ])
+        await request("products", "POST", product);
+
+      for (const query of [
+        "MC9b-AC120V",
+        "MC9b AC120V",
+        "MC9bAC120V",
+        "MC.9b/AC120V",
+        "MC_9b_AC120V",
+      ]) {
+        const matches = (
+          await request(`search?q=${encodeURIComponent(query)}`)
+        ).data;
+        assert.equal(matches[0].partNumber, "MC-9b-AC120V");
+      }
+      const aliasMatch = (
+        await request("search?q=" + encodeURIComponent("LEGACY_MC120"))
+      ).data;
+      assert.equal(aliasMatch[0].partNumber, "MC-9b-AC120V");
+      const wrongVoltage = (
+        await request("search?q=" + encodeURIComponent("MC9b-AC220V"))
+      ).data;
+      assert.equal(
+        wrongVoltage.some((item: any) => item.partNumber === "MC-9b-AC120V"),
+        false,
+      );
+      const ambiguous = (await request("search?q=ABC")).data;
+      assert.deepEqual(
+        ambiguous.slice(0, 2).map((item: any) => item.partNumber).sort(),
+        ["A-BC", "AB-C"],
+      );
+      const adminLoose = (await request("products?q=MC9bAC120V")).data.items;
+      assert.equal(
+        adminLoose.some((item: any) => item.partNumber === "MC-9b-AC120V"),
+        false,
+      );
+    },
+  );
+  await t.test(
     "Lookup search returns a lean payload with pricing-ready fields",
     async () => {
       const results = (await request("search?q=LC1D09M7")).data;

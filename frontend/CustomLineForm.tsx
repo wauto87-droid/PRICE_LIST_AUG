@@ -3,7 +3,10 @@ import { useEffect, useId, useState } from "react";
 import { calculateCustom, customLineInput } from "@/backend/pricing/engine";
 import type { Translate } from "./api";
 import { api } from "./api";
-import { wheelSafeNumberInputProps } from "./number-input";
+import {
+  discountSafeNumberInputProps,
+  wheelSafeNumberInputProps,
+} from "./number-input";
 import { humanizeCustomLineError } from "./custom-line-errors";
 import {
   formatReusableDiscount,
@@ -387,7 +390,7 @@ export default function CustomLineForm({
                 min="0"
                 max="100"
                 step="0.01"
-                {...wheelSafeNumberInputProps}
+                {...discountSafeNumberInputProps}
                 value={value.discount}
                 onChange={(e) =>
                   setValue({ ...value, discount: e.target.value })

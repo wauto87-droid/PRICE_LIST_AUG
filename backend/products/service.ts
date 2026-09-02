@@ -13,6 +13,7 @@ import {
   productInput,
   validateProduct,
   normalizePart,
+  normalizeLookupPart,
   masterPrice,
   calculate,
   money,
@@ -429,6 +430,50 @@ function partRankedCte(activeClause: string) {
   )`;
 }
 
+function lookupPartRankedCte(activeClause: string) {
+  return `WITH part_ranked AS (
+    SELECT match.id, min(match.rank)::int AS rank
+    FROM (
+      SELECT p.id, 0 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part=$1
+      UNION ALL
+      SELECT p.id, 0 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized=$1
+      UNION ALL
+      SELECT p.id, 1 AS rank
+      FROM products p
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[[:space:]./_-]+','','g')=$2
+      UNION ALL
+      SELECT p.id, 1 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[[:space:]./_-]+','','g')=$2
+      UNION ALL
+      SELECT p.id, 2 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part LIKE $3 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 2 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized LIKE $3 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 3 AS rank
+      FROM products p
+      WHERE ${activeClause} AND p.normalized_part LIKE $4 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 3 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND a.normalized LIKE $4 ESCAPE '\\'
+    ) AS match
+    GROUP BY match.id
+  )`;
+}
+
 function textRankedCte(activeClause: string) {
   return `WITH text_ranked AS (
     SELECT
@@ -470,6 +515,32 @@ async function getRankedPartMatches(
           ORDER BY part_ranked.rank,p.normalized_part
           LIMIT $4 OFFSET $5`,
       [q, escaped + "%", "%" + escaped + "%", limit, offset],
+    )
+  ).rows;
+}
+
+async function getLookupPartMatches(
+  db: DB,
+  activeClause: string,
+  q: string,
+  escaped: string,
+  limit: number,
+) {
+  return (
+    await db.query(
+      lookupPartRankedCte(activeClause) +
+        ` SELECT p.id,p.version,part_ranked.rank
+          FROM part_ranked
+          JOIN products p ON p.id=part_ranked.id
+          ORDER BY part_ranked.rank,p.normalized_part
+          LIMIT $5`,
+      [
+        q,
+        normalizeLookupPart(q),
+        escaped + "%",
+        "%" + escaped + "%",
+        limit,
+      ],
     )
   ).rows;
 }
@@ -809,7 +880,7 @@ export async function search(
     };
   }
   if (!admin) {
-    const partMatches = await getRankedPartMatches(
+    const partMatches = await getLookupPartMatches(
       db,
       activeClause,
       q,

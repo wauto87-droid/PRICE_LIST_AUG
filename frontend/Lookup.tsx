@@ -4,7 +4,10 @@ import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
 import { buildLookupLineRequest, previewLookupPrice } from "./lookup-pricing";
 import { levelLabel, visibleLevels } from "./levels";
-import { wheelSafeNumberInputProps } from "./number-input";
+import {
+  discountSafeNumberInputProps,
+  wheelSafeNumberInputProps,
+} from "./number-input";
 import {
   activeSuggestionIndex,
   clampHighlightedIndex,
@@ -1012,7 +1015,7 @@ export default function Lookup({
                       min="0"
                       max="100"
                       step="0.01"
-                      {...wheelSafeNumberInputProps}
+                      {...discountSafeNumberInputProps}
                       value={staffMarkupMode ? markup : discount}
                       placeholder="0"
                       onChange={(e) =>
