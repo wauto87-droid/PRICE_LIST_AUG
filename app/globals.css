@@ -2146,6 +2146,24 @@ td button {
   gap: 16px;
   margin-top: 22px;
 }
+
+.import-progress,
+.basic-import-preview {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.75rem 0;
+}
+
+.import-progress progress {
+  width: 100%;
+  height: 0.8rem;
+  accent-color: var(--red);
+}
+
+.basic-import-preview .notice {
+  display: grid;
+  gap: 0.35rem;
+}
 .import-review-header {
   display: flex;
   align-items: flex-start;
@@ -3409,9 +3427,35 @@ body :is(h1, h2, h3, strong, b) {
   border-top-color: #86efac;
   border-bottom-color: #86efac;
 }
-.recent-price-modal { width: min(1100px, 96vw); max-height: 90vh; overflow: auto; }
-.recent-price-modal .recent-price-part { min-width: 130px; white-space: nowrap; }
-.previous-price-toggle { display: flex; align-items: center; gap: 10px; width: fit-content; margin-inline-start: auto; cursor: pointer; }
-.previous-price-toggle input { width: 18px; height: 18px; flex: 0 0 auto; }
-.previous-price-toggle small { display: block; margin-top: 2px; }
-@media (max-width: 640px) { .previous-price-toggle { width: auto; margin-inline-start: 0; } }
+.recent-price-modal {
+  width: min(1100px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+.recent-price-modal .recent-price-part {
+  min-width: 130px;
+  white-space: nowrap;
+}
+.previous-price-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  margin-inline-start: auto;
+  cursor: pointer;
+}
+.previous-price-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+.previous-price-toggle small {
+  display: block;
+  margin-top: 2px;
+}
+@media (max-width: 640px) {
+  .previous-price-toggle {
+    width: auto;
+    margin-inline-start: 0;
+  }
+}

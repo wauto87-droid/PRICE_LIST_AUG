@@ -14,6 +14,7 @@ import { processAnalysis as processQuantityAnalysis } from "../quantity-finder/s
 import { exportQuantityXlsx, quantityHtml } from "./quantity-finder";
 import { exportPriceWatcherXlsx, priceWatcherHtml } from "./price-watcher";
 import { processJob as processProductEnrichment } from "../product-enrichment/service";
+import { processValidation as processImportValidation } from "../imports/service";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -36,7 +37,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF','PRODUCT_AI_ENRICH') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','IMPORT_VALIDATE','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF','PRODUCT_AI_ENRICH') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -47,7 +48,9 @@ export async function runJob(db: DB) {
   });
   if (!job) return false;
   try {
-    if (job.kind === "CATALOG_EXPORT")
+    if (job.kind === "IMPORT_VALIDATE")
+      await processImportValidation(db, job.payload.importId, job.id);
+    else if (job.kind === "CATALOG_EXPORT")
       await db.transaction(async (tx) => {
         await tx.query(
           "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
@@ -487,6 +490,15 @@ export async function runJob(db: DB) {
       await db.query(
         "UPDATE import_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
         [job.payload.importId, importFailureMessage(failure)],
+      );
+    if (job.kind === "IMPORT_VALIDATE")
+      await db.query(
+        "UPDATE import_jobs SET status='FAILED',error=$2,summary=summary||$3::jsonb,updated_at=now() WHERE id=$1",
+        [
+          job.payload.importId,
+          (e as Error).message,
+          json({ progress: { phase: "FAILED" } }),
+        ],
       );
     if (job.kind === "DELIVERY_QUOTE_EXTRACT")
       await db.query(

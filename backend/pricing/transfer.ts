@@ -29,7 +29,14 @@ export function importCandidate(
 ) {
   const pricingDefaults = applyPricingDefaultsToExisting
     ? Object.fromEntries(
-        ["method", "markup", "listPrice", "baseDiscount"].flatMap((key) =>
+        [
+          "method",
+          "markup",
+          "listPrice",
+          "baseDiscount",
+          "vat",
+          ...tierColumns.filter((key) => key.startsWith("END_CUSTOMER.")),
+        ].flatMap((key) =>
           defaults[key] === undefined ? [] : [[key, defaults[key]]],
         ),
       )

@@ -21,6 +21,9 @@ while (running) {
       await db.query(
         "UPDATE import_jobs SET status='FAILED',error='Worker interrupted repeatedly; upload again' WHERE status='PROCESSING' AND id IN (SELECT (payload->>'importId')::uuid FROM jobs WHERE kind='IMPORT_EXTRACT' AND status='FAILED')",
       );
+      await db.query(
+        "UPDATE import_jobs SET status='FAILED',error='Validation worker interrupted repeatedly; retry the mapping' WHERE status='VALIDATING' AND id IN (SELECT (payload->>'importId')::uuid FROM jobs WHERE kind='IMPORT_VALIDATE' AND status='FAILED')",
+      );
       housekeepingAt = Date.now();
     }
     if (!(await runJob(db))) await new Promise((r) => setTimeout(r, 1500));

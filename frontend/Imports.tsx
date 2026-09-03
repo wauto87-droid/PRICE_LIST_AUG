@@ -41,20 +41,29 @@ const synonyms: Record<string, string[]> = {
     "item",
     "partreference",
     "partref",
+    "materialcode",
+    "productid",
+    "productidaddtlinfo",
+    "productcode",
   ],
-  description: [
-    "description",
-    "desc",
-    "itemdescription",
-    "localdescription",
-  ],
+  description: ["description", "desc", "itemdescription", "localdescription"],
   cost: ["cost", "purchasecost"],
-  listPrice: ["price", "listprice", "publicpricelist", "publicprice"],
+  listPrice: [
+    "price",
+    "listprice",
+    "publicpricelist",
+    "publicprice",
+    "grossprice",
+    "grosspricesar",
+    "unitprice",
+    "priceperpiece",
+  ],
   baseDiscount: ["discount", "disc"],
   minimum: ["minprice", "minimumprice"],
   markup: ["markup"],
 };
 type ImportProfile =
+  | "BASIC"
   | "STANDARD"
   | "PUBLIC_PRICE_DISCOUNT"
   | "SUPPLIER_SIMPLE"
@@ -115,11 +124,49 @@ const supplierQuotePriceTargets = [
 ] as const;
 const findMappedColumn = (columns: string[], field: string) =>
   columns.find((column) =>
-    [
-      normalizeHeader(field),
-      ...(synonyms[field] || []),
-    ].includes(normalizeHeader(column)),
+    [normalizeHeader(field), ...(synonyms[field] || [])].includes(
+      normalizeHeader(column),
+    ),
   );
+export const rankedMappedColumn = (columns: string[], field: string) => {
+  const normalized = columns.map((column) => ({
+    column,
+    key: normalizeHeader(column),
+  }));
+  const priorities: Record<string, string[]> = {
+    partNumber: [
+      "partnumber",
+      "partno",
+      "materialcode",
+      "itemcode",
+      "partreference",
+      "productidaddtlinfo",
+      "productid",
+      "code",
+    ],
+    description: ["description", "itemdescription", "localdescription", "desc"],
+    price: [
+      "grosspricesar",
+      "grossprice",
+      "listprice",
+      "publicpricelist",
+      "publicprice",
+      "unitprice",
+      "priceperpiece",
+      "cost",
+      "price",
+    ],
+  };
+  const matches = (priorities[field] || []).flatMap((key, rank) =>
+    normalized
+      .filter((item) => item.key === key)
+      .map((item) => ({ ...item, rank })),
+  );
+  if (!matches.length) return { column: "", ambiguous: false };
+  const best = Math.min(...matches.map((item) => item.rank));
+  const candidates = matches.filter((item) => item.rank === best);
+  return { column: candidates[0].column, ambiguous: candidates.length > 1 };
+};
 const hasSupplierSimpleColumns = (columns: string[]) =>
   supplierSimpleFields.every((field) => !!findMappedColumn(columns, field));
 const isSupplierSimpleMapping = (
@@ -136,7 +183,8 @@ const isSupplierSimpleMapping = (
   ) &&
   columns.some(
     (column) =>
-      normalizeHeader(column) === normalizeHeader(supplierSimpleColumns.groupColumn),
+      normalizeHeader(column) ===
+      normalizeHeader(supplierSimpleColumns.groupColumn),
   );
 const hasSupplierQuoteColumns = (columns: string[]) =>
   [
@@ -184,8 +232,7 @@ const applyRowUpdates = (
   rows: any[],
   ids: Set<string>,
   updates: { decision?: string; verified?: boolean },
-) =>
-  rows.map((row) => (ids.has(row.id) ? { ...row, ...updates } : row));
+) => rows.map((row) => (ids.has(row.id) ? { ...row, ...updates } : row));
 export default function Imports({
   t,
   actionBusy,
@@ -205,7 +252,19 @@ export default function Imports({
     [groupValues, setGroupValues] = useState<string[]>([]),
     [mapping, setMapping] = useState<Record<string, string>>({}),
     [defaults, setDefaults] = useState<any>(defaultImportDefaults()),
-    [importProfile, setImportProfile] = useState<ImportProfile>("STANDARD"),
+    [importProfile, setImportProfile] = useState<ImportProfile>("BASIC"),
+    [basicPriceType, setBasicPriceType] = useState<
+      "LIST_DISCOUNT" | "COST_MARKUP"
+    >("LIST_DISCOUNT"),
+    [basicPriceColumn, setBasicPriceColumn] = useState(""),
+    [basicAdjustmentSource, setBasicAdjustmentSource] = useState<
+      "DEFAULT" | "COLUMN"
+    >("DEFAULT"),
+    [basicAdjustmentColumn, setBasicAdjustmentColumn] = useState(""),
+    [basicAdjustment, setBasicAdjustment] = useState("0"),
+    [showAdditionalFields, setShowAdditionalFields] = useState(false),
+    [mappingAmbiguous, setMappingAmbiguous] = useState(false),
+    [ambiguousMappingConfirmed, setAmbiguousMappingConfirmed] = useState(false),
     [guidedGroupColumn, setGuidedGroupColumn] = useState("Activity"),
     [guidedDefaultPreset, setGuidedDefaultPreset] = useState<DiscountPreset>(
       defaultDiscountPreset(),
@@ -242,19 +301,24 @@ export default function Imports({
     });
   };
 
-  const updateGroupPreset = (groupValue: string, field: keyof DiscountPreset, value: string) => {
+  const updateGroupPreset = (
+    groupValue: string,
+    field: keyof DiscountPreset,
+    value: string,
+  ) => {
     setGuidedGroupPresets((prev) => {
       const preset = prev[groupValue] || defaultDiscountPreset();
-      const updated = linkDiscounts && field === "finalDiscount"
-        ? {
-            finalDiscount: value,
-            wholesaleDiscount: value,
-            minimumDiscount: preset.minimumDiscount,
-          }
-        : {
-            ...preset,
-            [field]: value,
-          };
+      const updated =
+        linkDiscounts && field === "finalDiscount"
+          ? {
+              finalDiscount: value,
+              wholesaleDiscount: value,
+              minimumDiscount: preset.minimumDiscount,
+            }
+          : {
+              ...preset,
+              [field]: value,
+            };
       return {
         ...prev,
         [groupValue]: updated,
@@ -289,6 +353,7 @@ export default function Imports({
   );
   const supplierSimpleMode = importProfile === "SUPPLIER_SIMPLE";
   const supplierQuoteMode = importProfile === "SUPPLIER_QUOTE";
+  const basicMode = importProfile === "BASIC";
   const load = () => api("imports").then(setJobs);
   useEffect(() => {
     load().catch((e) => setError(e.message));
@@ -296,7 +361,11 @@ export default function Imports({
   useEffect(() => {
     api("auth/me")
       .then((s) =>
-        setDefaults((d: any) => ({ ...defaultImportDefaults(s.settings.vat), ...d, vat: s.settings.vat })),
+        setDefaults((d: any) => ({
+          ...defaultImportDefaults(s.settings.vat),
+          ...d,
+          vat: s.settings.vat,
+        })),
       )
       .catch(() => {});
   }, []);
@@ -313,11 +382,27 @@ export default function Imports({
     setMode("CREATE_UPDATE");
   }, [supplierSimpleMode]);
   useEffect(() => {
-    if (!jobs.some((j) => ["UPLOADED", "PROCESSING"].includes(j.status)))
+    if (
+      !jobs.some((j) =>
+        ["UPLOADED", "PROCESSING", "VALIDATING"].includes(j.status),
+      )
+    )
       return;
     const timer = setInterval(() => load().catch(() => {}), 2000);
     return () => clearInterval(timer);
   }, [jobs]);
+  useEffect(() => {
+    if (!job || !["PROCESSING", "VALIDATING"].includes(job.status)) return;
+    const timer = setInterval(() => {
+      fetchJobPage(job.id, 0, undefined, {}, "all")
+        .then((next) => {
+          if (next.status === "AWAITING_REVIEW") void open(job.id);
+          else setJob(next);
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [job?.id, job?.status]);
   async function run(fn: () => Promise<any>) {
     if (actionBusy) return;
     setBusy(true);
@@ -334,7 +419,8 @@ export default function Imports({
   const applyReviewDrafts = (
     rows: any[],
     drafts: Record<string, { decision?: string; verified?: boolean }>,
-  ) => rows.map((row) => (drafts[row.id] ? { ...row, ...drafts[row.id] } : row));
+  ) =>
+    rows.map((row) => (drafts[row.id] ? { ...row, ...drafts[row.id] } : row));
   async function fetchJobPage(
     id: string,
     nextPage = 0,
@@ -347,7 +433,8 @@ export default function Imports({
       pageSize: String(IMPORT_PAGE_SIZE),
       rowView: nextRowView,
     });
-    if (nextGroupColumn?.trim()) query.set("groupColumn", nextGroupColumn.trim());
+    if (nextGroupColumn?.trim())
+      query.set("groupColumn", nextGroupColumn.trim());
     const j = await api("imports/" + id + "?" + query.toString());
     return { ...j, rows: applyReviewDrafts(j.rows || [], drafts) };
   }
@@ -402,8 +489,10 @@ export default function Imports({
     );
   }
   async function open(id: string) {
-    const emptyDrafts: Record<string, { decision?: string; verified?: boolean }> =
-      {};
+    const emptyDrafts: Record<
+      string,
+      { decision?: string; verified?: boolean }
+    > = {};
     const j = await fetchJobPage(id, 0, undefined, emptyDrafts, "all");
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
@@ -429,7 +518,10 @@ export default function Imports({
     setGroupValues(j.groupValues || []);
     setDefaults(
       Object.keys(productDefaults).length
-        ? { ...defaultImportDefaults(productDefaults.vat || defaults.vat), ...productDefaults }
+        ? {
+            ...defaultImportDefaults(productDefaults.vat || defaults.vat),
+            ...productDefaults,
+          }
         : defaultImportDefaults(defaults.vat),
     );
     setGuidedGroupColumn(
@@ -437,12 +529,15 @@ export default function Imports({
         guided?.groupColumn ||
         columns.find(
           (c: string) =>
-            normalizeHeader(c) === normalizeHeader(supplierSimpleColumns.groupColumn),
+            normalizeHeader(c) ===
+            normalizeHeader(supplierSimpleColumns.groupColumn),
         ) ||
         "Activity",
     );
     setGuidedDefaultPreset(
-      guided?.defaultPreset ? cleanPreset(guided.defaultPreset) : defaultDiscountPreset(),
+      guided?.defaultPreset
+        ? cleanPreset(guided.defaultPreset)
+        : defaultDiscountPreset(),
     );
     setGuidedGroupPresets(
       Object.fromEntries(
@@ -462,7 +557,12 @@ export default function Imports({
       nextMapping = auto;
     }
     const isQuote =
-      j.summary?.profile === "SUPPLIER_QUOTE" || hasSupplierQuoteColumns(columns);
+      j.summary?.profile === "SUPPLIER_QUOTE" ||
+      hasSupplierQuoteColumns(columns);
+    const legacyQuote =
+      isQuote &&
+      (Boolean(savedSupplierQuotePriceRole) ||
+        Object.keys(j.mapping).length > 0);
     if (isQuote && !Object.keys(j.mapping).length)
       nextMapping = {
         partNumber: supplierQuoteColumns.partNumber,
@@ -470,18 +570,68 @@ export default function Imports({
         unit: supplierQuoteColumns.unit,
       };
     setMapping(nextMapping);
-    const isSimple = isSupplierSimpleMapping(nextMapping, columns) || hasSupplierSimpleColumns(columns);
-    setQuickImportMode(Boolean(quickImport ?? isSimple));
+    const savedBasic = savedDefaults.importProfile === "BASIC";
+    const inferredPriceType: "LIST_DISCOUNT" | "COST_MARKUP" =
+      savedDefaults.basicImport?.priceType ||
+      (nextMapping.cost ? "COST_MARKUP" : "LIST_DISCOUNT");
+    setBasicPriceType(inferredPriceType);
+    setBasicPriceColumn(
+      nextMapping[
+        inferredPriceType === "COST_MARKUP" ? "cost" : "END_CUSTOMER.listPrice"
+      ] ||
+        nextMapping.listPrice ||
+        rankedMappedColumn(columns, "price").column,
+    );
+    setBasicAdjustmentSource(
+      savedDefaults.basicImport?.adjustmentSource || "DEFAULT",
+    );
+    setBasicAdjustmentColumn(
+      nextMapping[
+        inferredPriceType === "COST_MARKUP"
+          ? "END_CUSTOMER.markup"
+          : "END_CUSTOMER.baseDiscount"
+      ] || "",
+    );
+    setBasicAdjustment(
+      String(
+        savedDefaults.basicImport?.adjustmentValue ??
+          savedDefaults[
+            inferredPriceType === "COST_MARKUP" ? "markup" : "baseDiscount"
+          ] ??
+          "0",
+      ),
+    );
+    setMappingAmbiguous(
+      ["partNumber", "description", "price"].some(
+        (field) => rankedMappedColumn(columns, field).ambiguous,
+      ),
+    );
+    setAmbiguousMappingConfirmed(false);
+    const isSimple =
+      isSupplierSimpleMapping(nextMapping, columns) ||
+      hasSupplierSimpleColumns(columns);
+    setQuickImportMode(
+      Boolean(
+        quickImport ??
+        (isSimple || savedBasic || !Object.keys(j.mapping).length),
+      ),
+    );
     setImportProfile(
-      isQuote
+      legacyQuote
         ? "SUPPLIER_QUOTE"
         : isSimple
-        ? "SUPPLIER_SIMPLE"
-        : guided?.mode === "PUBLIC_PRICE_DISCOUNT"
-          ? "PUBLIC_PRICE_DISCOUNT"
-          : "STANDARD",
+          ? "SUPPLIER_SIMPLE"
+          : savedBasic || (!Object.keys(j.mapping).length && !isSimple)
+            ? "BASIC"
+            : guided?.mode === "PUBLIC_PRICE_DISCOUNT"
+              ? "PUBLIC_PRICE_DISCOUNT"
+              : "STANDARD",
     );
-    setMode(j.mode || (isSimple ? "CREATE_UPDATE" : "UPDATE_ONLY"));
+    setMode(
+      j.mode === "UPDATE_ONLY" && !Object.keys(j.mapping).length && !legacyQuote
+        ? "CREATE_UPDATE"
+        : j.mode || (isSimple ? "CREATE_UPDATE" : "UPDATE_ONLY"),
+    );
     setSupplierQuotePriceRole(
       savedSupplierQuotePriceRole ||
         supplierQuotePriceTargets.find(
@@ -512,9 +662,13 @@ export default function Imports({
         error: t("Import could not be reopened", "تعذر إعادة فتح الاستيراد"),
       },
       async () => {
-        const corrected = await api("imports/" + job.id + "/correction", "POST", {
-          version: job.version,
-        });
+        const corrected = await api(
+          "imports/" + job.id + "/correction",
+          "POST",
+          {
+            version: job.version,
+          },
+        );
         await open(corrected.id);
         await load();
       },
@@ -530,32 +684,64 @@ export default function Imports({
         : supplierQuotePriceRole
           ? { defaultLevel: supplierQuotePriceRole.split(".")[0] }
           : {};
-  const saveDefaults = guidedMode
-    ? {
-        ...defaults,
-        quickImport: quickImportMode,
-        guidedImport: {
-          mode: "PUBLIC_PRICE_DISCOUNT",
-          groupColumn: guidedGroupColumn || undefined,
-          defaultPreset: cleanPreset(guidedDefaultPreset),
-          groupPresets: Object.fromEntries(
-            Object.entries(guidedGroupPresets).map(([groupValue, preset]) => {
-              const typedPreset = preset as DiscountPreset;
-              return [groupValue, cleanPreset(typedPreset)];
-            }),
-          ),
-        },
-      }
-    : {
-        ...defaults,
-        quickImport: quickImportMode,
-        ...(supplierQuoteMode
-          ? {
-              ...supplierQuotePricingDefaults,
-              supplierQuotePriceRole: supplierQuotePriceRole || undefined,
-            }
-          : {}),
-      };
+  const basicAdjustmentField =
+    basicPriceType === "COST_MARKUP"
+      ? "END_CUSTOMER.markup"
+      : "END_CUSTOMER.baseDiscount";
+  const basicPriceField =
+    basicPriceType === "COST_MARKUP" ? "cost" : "END_CUSTOMER.listPrice";
+  const basicDefaults = {
+    ...defaults,
+    method: basicPriceType,
+    defaultLevel: "END_CUSTOMER",
+    "END_CUSTOMER.active": true,
+    "END_CUSTOMER.method": basicPriceType,
+    "END_CUSTOMER.markup":
+      basicPriceType === "COST_MARKUP" ? basicAdjustment || "0" : "0",
+    "END_CUSTOMER.listPrice": "0",
+    "END_CUSTOMER.baseDiscount":
+      basicPriceType === "LIST_DISCOUNT" ? basicAdjustment || "0" : "0",
+    [basicAdjustmentField]: basicAdjustment || "0",
+    quickImport: true,
+    importProfile: "BASIC",
+    basicImport: {
+      priceType: basicPriceType,
+      adjustmentSource: basicAdjustmentSource,
+      adjustmentValue: basicAdjustment || "0",
+      adjustmentColumn:
+        basicAdjustmentSource === "COLUMN"
+          ? basicAdjustmentColumn || undefined
+          : undefined,
+    },
+  };
+  const saveDefaults = basicMode
+    ? basicDefaults
+    : guidedMode
+      ? {
+          ...defaults,
+          quickImport: quickImportMode,
+          guidedImport: {
+            mode: "PUBLIC_PRICE_DISCOUNT",
+            groupColumn: guidedGroupColumn || undefined,
+            defaultPreset: cleanPreset(guidedDefaultPreset),
+            groupPresets: Object.fromEntries(
+              Object.entries(guidedGroupPresets).map(([groupValue, preset]) => {
+                const typedPreset = preset as DiscountPreset;
+                return [groupValue, cleanPreset(typedPreset)];
+              }),
+            ),
+          },
+        }
+      : {
+          ...defaults,
+          quickImport: quickImportMode,
+          ...(supplierQuoteMode
+            ? {
+                ...supplierQuotePricingDefaults,
+                supplierQuotePriceRole: supplierQuotePriceRole || undefined,
+              }
+            : {}),
+        };
   const reviewHeading = quickImportMode
     ? t("2. Quick summary & optional repair", "٢. ملخص سريع وإصلاح اختياري")
     : t("2. Review every row", "٢. مراجعة كل صف");
@@ -564,6 +750,42 @@ export default function Imports({
     job?.rowViewCounts?.repairRows ?? job?.reviewStats?.problemRows ?? 0;
   const skippedRows = job?.quickStats?.skippedRows ?? 0;
   const totalRows = job?.totalRows ?? job?.rows?.length ?? 0;
+  const sampleRow = job?.rows?.find((row: any) =>
+    String(row.raw?.[basicPriceColumn] ?? "").trim(),
+  );
+  const samplePriceSource = sampleRow?.raw?.[basicPriceColumn];
+  const samplePrice = Number(samplePriceSource);
+  const sampleAdjustment = Number(
+    basicAdjustmentSource === "COLUMN"
+      ? sampleRow?.raw?.[basicAdjustmentColumn]
+      : basicAdjustment,
+  );
+  const sampleFinal =
+    Number.isFinite(samplePrice) && Number.isFinite(sampleAdjustment)
+      ? basicPriceType === "COST_MARKUP"
+        ? samplePrice * (1 + sampleAdjustment / 100)
+        : samplePrice * (1 - sampleAdjustment / 100)
+      : null;
+  const basicMapping = {
+    ...Object.fromEntries(
+      Object.entries(mapping).filter(
+        ([field]) =>
+          ![
+            "cost",
+            "listPrice",
+            "markup",
+            "baseDiscount",
+            "END_CUSTOMER.listPrice",
+            "END_CUSTOMER.markup",
+            "END_CUSTOMER.baseDiscount",
+          ].includes(field),
+      ),
+    ),
+    [basicPriceField]: basicPriceColumn,
+    ...(basicAdjustmentSource === "COLUMN"
+      ? { [basicAdjustmentField]: basicAdjustmentColumn }
+      : {}),
+  };
   const visibleRowHeading =
     reviewSection === "repair"
       ? t("Repair items", "عناصر الإصلاح")
@@ -577,10 +799,14 @@ export default function Imports({
   const selectedVisibleSet = new Set(selectedVisibleIds);
   const selectedVisibleCount = selectedVisibleIds.length;
   const allVisibleSelected =
-    visibleRowIds.length > 0 && visibleRowIds.every((id: string) => selectedRows[id]);
+    visibleRowIds.length > 0 &&
+    visibleRowIds.every((id: string) => selectedRows[id]);
   const someVisibleSelected =
     visibleRowIds.some((id: string) => selectedRows[id]) && !allVisibleSelected;
-  const updateSelectedRows = (updates: { decision?: string; verified?: boolean }) => {
+  const updateSelectedRows = (updates: {
+    decision?: string;
+    verified?: boolean;
+  }) => {
     if (!job || !reviewEditable || !selectedVisibleCount) return;
     setReviewDrafts((current) => ({
       ...current,
@@ -644,14 +870,8 @@ export default function Imports({
             if (file)
               onAction(
                 {
-                  saving: t(
-                    "Uploading import…",
-                    "جارٍ رفع الاستيراد…",
-                  ),
-                  success: t(
-                    "Import uploaded",
-                    "تم رفع الاستيراد",
-                  ),
+                  saving: t("Uploading import…", "جارٍ رفع الاستيراد…"),
+                  success: t("Import uploaded", "تم رفع الاستيراد"),
                   successDetail: t(
                     "The file is queued for review now.",
                     "تمت إضافة الملف للمراجعة الآن.",
@@ -715,13 +935,35 @@ export default function Imports({
               <button onClick={() => setJob(null)}>×</button>
             </div>
             <p>
-              {job.status} · {job.totalRows ?? job.rows.length} {t("rows", "صفوف")}
+              {job.status} · {job.totalRows ?? job.rows.length}{" "}
+              {t("rows", "صفوف")}
             </p>
+            {["PROCESSING", "VALIDATING"].includes(job.status) && (
+              <div className="import-progress" role="status">
+                <strong>
+                  {job.status === "PROCESSING"
+                    ? t("Reading workbook", "جاري قراءة الملف")
+                    : t("Validating products", "جاري التحقق من المنتجات")}
+                </strong>
+                <progress
+                  max={100}
+                  value={job.summary?.progress?.percentage ?? undefined}
+                />
+                <p className="muted">
+                  {job.summary?.progress?.processedRows ?? 0} /{" "}
+                  {job.summary?.progress?.totalRows ?? job.totalRows ?? 0}
+                  {job.summary?.progress?.remainingSeconds > 0
+                    ? ` · ${t("About", "حوالي")} ${job.summary.progress.remainingSeconds}s ${t("remaining", "متبقية")}`
+                    : ` · ${t("Estimating remaining time…", "جاري تقدير الوقت المتبقي…")}`}
+                </p>
+              </div>
+            )}
             {job.reviewStats && (
               <p className="muted">
                 {t("Ready", "جاهز")}: {job.reviewStats.readyRows} ·{" "}
-                {t("Unverified", "غير متحقق")}: {job.reviewStats.unverifiedRows} ·{" "}
-                {t("Problem rows", "صفوف بها مشاكل")}: {job.reviewStats.problemRows}
+                {t("Unverified", "غير متحقق")}: {job.reviewStats.unverifiedRows}{" "}
+                · {t("Problem rows", "صفوف بها مشاكل")}:{" "}
+                {job.reviewStats.problemRows}
               </p>
             )}
             {job.status === "AWAITING_REVIEW" &&
@@ -771,6 +1013,9 @@ export default function Imports({
                       <option value="CREATE_UPDATE">
                         Create & Update / إنشاء وتحديث
                       </option>
+                      <option value="CREATE_NEW_ONLY">
+                        {t("Create New Only", "إنشاء المنتجات الجديدة فقط")}
+                      </option>
                     </select>
                   </label>
                   <label>
@@ -785,11 +1030,11 @@ export default function Imports({
                         }
                       }}
                     >
+                      <option value="BASIC">
+                        {t("Basic import", "الاستيراد الأساسي")}
+                      </option>
                       <option value="STANDARD">
-                        {t(
-                          "Standard field mapping",
-                          "ربط الحقول القياسي",
-                        )}
+                        {t("Advanced field mapping", "ربط الحقول القياسي")}
                       </option>
                       <option value="PUBLIC_PRICE_DISCOUNT">
                         {t(
@@ -798,10 +1043,7 @@ export default function Imports({
                         )}
                       </option>
                       <option value="SUPPLIER_SIMPLE">
-                        {t(
-                          "Simple supplier pricelist",
-                          "قائمة مورد بسيطة",
-                        )}
+                        {t("Simple supplier pricelist", "قائمة مورد بسيطة")}
                       </option>
                       <option value="SUPPLIER_QUOTE">
                         {t("Supplier quotation PDF", "عرض سعر المورد PDF")}
@@ -812,7 +1054,9 @@ export default function Imports({
                     {t("Admin workflow", "مسار المدير")}
                     <select
                       value={quickImportMode ? "QUICK" : "STRICT"}
-                      onChange={(e) => setQuickImportMode(e.target.value === "QUICK")}
+                      onChange={(e) =>
+                        setQuickImportMode(e.target.value === "QUICK")
+                      }
                     >
                       <option value="QUICK">
                         {t("Quick summary + import", "ملخص سريع + استيراد")}
@@ -822,13 +1066,14 @@ export default function Imports({
                       </option>
                     </select>
                   </label>
-                  {(supplierQuoteMode
-                    ? ["partNumber", "description", "unit"]
-                    : supplierSimpleMode
-                      ? supplierSimpleFields
-                      : mappingFields
-                  ).map(
-                    (field) => (
+                  {(basicMode
+                    ? ["partNumber", "description"]
+                    : supplierQuoteMode
+                      ? ["partNumber", "description", "unit"]
+                      : supplierSimpleMode
+                        ? supplierSimpleFields
+                        : mappingFields
+                  ).map((field) => (
                     <label key={field}>
                       {t(
                         mappingLabel(field, importProfile),
@@ -848,14 +1093,18 @@ export default function Imports({
                         ))}
                       </select>
                     </label>
-                    ),
-                  )}
+                  ))}
                   {supplierQuoteMode && (
                     <label>
-                      {t("Save quoted unit price as", "حفظ سعر الوحدة المعروض كـ")}
+                      {t(
+                        "Save quoted unit price as",
+                        "حفظ سعر الوحدة المعروض كـ",
+                      )}
                       <select
                         value={supplierQuotePriceRole}
-                        onChange={(e) => setSupplierQuotePriceRole(e.target.value)}
+                        onChange={(e) =>
+                          setSupplierQuotePriceRole(e.target.value)
+                        }
                       >
                         <option value="">
                           {t("Choose before validating", "اختر قبل التحقق")}
@@ -868,13 +1117,151 @@ export default function Imports({
                       </select>
                     </label>
                   )}
-                  {guidedMode ? (
+                  {basicMode ? (
                     <>
                       <label>
-                        {t(
-                          "Activity grouping column",
-                          "عمود تجميع النشاط",
-                        )}
+                        {t("Price column", "عمود السعر")}
+                        <select
+                          value={basicPriceColumn}
+                          onChange={(e) => setBasicPriceColumn(e.target.value)}
+                        >
+                          <option value="">
+                            {t("Select price column", "اختر عمود السعر")}
+                          </option>
+                          {job.summary.columns?.map((c: string) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        {t("Price means", "نوع السعر")}
+                        <select
+                          value={basicPriceType}
+                          onChange={(e) =>
+                            setBasicPriceType(
+                              e.target.value as "LIST_DISCOUNT" | "COST_MARKUP",
+                            )
+                          }
+                        >
+                          <option value="LIST_DISCOUNT">
+                            {t("Public price + Discount", "السعر العام + خصم")}
+                          </option>
+                          <option value="COST_MARKUP">
+                            {t(
+                              "Supplier cost + Markup",
+                              "تكلفة المورد + هامش زيادة",
+                            )}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        {t("Selling adjustment", "تعديل سعر البيع")}
+                        <select
+                          value={basicAdjustmentSource}
+                          onChange={(e) =>
+                            setBasicAdjustmentSource(
+                              e.target.value as "DEFAULT" | "COLUMN",
+                            )
+                          }
+                        >
+                          <option value="DEFAULT">
+                            {t("Use one percentage", "استخدام نسبة واحدة")}
+                          </option>
+                          <option value="COLUMN">
+                            {t("Map percentage column", "ربط عمود النسبة")}
+                          </option>
+                        </select>
+                      </label>
+                      {basicAdjustmentSource === "DEFAULT" ? (
+                        <label>
+                          {basicPriceType === "COST_MARKUP"
+                            ? t("Default markup %", "نسبة الزيادة الافتراضية %")
+                            : t(
+                                "Default discount %",
+                                "نسبة الخصم الافتراضية %",
+                              )}
+                          <input
+                            inputMode="decimal"
+                            value={basicAdjustment}
+                            onChange={(e) => setBasicAdjustment(e.target.value)}
+                          />
+                        </label>
+                      ) : (
+                        <label>
+                          {basicPriceType === "COST_MARKUP"
+                            ? t("Markup column", "عمود نسبة الزيادة")
+                            : t("Discount column", "عمود نسبة الخصم")}
+                          <select
+                            value={basicAdjustmentColumn}
+                            onChange={(e) =>
+                              setBasicAdjustmentColumn(e.target.value)
+                            }
+                          >
+                            <option value="">
+                              {t(
+                                "Select percentage column",
+                                "اختر عمود النسبة",
+                              )}
+                            </option>
+                            {job.summary.columns?.map((c: string) => (
+                              <option key={c}>{c}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <label>
+                        {t("VAT %", "نسبة الضريبة %")}
+                        <input
+                          inputMode="decimal"
+                          value={defaults.vat}
+                          onChange={(e) =>
+                            setDefaults({ ...defaults, vat: e.target.value })
+                          }
+                        />
+                      </label>
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() =>
+                            setShowAdditionalFields((value) => !value)
+                          }
+                        >
+                          {showAdditionalFields
+                            ? t(
+                                "Hide additional fields",
+                                "إخفاء الحقول الإضافية",
+                              )
+                            : t("Additional fields", "حقول إضافية")}
+                        </button>
+                      </div>
+                      {showAdditionalFields &&
+                        ["brand", "category", "unit"].map((field) => (
+                          <label key={field}>
+                            {field[0].toUpperCase() + field.slice(1)}
+                            <select
+                              value={mapping[field] || ""}
+                              onChange={(e) =>
+                                setMapping({
+                                  ...mapping,
+                                  [field]: e.target.value,
+                                })
+                              }
+                            >
+                              <option value="">
+                                {t("Use default / empty", "افتراضي / فارغ")}
+                              </option>
+                              {job.summary.columns?.map((c: string) => (
+                                <option key={c}>{c}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                    </>
+                  ) : guidedMode ? (
+                    <>
+                      <label>
+                        {t("Activity grouping column", "عمود تجميع النشاط")}
                         <select
                           value={guidedGroupColumn}
                           onChange={(e) => {
@@ -894,23 +1281,53 @@ export default function Imports({
                           ))}
                         </select>
                       </label>
-                      <div className="field-row" style={{ display: "flex", gap: "20px", alignItems: "center", marginBottom: "15px", gridColumn: "span 2" }}>
-                        <label className="check" style={{ display: "flex", alignItems: "center", gap: "6px", margin: 0 }}>
+                      <div
+                        className="field-row"
+                        style={{
+                          display: "flex",
+                          gap: "20px",
+                          alignItems: "center",
+                          marginBottom: "15px",
+                          gridColumn: "span 2",
+                        }}
+                      >
+                        <label
+                          className="check"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            margin: 0,
+                          }}
+                        >
                           <input
                             type="checkbox"
                             checked={linkDiscounts}
-                            onChange={(e) => handleToggleLinkDiscounts(e.target.checked)}
+                            onChange={(e) =>
+                              handleToggleLinkDiscounts(e.target.checked)
+                            }
                           />
-                        {t("Link final + wholesale discounts", "ربط الخصم النهائي مع خصم الجملة")}
+                          {t(
+                            "Link final + wholesale discounts",
+                            "ربط الخصم النهائي مع خصم الجملة",
+                          )}
                         </label>
                         <button
                           type="button"
                           className="link-button"
-                          onClick={() => setShowAdvancedDiscounts(!showAdvancedDiscounts)}
+                          onClick={() =>
+                            setShowAdvancedDiscounts(!showAdvancedDiscounts)
+                          }
                         >
-                          {showAdvancedDiscounts 
-                            ? t("Hide advanced discounts", "إخفاء الخصومات المتقدمة")
-                            : t("Show advanced discounts", "عرض الخصومات المتقدمة")}
+                          {showAdvancedDiscounts
+                            ? t(
+                                "Hide advanced discounts",
+                                "إخفاء الخصومات المتقدمة",
+                              )
+                            : t(
+                                "Show advanced discounts",
+                                "عرض الخصومات المتقدمة",
+                              )}
                         </button>
                       </div>
                       {!showAdvancedDiscounts ? (
@@ -918,30 +1335,59 @@ export default function Imports({
                           {t("Default discount %", "الخصم الافتراضي %")}
                           <input
                             value={guidedDefaultPreset.finalDiscount}
-                            onChange={(e) => updateDefaultPreset("finalDiscount", e.target.value)}
+                            onChange={(e) =>
+                              updateDefaultPreset(
+                                "finalDiscount",
+                                e.target.value,
+                              )
+                            }
                           />
                         </label>
                       ) : (
                         <>
                           <label>
-                            {t("Default final discount %", "الخصم النهائي الافتراضي %")}
+                            {t(
+                              "Default final discount %",
+                              "الخصم النهائي الافتراضي %",
+                            )}
                             <input
                               value={guidedDefaultPreset.finalDiscount}
-                              onChange={(e) => updateDefaultPreset("finalDiscount", e.target.value)}
+                              onChange={(e) =>
+                                updateDefaultPreset(
+                                  "finalDiscount",
+                                  e.target.value,
+                                )
+                              }
                             />
                           </label>
                           <label>
-                            {t("Default wholesale discount %", "خصم الجملة الافتراضي %")}
+                            {t(
+                              "Default wholesale discount %",
+                              "خصم الجملة الافتراضي %",
+                            )}
                             <input
                               value={guidedDefaultPreset.wholesaleDiscount}
-                              onChange={(e) => updateDefaultPreset("wholesaleDiscount", e.target.value)}
+                              onChange={(e) =>
+                                updateDefaultPreset(
+                                  "wholesaleDiscount",
+                                  e.target.value,
+                                )
+                              }
                             />
                           </label>
                           <label>
-                            {t("Default minimum discount %", "الحد الأدنى الافتراضي للخصم %")}
+                            {t(
+                              "Default minimum discount %",
+                              "الحد الأدنى الافتراضي للخصم %",
+                            )}
                             <input
                               value={guidedDefaultPreset.minimumDiscount}
-                              onChange={(e) => updateDefaultPreset("minimumDiscount", e.target.value)}
+                              onChange={(e) =>
+                                updateDefaultPreset(
+                                  "minimumDiscount",
+                                  e.target.value,
+                                )
+                              }
                             />
                           </label>
                         </>
@@ -992,11 +1438,76 @@ export default function Imports({
                             })
                           }
                         />
-                        {t("Enable minimum protection", "تفعيل حماية الحد الأدنى")}
+                        {t(
+                          "Enable minimum protection",
+                          "تفعيل حماية الحد الأدنى",
+                        )}
                       </label>
                     </>
                   )}
                 </div>
+                {basicMode && (
+                  <div className="basic-import-preview">
+                    {mappingAmbiguous && (
+                      <div className="notice warning">
+                        {t(
+                          "More than one column could match a required field. Confirm the selected Part Number, Description, and Price columns before validating.",
+                          "قد يتطابق أكثر من عمود مع حقل مطلوب. تحقق من أعمدة رقم الصنف والوصف والسعر قبل المتابعة.",
+                        )}
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={ambiguousMappingConfirmed}
+                            onChange={(event) =>
+                              setAmbiguousMappingConfirmed(event.target.checked)
+                            }
+                          />
+                          {t(
+                            "I confirmed the selected columns",
+                            "لقد تحققت من الأعمدة المحددة",
+                          )}
+                        </label>
+                      </div>
+                    )}
+                    <div className="notice">
+                      <strong>
+                        {t("Sample price preview", "معاينة عينة السعر")}
+                      </strong>
+                      <span>
+                        {t("Source", "المصدر")}:{" "}
+                        {String(samplePriceSource ?? "—")} ·{" "}
+                        {t("Normalized", "بعد التنسيق")}:{" "}
+                        {Number.isFinite(samplePrice)
+                          ? samplePrice.toFixed(6).replace(/\.?0+$/, "")
+                          : "—"}{" "}
+                        ·{" "}
+                        {basicPriceType === "COST_MARKUP"
+                          ? t("Markup", "الزيادة")
+                          : t("Discount", "الخصم")}
+                        :{" "}
+                        {Number.isFinite(sampleAdjustment)
+                          ? sampleAdjustment
+                          : "—"}
+                        % · {t("Final excl. VAT", "النهائي قبل الضريبة")}:{" "}
+                        {sampleFinal == null ? "—" : sampleFinal.toFixed(2)} ·{" "}
+                        {t("VAT", "الضريبة")}:{" "}
+                        {sampleFinal == null
+                          ? "—"
+                          : (
+                              (sampleFinal * Number(defaults.vat || 0)) /
+                              100
+                            ).toFixed(2)}{" "}
+                        · {t("Incl. VAT", "شامل الضريبة")}:{" "}
+                        {sampleFinal == null
+                          ? "—"
+                          : (
+                              sampleFinal *
+                              (1 + Number(defaults.vat || 0) / 100)
+                            ).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 {guidedMode && (
                   <>
                     <div className="notice">
@@ -1025,26 +1536,31 @@ export default function Imports({
                     </div>
                     {!!groupValues.length && (
                       <>
-                        <h4>
-                          {t(
-                            "Activity presets",
-                            "إعدادات النشاط",
-                          )}
-                        </h4>
+                        <h4>{t("Activity presets", "إعدادات النشاط")}</h4>
                         <div className="table-scroll">
                           <table>
                             <thead>
                               <tr>
                                 <th>{t("Activity", "النشاط")}</th>
                                 <th>
-                                  {showAdvancedDiscounts 
-                                    ? t("Final discount %", "الخصم النهائي %") 
+                                  {showAdvancedDiscounts
+                                    ? t("Final discount %", "الخصم النهائي %")
                                     : t("Discount %", "الخصم %")}
                                 </th>
                                 {showAdvancedDiscounts && (
                                   <>
-                                    <th>{t("Wholesale discount %", "خصم الجملة %")}</th>
-                                    <th>{t("Minimum discount %", "الحد الأدنى للخصم %")}</th>
+                                    <th>
+                                      {t(
+                                        "Wholesale discount %",
+                                        "خصم الجملة %",
+                                      )}
+                                    </th>
+                                    <th>
+                                      {t(
+                                        "Minimum discount %",
+                                        "الحد الأدنى للخصم %",
+                                      )}
+                                    </th>
                                   </>
                                 )}
                                 <th>{t("Preview", "معاينة")}</th>
@@ -1059,7 +1575,13 @@ export default function Imports({
                                     <td>
                                       <input
                                         value={preset.finalDiscount}
-                                        onChange={(e) => updateGroupPreset(groupValue, "finalDiscount", e.target.value)}
+                                        onChange={(e) =>
+                                          updateGroupPreset(
+                                            groupValue,
+                                            "finalDiscount",
+                                            e.target.value,
+                                          )
+                                        }
                                       />
                                     </td>
                                     {showAdvancedDiscounts && (
@@ -1067,23 +1589,38 @@ export default function Imports({
                                         <td>
                                           <input
                                             value={preset.wholesaleDiscount}
-                                            onChange={(e) => updateGroupPreset(groupValue, "wholesaleDiscount", e.target.value)}
+                                            onChange={(e) =>
+                                              updateGroupPreset(
+                                                groupValue,
+                                                "wholesaleDiscount",
+                                                e.target.value,
+                                              )
+                                            }
                                           />
                                         </td>
                                         <td>
                                           <input
                                             value={preset.minimumDiscount}
-                                            onChange={(e) => updateGroupPreset(groupValue, "minimumDiscount", e.target.value)}
+                                            onChange={(e) =>
+                                              updateGroupPreset(
+                                                groupValue,
+                                                "minimumDiscount",
+                                                e.target.value,
+                                              )
+                                            }
                                           />
                                         </td>
                                       </>
                                     )}
                                     <td>
-                                      {t("Final", "النهائي")}: {previewPrice(preset.finalDiscount)}
+                                      {t("Final", "النهائي")}:{" "}
+                                      {previewPrice(preset.finalDiscount)}
                                       {" · "}
-                                      {t("Wholesale", "الجملة")}: {previewPrice(preset.wholesaleDiscount)}
+                                      {t("Wholesale", "الجملة")}:{" "}
+                                      {previewPrice(preset.wholesaleDiscount)}
                                       {" · "}
-                                      {t("Minimum", "الحد الأدنى")}: {previewPrice(preset.minimumDiscount)}
+                                      {t("Minimum", "الحد الأدنى")}:{" "}
+                                      {previewPrice(preset.minimumDiscount)}
                                     </td>
                                   </tr>
                                 );
@@ -1099,7 +1636,16 @@ export default function Imports({
                   disabled={
                     busy ||
                     actionBusy ||
-                    (supplierQuoteMode && !supplierQuotePriceRole)
+                    (supplierQuoteMode && !supplierQuotePriceRole) ||
+                    (basicMode &&
+                      mappingAmbiguous &&
+                      !ambiguousMappingConfirmed) ||
+                    (basicMode &&
+                      (!mapping.partNumber ||
+                        !mapping.description ||
+                        !basicPriceColumn ||
+                        (basicAdjustmentSource === "COLUMN" &&
+                          !basicAdjustmentColumn)))
                   }
                   onClick={() =>
                     onAction(
@@ -1129,7 +1675,7 @@ export default function Imports({
                         await api("imports/" + job.id + "/mapping", "POST", {
                           mapping: Object.fromEntries(
                             Object.entries({
-                              ...mapping,
+                              ...(basicMode ? basicMapping : mapping),
                               ...(supplierQuoteMode
                                 ? Object.fromEntries(
                                     supplierQuotePriceTargets.map(([field]) => [
@@ -1150,6 +1696,7 @@ export default function Imports({
                           version: job.version,
                           mode,
                           quickImport: quickImportMode,
+                          background: true,
                         });
                         await open(job.id);
                         await load();
@@ -1193,17 +1740,29 @@ export default function Imports({
                         type="button"
                         className={reviewSection === "all" ? "primary" : ""}
                         disabled={busy || actionBusy}
-                        onClick={() => void run(async () => await openReviewSection("all"))}
+                        onClick={() =>
+                          void run(async () => await openReviewSection("all"))
+                        }
                       >
-                        {t("All rows", "كل الصفوف")} ({job.rowViewCounts?.allRows ?? job.totalRows})
+                        {t("All rows", "كل الصفوف")} (
+                        {job.rowViewCounts?.allRows ?? job.totalRows})
                       </button>
                       <button
                         type="button"
                         className={reviewSection === "repair" ? "primary" : ""}
-                        disabled={busy || actionBusy || !(job.rowViewCounts?.repairRows ?? 0)}
-                        onClick={() => void run(async () => await openReviewSection("repair"))}
+                        disabled={
+                          busy ||
+                          actionBusy ||
+                          !(job.rowViewCounts?.repairRows ?? 0)
+                        }
+                        onClick={() =>
+                          void run(
+                            async () => await openReviewSection("repair"),
+                          )
+                        }
                       >
-                        {t("Repair items", "عناصر الإصلاح")} ({job.rowViewCounts?.repairRows ?? 0})
+                        {t("Repair items", "عناصر الإصلاح")} (
+                        {job.rowViewCounts?.repairRows ?? 0})
                       </button>
                     </div>
                   </div>
@@ -1227,10 +1786,12 @@ export default function Imports({
                   </div>
                   {quickImportMode && job.quickStats && (
                     <div className="notice import-summary-note">
-                      {t("Valid rows", "الصفوف الصالحة")}: {job.quickStats.validRows} ·{" "}
-                      {t("Invalid rows", "الصفوف غير الصالحة")}: {job.quickStats.invalidRows} ·{" "}
-                      {t("Selected", "المحددة")}: {job.quickStats.selectedRows} ·{" "}
-                      {t("Skipped", "المتخطاة")}: {job.quickStats.skippedRows}
+                      {t("Valid rows", "الصفوف الصالحة")}:{" "}
+                      {job.quickStats.validRows} ·{" "}
+                      {t("Invalid rows", "الصفوف غير الصالحة")}:{" "}
+                      {job.quickStats.invalidRows} · {t("Selected", "المحددة")}:{" "}
+                      {job.quickStats.selectedRows} · {t("Skipped", "المتخطاة")}
+                      : {job.quickStats.skippedRows}
                     </div>
                   )}
                   {reviewSection === "summary" && (
@@ -1238,7 +1799,11 @@ export default function Imports({
                       <div className="import-action-strip">
                         <button
                           className="primary"
-                          style={{ backgroundColor: "#2e7d32", color: "#fff", borderColor: "#2e7d32" }}
+                          style={{
+                            backgroundColor: "#2e7d32",
+                            color: "#fff",
+                            borderColor: "#2e7d32",
+                          }}
                           disabled={busy || actionBusy}
                           onClick={async () => {
                             if (
@@ -1250,33 +1815,55 @@ export default function Imports({
                                     )
                                   : t(
                                       "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
-                                      "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
-                                    )
+                                      "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات.",
+                                    ),
                               )
                             ) {
                               onAction(
                                 {
-                                  saving: t("Importing ready rows…", "جارٍ استيراد الصفوف الجاهزة…"),
+                                  saving: t(
+                                    "Importing ready rows…",
+                                    "جارٍ استيراد الصفوف الجاهزة…",
+                                  ),
                                   success: quickImportMode
-                                    ? t("Quick import completed", "اكتمل الاستيراد السريع")
-                                    : t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
+                                    ? t(
+                                        "Quick import completed",
+                                        "اكتمل الاستيراد السريع",
+                                      )
+                                    : t(
+                                        "Auto-import completed",
+                                        "اكتمل الاستيراد التلقائي",
+                                      ),
                                   successDetail: quickImportMode
                                     ? t(
                                         "Valid rows were imported and invalid rows stayed available for repair.",
                                         "تم استيراد الصفوف الصالحة وبقيت الصفوف غير الصالحة متاحة للإصلاح.",
                                       )
-                                    : t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
+                                    : t(
+                                        "All valid rows were successfully imported to the catalog.",
+                                        "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج.",
+                                      ),
                                   error: quickImportMode
-                                    ? t("Quick import failed", "فشل الاستيراد السريع")
-                                    : t("Auto-import failed", "فشل الاستيراد التلقائي"),
+                                    ? t(
+                                        "Quick import failed",
+                                        "فشل الاستيراد السريع",
+                                      )
+                                    : t(
+                                        "Auto-import failed",
+                                        "فشل الاستيراد التلقائي",
+                                      ),
                                 },
                                 async () => {
-                                  await api("imports/" + job.id + "/auto-confirm", "POST", {
-                                    version: job.version,
-                                  });
+                                  await api(
+                                    "imports/" + job.id + "/auto-confirm",
+                                    "POST",
+                                    {
+                                      version: job.version,
+                                    },
+                                  );
                                   await open(job.id);
                                   await load();
-                                }
+                                },
                               );
                             }
                           }}
@@ -1300,20 +1887,38 @@ export default function Imports({
                           onClick={() =>
                             onAction(
                               {
-                                saving: t("Marking valid rows ready…", "جارٍ تجهيز الصفوف الصالحة…"),
-                                success: t("Valid rows prepared", "تم تجهيز الصفوف الصالحة"),
+                                saving: t(
+                                  "Marking valid rows ready…",
+                                  "جارٍ تجهيز الصفوف الصالحة…",
+                                ),
+                                success: t(
+                                  "Valid rows prepared",
+                                  "تم تجهيز الصفوف الصالحة",
+                                ),
                                 successDetail: t(
                                   "Valid rows were marked ready across the full file.",
                                   "تم تجهيز الصفوف الصالحة عبر الملف بالكامل.",
                                 ),
-                                error: t("Could not prepare valid rows", "تعذر تجهيز الصفوف الصالحة"),
+                                error: t(
+                                  "Could not prepare valid rows",
+                                  "تعذر تجهيز الصفوف الصالحة",
+                                ),
                               },
                               async () => {
-                                await api("imports/" + job.id + "/bulk-review", "POST", {
-                                  version: job.version,
-                                  action: "SELECT_ALL",
-                                });
-                                const opened = await loadJobPage(job.id, 0, guidedGroupColumn, rowView);
+                                await api(
+                                  "imports/" + job.id + "/bulk-review",
+                                  "POST",
+                                  {
+                                    version: job.version,
+                                    action: "SELECT_ALL",
+                                  },
+                                );
+                                const opened = await loadJobPage(
+                                  job.id,
+                                  0,
+                                  guidedGroupColumn,
+                                  rowView,
+                                );
                                 setQuickActionMessage(
                                   t(
                                     `${opened.quickStats?.selectedRows ?? 0} rows are ready to import`,
@@ -1333,20 +1938,38 @@ export default function Imports({
                           onClick={() =>
                             onAction(
                               {
-                                saving: t("Skipping problem rows…", "جارٍ تخطي صفوف المشكلات…"),
-                                success: t("Problem rows skipped", "تم تخطي صفوف المشكلات"),
+                                saving: t(
+                                  "Skipping problem rows…",
+                                  "جارٍ تخطي صفوف المشكلات…",
+                                ),
+                                success: t(
+                                  "Problem rows skipped",
+                                  "تم تخطي صفوف المشكلات",
+                                ),
                                 successDetail: t(
                                   "Problem rows were skipped across the full file.",
                                   "تم تخطي الصفوف التي بها مشكلات عبر الملف بالكامل.",
                                 ),
-                                error: t("Could not skip problem rows", "تعذر تخطي صفوف المشكلات"),
+                                error: t(
+                                  "Could not skip problem rows",
+                                  "تعذر تخطي صفوف المشكلات",
+                                ),
                               },
                               async () => {
-                                await api("imports/" + job.id + "/bulk-review", "POST", {
-                                  version: job.version,
-                                  action: "SKIP_INVALID",
-                                });
-                                const opened = await loadJobPage(job.id, 0, guidedGroupColumn, rowView);
+                                await api(
+                                  "imports/" + job.id + "/bulk-review",
+                                  "POST",
+                                  {
+                                    version: job.version,
+                                    action: "SKIP_INVALID",
+                                  },
+                                );
+                                const opened = await loadJobPage(
+                                  job.id,
+                                  0,
+                                  guidedGroupColumn,
+                                  rowView,
+                                );
                                 setQuickActionMessage(
                                   t(
                                     `${opened.quickStats?.skippedRows ?? 0} rows marked to skip. ${opened.reviewStats?.readyRows ?? 0} valid rows remain ready.`,
@@ -1374,139 +1997,167 @@ export default function Imports({
                   <div className="notice warning">{quickActionMessage}</div>
                 )}
                 {reviewSection !== "summary" && (
-                <div className="actions wrap">
-                  {quickImportMode ? (
-                    <>
-                      <button
-                        disabled={busy || actionBusy}
-                        onClick={() =>
-                          onAction(
-                            {
-                              saving: t("Selecting all rows…", "جارٍ تحديد كل الصفوف…"),
-                              success: t("All rows selected", "تم تحديد كل الصفوف"),
-                              successDetail: t(
-                                "Valid rows were selected across the full file.",
-                                "تم تحديد الصفوف الصالحة عبر الملف بالكامل.",
-                              ),
-                              error: t("Could not select all rows", "تعذر تحديد كل الصفوف"),
-                            },
-                            async () => {
-                              await api("imports/" + job.id + "/bulk-review", "POST", {
-                                version: job.version,
-                                action: "SELECT_ALL",
-                              });
-                              const opened = await loadJobPage(
-                                job.id,
-                                rowView === "repair" ? 0 : page,
-                                guidedGroupColumn,
-                                rowView,
-                              );
-                              setQuickActionMessage(
-                                t(
-                                  `${opened.quickStats?.selectedRows ?? 0} rows selected for import`,
-                                  `تم تحديد ${opened.quickStats?.selectedRows ?? 0} صفوف للاستيراد`,
+                  <div className="actions wrap">
+                    {quickImportMode ? (
+                      <>
+                        <button
+                          disabled={busy || actionBusy}
+                          onClick={() =>
+                            onAction(
+                              {
+                                saving: t(
+                                  "Selecting all rows…",
+                                  "جارٍ تحديد كل الصفوف…",
                                 ),
-                              );
-                              await load();
-                            },
-                          )
-                        }
-                      >
-                        {t("Mark valid rows ready", "تجهيز الصفوف الصالحة")}
-                      </button>
-                      <button
-                        disabled={busy || actionBusy}
-                        onClick={() =>
-                          onAction(
-                            {
-                              saving: t("Skipping invalid rows…", "جارٍ تخطي الصفوف غير الصالحة…"),
-                              success: t("Invalid rows skipped", "تم تخطي الصفوف غير الصالحة"),
-                              successDetail: t(
-                                "Problem rows were skipped across the full file.",
-                                "تم تخطي الصفوف التي بها مشكلات عبر الملف بالكامل.",
-                              ),
-                              error: t("Could not skip invalid rows", "تعذر تخطي الصفوف غير الصالحة"),
-                            },
-                            async () => {
-                              await api("imports/" + job.id + "/bulk-review", "POST", {
-                                version: job.version,
-                                action: "SKIP_INVALID",
-                              });
-                              const opened = await loadJobPage(
-                                job.id,
-                                rowView === "repair" ? 0 : page,
-                                guidedGroupColumn,
-                                rowView,
-                              );
-                              setQuickActionMessage(
-                                t(
-                                  `${opened.quickStats?.skippedRows ?? 0} rows marked to skip. ${opened.reviewStats?.readyRows ?? 0} valid rows remain ready to import`,
-                                  `تم وضع ${opened.quickStats?.skippedRows ?? 0} صفوف للتخطي. ما زال ${opened.reviewStats?.readyRows ?? 0} صفوف صالحة جاهزة للاستيراد`,
+                                success: t(
+                                  "All rows selected",
+                                  "تم تحديد كل الصفوف",
                                 ),
-                              );
-                              await load();
-                            },
-                          )
-                        }
-                      >
-                        {t("Skip problem rows", "تخطي صفوف المشكلات")}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => {
-                          setReviewDrafts((current) => ({
-                            ...current,
-                            ...Object.fromEntries(
-                              job.rows.map((r: any) => [
-                                r.id,
-                                { ...current[r.id], decision: "SKIP" },
-                              ]),
-                            ),
-                          }));
-                          setJob({
-                            ...job,
-                            rows: job.rows.map((r: any) => ({
-                              ...r,
-                              decision: "SKIP",
-                            })),
-                          });
-                        }}
-                      >
-                        {t("Skip visible rows", "تخطي الصفوف الظاهرة")}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setReviewDrafts((current) => ({
-                            ...current,
-                            ...Object.fromEntries(
-                              job.rows.map((r: any) => [
-                                r.id,
-                                {
-                                  ...current[r.id],
-                                  decision: r.errors.length ? "SKIP" : "UPDATE",
-                                },
-                              ]),
-                            ),
-                          }));
-                          setJob({
-                            ...job,
-                            rows: job.rows.map((r: any) => ({
-                              ...r,
-                              decision: r.errors.length ? "SKIP" : "UPDATE",
-                            })),
-                          });
-                        }}
-                      >
-                        {t(
-                          "Select valid visible rows",
-                          "تحديد الصفوف الصالحة الظاهرة",
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
+                                successDetail: t(
+                                  "Valid rows were selected across the full file.",
+                                  "تم تحديد الصفوف الصالحة عبر الملف بالكامل.",
+                                ),
+                                error: t(
+                                  "Could not select all rows",
+                                  "تعذر تحديد كل الصفوف",
+                                ),
+                              },
+                              async () => {
+                                await api(
+                                  "imports/" + job.id + "/bulk-review",
+                                  "POST",
+                                  {
+                                    version: job.version,
+                                    action: "SELECT_ALL",
+                                  },
+                                );
+                                const opened = await loadJobPage(
+                                  job.id,
+                                  rowView === "repair" ? 0 : page,
+                                  guidedGroupColumn,
+                                  rowView,
+                                );
+                                setQuickActionMessage(
+                                  t(
+                                    `${opened.quickStats?.selectedRows ?? 0} rows selected for import`,
+                                    `تم تحديد ${opened.quickStats?.selectedRows ?? 0} صفوف للاستيراد`,
+                                  ),
+                                );
+                                await load();
+                              },
+                            )
+                          }
+                        >
+                          {t("Mark valid rows ready", "تجهيز الصفوف الصالحة")}
+                        </button>
+                        <button
+                          disabled={busy || actionBusy}
+                          onClick={() =>
+                            onAction(
+                              {
+                                saving: t(
+                                  "Skipping invalid rows…",
+                                  "جارٍ تخطي الصفوف غير الصالحة…",
+                                ),
+                                success: t(
+                                  "Invalid rows skipped",
+                                  "تم تخطي الصفوف غير الصالحة",
+                                ),
+                                successDetail: t(
+                                  "Problem rows were skipped across the full file.",
+                                  "تم تخطي الصفوف التي بها مشكلات عبر الملف بالكامل.",
+                                ),
+                                error: t(
+                                  "Could not skip invalid rows",
+                                  "تعذر تخطي الصفوف غير الصالحة",
+                                ),
+                              },
+                              async () => {
+                                await api(
+                                  "imports/" + job.id + "/bulk-review",
+                                  "POST",
+                                  {
+                                    version: job.version,
+                                    action: "SKIP_INVALID",
+                                  },
+                                );
+                                const opened = await loadJobPage(
+                                  job.id,
+                                  rowView === "repair" ? 0 : page,
+                                  guidedGroupColumn,
+                                  rowView,
+                                );
+                                setQuickActionMessage(
+                                  t(
+                                    `${opened.quickStats?.skippedRows ?? 0} rows marked to skip. ${opened.reviewStats?.readyRows ?? 0} valid rows remain ready to import`,
+                                    `تم وضع ${opened.quickStats?.skippedRows ?? 0} صفوف للتخطي. ما زال ${opened.reviewStats?.readyRows ?? 0} صفوف صالحة جاهزة للاستيراد`,
+                                  ),
+                                );
+                                await load();
+                              },
+                            )
+                          }
+                        >
+                          {t("Skip problem rows", "تخطي صفوف المشكلات")}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            setReviewDrafts((current) => ({
+                              ...current,
+                              ...Object.fromEntries(
+                                job.rows.map((r: any) => [
+                                  r.id,
+                                  { ...current[r.id], decision: "SKIP" },
+                                ]),
+                              ),
+                            }));
+                            setJob({
+                              ...job,
+                              rows: job.rows.map((r: any) => ({
+                                ...r,
+                                decision: "SKIP",
+                              })),
+                            });
+                          }}
+                        >
+                          {t("Skip visible rows", "تخطي الصفوف الظاهرة")}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setReviewDrafts((current) => ({
+                              ...current,
+                              ...Object.fromEntries(
+                                job.rows.map((r: any) => [
+                                  r.id,
+                                  {
+                                    ...current[r.id],
+                                    decision: r.errors.length
+                                      ? "SKIP"
+                                      : "UPDATE",
+                                  },
+                                ]),
+                              ),
+                            }));
+                            setJob({
+                              ...job,
+                              rows: job.rows.map((r: any) => ({
+                                ...r,
+                                decision: r.errors.length ? "SKIP" : "UPDATE",
+                              })),
+                            });
+                          }}
+                        >
+                          {t(
+                            "Select valid visible rows",
+                            "تحديد الصفوف الصالحة الظاهرة",
+                          )}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
                 <details className="import-advanced-tools">
                   <summary>
@@ -1523,323 +2174,347 @@ export default function Imports({
                     importId={job.id}
                     actionBusy={actionBusy}
                     onAction={onAction}
-                    onApplied={() => loadJobPage(job.id, page, guidedGroupColumn)}
+                    onApplied={() =>
+                      loadJobPage(job.id, page, guidedGroupColumn)
+                    }
                   />
                 </details>
               </>
             )}
             {showRowList && (
-            <div className="table-scroll import-review-list">
-              <div className="section-title">
-                <h3>{visibleRowHeading}</h3>
-                <span className="muted">
-                  {reviewSection === "repair"
-                    ? t(
-                        "Only rows with problems are shown here.",
-                        "هنا يتم عرض الصفوف التي بها مشكلات فقط.",
-                      )
-                    : t(
-                        "Use this view when you want to inspect the full file row by row.",
-                        "استخدم هذا العرض عند الحاجة لفحص الملف صفاً صفاً.",
-                      )}
-                </span>
-              </div>
-              <div className="import-selection-toolbar">
-                {!reviewEditable && (
+              <div className="table-scroll import-review-list">
+                <div className="section-title">
+                  <h3>{visibleRowHeading}</h3>
                   <span className="muted">
-                    {t(
-                      job?.status === "ROLLED_BACK"
-                        ? "This import was rolled back. The original staged rows are retained here for review only."
-                        : "These rows are read-only because this import was already completed. Review the problems here, then re-upload or remap the file to fix them.",
-                      job?.status === "ROLLED_BACK"
-                        ? "تم التراجع عن هذا الاستيراد. يتم الاحتفاظ بالصفوف المرحلية الأصلية هنا للمراجعة فقط."
-                        : "هذه الصفوف للقراءة فقط لأن هذا الاستيراد اكتمل بالفعل. راجع المشكلات هنا ثم أعد رفع الملف أو أعد ربطه لإصلاحها.",
-                    )}
+                    {reviewSection === "repair"
+                      ? t(
+                          "Only rows with problems are shown here.",
+                          "هنا يتم عرض الصفوف التي بها مشكلات فقط.",
+                        )
+                      : t(
+                          "Use this view when you want to inspect the full file row by row.",
+                          "استخدم هذا العرض عند الحاجة لفحص الملف صفاً صفاً.",
+                        )}
                   </span>
-                )}
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    disabled={!reviewEditable}
-                    ref={(input) => {
-                      if (input) input.indeterminate = someVisibleSelected;
-                    }}
-                    aria-label={t("Select all visible rows", "تحديد كل الصفوف الظاهرة")}
-                    onChange={(e) =>
+                </div>
+                <div className="import-selection-toolbar">
+                  {!reviewEditable && (
+                    <span className="muted">
+                      {t(
+                        job?.status === "ROLLED_BACK"
+                          ? "This import was rolled back. The original staged rows are retained here for review only."
+                          : "These rows are read-only because this import was already completed. Review the problems here, then re-upload or remap the file to fix them.",
+                        job?.status === "ROLLED_BACK"
+                          ? "تم التراجع عن هذا الاستيراد. يتم الاحتفاظ بالصفوف المرحلية الأصلية هنا للمراجعة فقط."
+                          : "هذه الصفوف للقراءة فقط لأن هذا الاستيراد اكتمل بالفعل. راجع المشكلات هنا ثم أعد رفع الملف أو أعد ربطه لإصلاحها.",
+                      )}
+                    </span>
+                  )}
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      disabled={!reviewEditable}
+                      ref={(input) => {
+                        if (input) input.indeterminate = someVisibleSelected;
+                      }}
+                      aria-label={t(
+                        "Select all visible rows",
+                        "تحديد كل الصفوف الظاهرة",
+                      )}
+                      onChange={(e) =>
+                        setSelectedRows(
+                          e.target.checked
+                            ? Object.fromEntries(
+                                visibleRowIds.map((id: string) => [id, true]),
+                              )
+                            : {},
+                        )
+                      }
+                    />
+                    {t("Select all visible", "تحديد الكل الظاهر")}
+                  </label>
+                  <span className="muted">
+                    {t("Selected", "المحدد")}: {selectedVisibleCount}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!reviewEditable || !selectedVisibleCount}
+                    onClick={() =>
                       setSelectedRows(
-                        e.target.checked
-                          ? Object.fromEntries(
-                              visibleRowIds.map((id: string) => [id, true]),
-                            )
-                          : {},
+                        Object.fromEntries(
+                          visibleRowIds
+                            .filter((id: string) => !selectedRows[id])
+                            .map((id: string) => [id, true]),
+                        ),
                       )
                     }
-                  />
-                  {t("Select all visible", "تحديد الكل الظاهر")}
-                </label>
-                <span className="muted">
-                  {t("Selected", "المحدد")}: {selectedVisibleCount}
-                </span>
-                <button
-                  type="button"
-                  disabled={!reviewEditable || !selectedVisibleCount}
-                  onClick={() =>
-                    setSelectedRows(
-                      Object.fromEntries(
-                        visibleRowIds
-                          .filter((id: string) => !selectedRows[id])
-                          .map((id: string) => [id, true]),
-                      ),
-                    )
-                  }
-                >
-                  {t("Select visible", "تحديد الظاهر")}
-                </button>
-                <button
-                  type="button"
-                  disabled={!reviewEditable || !selectedVisibleCount}
-                  onClick={() => setSelectedRows({})}
-                >
-                  {t("Clear selection", "مسح التحديد")}
-                </button>
-              </div>
-              {reviewEditable && selectedVisibleCount > 0 && (
-                <div className="import-bulk-bar">
-                  <span>
-                    {selectedVisibleCount}{" "}
-                    {t("visible rows selected", "صفوف ظاهرة محددة")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedRows({ decision: "UPDATE" })}
                   >
-                    {t("Import changes", "استيراد التغييرات")}
+                    {t("Select visible", "تحديد الظاهر")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateSelectedRows({ decision: "KEEP" })}
+                    disabled={!reviewEditable || !selectedVisibleCount}
+                    onClick={() => setSelectedRows({})}
                   >
-                    {t("Keep existing", "إبقاء الحالي")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedRows({ decision: "SKIP" })}
-                  >
-                    {t("Ignore / Skip", "تجاهل / تخطي")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedRows({ decision: "REVIEW" })}
-                  >
-                    {t("Needs review", "بحاجة لمراجعة")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedRows({ verified: true })}
-                  >
-                    {t("Mark verified", "تحديد كمتحقق")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedRows({ verified: false })}
-                  >
-                    {t("Unverify", "إلغاء التحقق")}
+                    {t("Clear selection", "مسح التحديد")}
                   </button>
                 </div>
-              )}
-              <table className="import-review-table">
-                <thead>
-                  <tr>
-                    <th>{t("Select", "تحديد")}</th>
-                    <th>#</th>
-                    <th>{t("Incoming row", "الصف الوارد")}</th>
-                    <th>{t("Status / problem", "الحالة / المشكلة")}</th>
-                    <th>{t("Next action", "الإجراء التالي")}</th>
-                    <th>{t("Verified", "تم التحقق")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {job.rows.map((r: any) => (
-                    <tr
-                      key={r.id}
-                      className={selectedRows[r.id] ? "selected-row" : ""}
+                {reviewEditable && selectedVisibleCount > 0 && (
+                  <div className="import-bulk-bar">
+                    <span>
+                      {selectedVisibleCount}{" "}
+                      {t("visible rows selected", "صفوف ظاهرة محددة")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ decision: "UPDATE" })}
                     >
-                      <td data-label={t("Select", "تحديد")}>
-                        <input
-                          type="checkbox"
-                          checked={!!selectedRows[r.id]}
-                          disabled={!reviewEditable}
-                          aria-label={`Select row ${r.row_number}`}
-                          onChange={(e) =>
-                            setSelectedRows((current) => ({
-                              ...current,
-                              [r.id]: e.target.checked,
-                            }))
-                          }
-                        />
-                      </td>
-                      <td data-label="#">{r.row_number}</td>
-                      <td data-label={t("Incoming row", "الصف الوارد")}>
-                        <strong>
-                          {r.proposed?.partNumber ||
-                            t("Not mapped", "غير مربوط")}
-                        </strong>
-                        {mapping.partNumber && (
-                          <small>
-                            {t("Source part", "رقم الصنف من الملف")}:{" "}
-                            {String(r.raw?.[mapping.partNumber] ?? "—")}
-                          </small>
-                        )}
-                        <small>{r.proposed?.description}</small>
-                        {guidedMode && mapping.listPrice && (
-                          <small>
-                            {t("Public price", "السعر العام")}:{" "}
-                            {String(r.raw?.[mapping.listPrice] ?? "—")}
-                            {guidedGroupColumn &&
-                              String(r.raw?.[guidedGroupColumn] ?? "").trim() && (
+                      {t("Import changes", "استيراد التغييرات")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ decision: "KEEP" })}
+                    >
+                      {t("Keep existing", "إبقاء الحالي")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ decision: "SKIP" })}
+                    >
+                      {t("Ignore / Skip", "تجاهل / تخطي")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ decision: "REVIEW" })}
+                    >
+                      {t("Needs review", "بحاجة لمراجعة")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ verified: true })}
+                    >
+                      {t("Mark verified", "تحديد كمتحقق")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedRows({ verified: false })}
+                    >
+                      {t("Unverify", "إلغاء التحقق")}
+                    </button>
+                  </div>
+                )}
+                <table className="import-review-table">
+                  <thead>
+                    <tr>
+                      <th>{t("Select", "تحديد")}</th>
+                      <th>#</th>
+                      <th>{t("Incoming row", "الصف الوارد")}</th>
+                      <th>{t("Status / problem", "الحالة / المشكلة")}</th>
+                      <th>{t("Next action", "الإجراء التالي")}</th>
+                      <th>{t("Verified", "تم التحقق")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {job.rows.map((r: any) => (
+                      <tr
+                        key={r.id}
+                        className={selectedRows[r.id] ? "selected-row" : ""}
+                      >
+                        <td data-label={t("Select", "تحديد")}>
+                          <input
+                            type="checkbox"
+                            checked={!!selectedRows[r.id]}
+                            disabled={!reviewEditable}
+                            aria-label={`Select row ${r.row_number}`}
+                            onChange={(e) =>
+                              setSelectedRows((current) => ({
+                                ...current,
+                                [r.id]: e.target.checked,
+                              }))
+                            }
+                          />
+                        </td>
+                        <td data-label="#">{r.row_number}</td>
+                        <td data-label={t("Incoming row", "الصف الوارد")}>
+                          <strong>
+                            {r.proposed?.partNumber ||
+                              t("Not mapped", "غير مربوط")}
+                          </strong>
+                          {mapping.partNumber && (
+                            <small>
+                              {t("Source part", "رقم الصنف من الملف")}:{" "}
+                              {String(r.raw?.[mapping.partNumber] ?? "—")}
+                            </small>
+                          )}
+                          <small>{r.proposed?.description}</small>
+                          {guidedMode && mapping.listPrice && (
+                            <small>
+                              {t("Public price", "السعر العام")}:{" "}
+                              {String(r.raw?.[mapping.listPrice] ?? "—")}
+                              {guidedGroupColumn &&
+                                String(
+                                  r.raw?.[guidedGroupColumn] ?? "",
+                                ).trim() && (
+                                  <>
+                                    {" · "}
+                                    {t("Activity", "النشاط")}:{" "}
+                                    {String(
+                                      r.raw?.[guidedGroupColumn] ?? "",
+                                    ).trim()}
+                                  </>
+                                )}
+                              {r.proposed?.listPrice && (
                                 <>
                                   {" · "}
-                                  {t("Activity", "النشاط")}:{" "}
-                                  {String(r.raw?.[guidedGroupColumn] ?? "").trim()}
+                                  {t("Final", "النهائي")}:{" "}
+                                  {previewPrice(
+                                    String(r.proposed.baseDiscount),
+                                    Number(r.proposed.listPrice),
+                                  )}
+                                  {" · "}
+                                  {t("Wholesale", "الجملة")}:{" "}
+                                  {previewPrice(
+                                    String(
+                                      (r.proposed.levels || []).find(
+                                        (level: any) =>
+                                          level.code === "WHOLESALE",
+                                      )?.baseDiscount ?? "0",
+                                    ),
+                                    Number(r.proposed.listPrice),
+                                  )}
+                                  {" · "}
+                                  {t("Minimum", "الحد الأدنى")}:{" "}
+                                  {r.proposed.minimum}
                                 </>
                               )}
-                            {r.proposed?.listPrice && (
-                              <>
-                                {" · "}
-                                {t("Final", "النهائي")}:{" "}
-                                {previewPrice(String(r.proposed.baseDiscount), Number(r.proposed.listPrice))}
-                                {" · "}
-                                {t("Wholesale", "الجملة")}:{" "}
-                                {previewPrice(
-                                  String(
-                                    (r.proposed.levels || []).find(
-                                      (level: any) => level.code === "WHOLESALE",
-                                    )?.baseDiscount ?? "0",
-                                  ),
-                                  Number(r.proposed.listPrice),
-                                )}
-                                {" · "}
-                                {t("Minimum", "الحد الأدنى")}: {r.proposed.minimum}
-                              </>
-                            )}
-                          </small>
-                        )}
-                        <details>
-                          <summary>
-                            {t("Source & differences", "المصدر والفروقات")}
-                          </summary>
-                          <pre>
-                            {JSON.stringify(
-                              {
-                                source: r.raw,
-                                current: r.current,
-                                incoming: r.proposed,
-                              },
-                              null,
-                              2,
-                            )}
-                          </pre>
-                        </details>
-                        {job.status === "AWAITING_REVIEW" && (
-                          <button onClick={() => setEditing(r)}>
-                            {t("Correct row", "تصحيح الصف")}
-                          </button>
-                        )}
-                      </td>
-                      <td data-label={t("Status / problem", "الحالة / المشكلة")}>
-                        {!r.duplicate_id && r.proposed?.partNumber && (
-                          <span className="pill warning">
-                            {t("New Product (Will be created)", "منتج جديد (سيتم إنشاؤه)")}
-                            {job.mode === "UPDATE_ONLY"
-                              ? " · Update blocked"
-                              : ""}
-                          </span>
-                        )}
-                        {r.confidence === "LOW" && (
-                          <span className="pill warning">
-                            {t("LOW CONFIDENCE", "ثقة منخفضة")}
-                          </span>
-                        )}
-                        {r.duplicate_id && (
-                          <span className="pill">
-                            {t("Existing Product (Will be updated)", "منتج موجود (سيتم تحديثه)")}
-                          </span>
-                        )}
-                        <small className="error-text">
-                          {r.errors.join("; ")}
-                        </small>
-                        {!!importProblemHint(r, t) && (
-                          <small className="muted">{importProblemHint(r, t)}</small>
-                        )}
-                      </td>
-                      <td data-label={t("Next action", "الإجراء التالي")}>
-                        <select
-                          disabled={!reviewEditable}
-                          value={r.decision}
-                          onChange={(e) => {
-                            const decision = e.target.value;
-                            setReviewDrafts((current) => ({
-                              ...current,
-                              [r.id]: { ...current[r.id], decision },
-                            }));
-                            setJob({
-                              ...job,
-                              rows: job.rows.map((x: any) =>
-                                x.id === r.id ? { ...x, decision } : x,
-                              ),
-                            });
-                          }}
+                            </small>
+                          )}
+                          <details>
+                            <summary>
+                              {t("Source & differences", "المصدر والفروقات")}
+                            </summary>
+                            <pre>
+                              {JSON.stringify(
+                                {
+                                  source: r.raw,
+                                  current: r.current,
+                                  incoming: r.proposed,
+                                },
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          </details>
+                          {job.status === "AWAITING_REVIEW" && (
+                            <button onClick={() => setEditing(r)}>
+                              {t("Correct row", "تصحيح الصف")}
+                            </button>
+                          )}
+                        </td>
+                        <td
+                          data-label={t("Status / problem", "الحالة / المشكلة")}
                         >
-                          {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => (
-                            <option key={d} value={d}>
-                              {decisionLabel(d, t)}
-                            </option>
-                          ))}
-                        </select>
-                        <small>{decisionLabel(r.decision, t)}</small>
-                      </td>
-                      <td data-label={t("Verified", "تم التحقق")}>
-                        <input
-                          type="checkbox"
-                          disabled={!reviewEditable}
-                          checked={r.verified}
-                          aria-label={"Verify row " + r.row_number}
-                          onChange={(e) => {
-                            const verified = e.target.checked;
-                            setReviewDrafts((current) => ({
-                              ...current,
-                              [r.id]: { ...current[r.id], verified },
-                            }));
-                            setJob({
-                              ...job,
-                              rows: job.rows.map((x: any) =>
-                                x.id === r.id ? { ...x, verified } : x,
-                              ),
-                            });
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                  {!job.rows.length && (
-                    <tr>
-                      <td colSpan={6}>
-                        {rowView === "repair"
-                          ? t(
-                              "No repair items on this import right now.",
-                              "لا توجد عناصر إصلاح في هذا الاستيراد حالياً.",
-                            )
-                          : t(
-                              "No rows are available on this page.",
-                              "لا توجد صفوف متاحة في هذه الصفحة.",
-                            )}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                          {!r.duplicate_id && r.proposed?.partNumber && (
+                            <span className="pill warning">
+                              {t(
+                                "New Product (Will be created)",
+                                "منتج جديد (سيتم إنشاؤه)",
+                              )}
+                              {job.mode === "UPDATE_ONLY"
+                                ? " · Update blocked"
+                                : ""}
+                            </span>
+                          )}
+                          {r.confidence === "LOW" && (
+                            <span className="pill warning">
+                              {t("LOW CONFIDENCE", "ثقة منخفضة")}
+                            </span>
+                          )}
+                          {r.duplicate_id && (
+                            <span className="pill">
+                              {t(
+                                "Existing Product (Will be updated)",
+                                "منتج موجود (سيتم تحديثه)",
+                              )}
+                            </span>
+                          )}
+                          <small className="error-text">
+                            {r.errors.join("; ")}
+                          </small>
+                          {!!importProblemHint(r, t) && (
+                            <small className="muted">
+                              {importProblemHint(r, t)}
+                            </small>
+                          )}
+                        </td>
+                        <td data-label={t("Next action", "الإجراء التالي")}>
+                          <select
+                            disabled={!reviewEditable}
+                            value={r.decision}
+                            onChange={(e) => {
+                              const decision = e.target.value;
+                              setReviewDrafts((current) => ({
+                                ...current,
+                                [r.id]: { ...current[r.id], decision },
+                              }));
+                              setJob({
+                                ...job,
+                                rows: job.rows.map((x: any) =>
+                                  x.id === r.id ? { ...x, decision } : x,
+                                ),
+                              });
+                            }}
+                          >
+                            {["REVIEW", "KEEP", "UPDATE", "SKIP"].map((d) => (
+                              <option key={d} value={d}>
+                                {decisionLabel(d, t)}
+                              </option>
+                            ))}
+                          </select>
+                          <small>{decisionLabel(r.decision, t)}</small>
+                        </td>
+                        <td data-label={t("Verified", "تم التحقق")}>
+                          <input
+                            type="checkbox"
+                            disabled={!reviewEditable}
+                            checked={r.verified}
+                            aria-label={"Verify row " + r.row_number}
+                            onChange={(e) => {
+                              const verified = e.target.checked;
+                              setReviewDrafts((current) => ({
+                                ...current,
+                                [r.id]: { ...current[r.id], verified },
+                              }));
+                              setJob({
+                                ...job,
+                                rows: job.rows.map((x: any) =>
+                                  x.id === r.id ? { ...x, verified } : x,
+                                ),
+                              });
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                    {!job.rows.length && (
+                      <tr>
+                        <td colSpan={6}>
+                          {rowView === "repair"
+                            ? t(
+                                "No repair items on this import right now.",
+                                "لا توجد عناصر إصلاح في هذا الاستيراد حالياً.",
+                              )
+                            : t(
+                                "No rows are available on this page.",
+                                "لا توجد صفوف متاحة في هذه الصفحة.",
+                              )}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
             {job.totalPages > 1 && (
               <div className="actions footer-actions">
@@ -1896,7 +2571,9 @@ export default function Imports({
                         ),
                       },
                       async () => {
-                        const currentRowIds = new Set(job.rows.map((r: any) => r.id));
+                        const currentRowIds = new Set(
+                          job.rows.map((r: any) => r.id),
+                        );
                         await api("imports/" + job.id + "/review", "POST", {
                           rows: job.rows.map((r: any) => ({
                             id: r.id,
@@ -1921,7 +2598,11 @@ export default function Imports({
                 </button>
                 <button
                   className="primary"
-                  style={{ backgroundColor: "#2e7d32", color: "#fff", borderColor: "#2e7d32" }}
+                  style={{
+                    backgroundColor: "#2e7d32",
+                    color: "#fff",
+                    borderColor: "#2e7d32",
+                  }}
                   disabled={busy || actionBusy}
                   onClick={async () => {
                     if (
@@ -1933,35 +2614,54 @@ export default function Imports({
                             )
                           : t(
                               "Auto-approve and import all valid rows directly? This will import all rows without errors and skip any problem rows.",
-                              "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات."
-                            )
+                              "تأكيد الموافقة التلقائية واستيراد كافة الصفوف الصالحة مباشرة؟ سيقوم هذا باستيراد الصفوف الخالية من الأخطاء وتخطي الصفوف التي بها مشكلات.",
+                            ),
                       )
                     ) {
                       onAction(
                         {
                           saving: quickImportMode
-                            ? t("Importing valid rows…", "جارٍ استيراد الصفوف الصالحة…")
-                            : t("Auto-importing valid rows…", "جارٍ الاستيراد التلقائي للصفوف الصالحة…"),
+                            ? t(
+                                "Importing valid rows…",
+                                "جارٍ استيراد الصفوف الصالحة…",
+                              )
+                            : t(
+                                "Auto-importing valid rows…",
+                                "جارٍ الاستيراد التلقائي للصفوف الصالحة…",
+                              ),
                           success: quickImportMode
-                            ? t("Quick import completed", "اكتمل الاستيراد السريع")
-                            : t("Auto-import completed", "اكتمل الاستيراد التلقائي"),
+                            ? t(
+                                "Quick import completed",
+                                "اكتمل الاستيراد السريع",
+                              )
+                            : t(
+                                "Auto-import completed",
+                                "اكتمل الاستيراد التلقائي",
+                              ),
                           successDetail: quickImportMode
                             ? t(
                                 "Valid rows were imported and invalid rows stayed available for repair.",
                                 "تم استيراد الصفوف الصالحة وبقيت الصفوف غير الصالحة متاحة للإصلاح.",
                               )
-                            : t("All valid rows were successfully imported to the catalog.", "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج."),
+                            : t(
+                                "All valid rows were successfully imported to the catalog.",
+                                "تم استيراد جميع الصفوف الصالحة بنجاح إلى الكتالوج.",
+                              ),
                           error: quickImportMode
                             ? t("Quick import failed", "فشل الاستيراد السريع")
                             : t("Auto-import failed", "فشل الاستيراد التلقائي"),
                         },
                         async () => {
-                          await api("imports/" + job.id + "/auto-confirm", "POST", {
-                            version: job.version,
-                          });
+                          await api(
+                            "imports/" + job.id + "/auto-confirm",
+                            "POST",
+                            {
+                              version: job.version,
+                            },
+                          );
                           await open(job.id);
                           await load();
-                        }
+                        },
                       );
                     }
                   }}
@@ -1988,10 +2688,7 @@ export default function Imports({
                             "Confirming import…",
                             "جارٍ تأكيد الاستيراد…",
                           ),
-                          success: t(
-                            "Import confirmed",
-                            "تم تأكيد الاستيراد",
-                          ),
+                          success: t("Import confirmed", "تم تأكيد الاستيراد"),
                           successDetail: t(
                             "The live catalog was updated from the reviewed rows.",
                             "تم تحديث الكتالوج المباشر من الصفوف المراجعة.",
@@ -2016,7 +2713,9 @@ export default function Imports({
                 </button>
                 <button
                   disabled={busy || actionBusy}
-                  onClick={() => run(async () => await loadConfirmation(job.id, page))}
+                  onClick={() =>
+                    run(async () => await loadConfirmation(job.id, page))
+                  }
                 >
                   Preview saved prices / معاينة الأسعار المحفوظة
                 </button>
@@ -2036,55 +2735,58 @@ export default function Imports({
                   </thead>
                   <tbody>
                     {confirmation.items.map((r: any) => (
-                        <tr key={r.id}>
-                          <td>{r.proposed?.partNumber}</td>
-                          <td>
-                            {r.decision === "UPDATE"
-                              ? t("Import changes", "استيراد التغييرات")
-                              : r.decision === "SKIP"
+                      <tr key={r.id}>
+                        <td>{r.proposed?.partNumber}</td>
+                        <td>
+                          {r.decision === "UPDATE"
+                            ? t("Import changes", "استيراد التغييرات")
+                            : r.decision === "SKIP"
                               ? t("Ignore / Skip", "تجاهل / تخطي")
                               : r.decision === "KEEP"
-                              ? t("Keep existing", "إبقاء الحالي")
-                              : r.decision} ·{" "}
-                            {r.verified ? t("Verified", "تم التحقق") : t("Not verified", "لم يتم التحقق")}
-                          </td>
+                                ? t("Keep existing", "إبقاء الحالي")
+                                : r.decision}{" "}
+                          ·{" "}
+                          {r.verified
+                            ? t("Verified", "تم التحقق")
+                            : t("Not verified", "لم يتم التحقق")}
+                        </td>
+                        <td>
+                          {r.differences.map((d: any) => (
+                            <div key={d.code}>
+                              {d.code}: {d.before ?? "New"} → {d.after} (
+                              {d.changePercent ?? "—"}%)
+                            </div>
+                          ))}
+                        </td>
+                        {guidedMode && (
                           <td>
-                            {r.differences.map((d: any) => (
-                              <div key={d.code}>
-                                {d.code}: {d.before ?? "New"} → {d.after} (
-                                {d.changePercent ?? "—"}%)
-                              </div>
-                            ))}
+                            {t("Public", "عام")}: {r.proposed?.listPrice ?? "—"}
+                            <div>
+                              {t("Final", "النهائي")}:{" "}
+                              {previewPrice(
+                                String(r.proposed?.baseDiscount ?? "0"),
+                                Number(r.proposed?.listPrice ?? 0),
+                              )}
+                            </div>
+                            <div>
+                              {t("Wholesale", "الجملة")}:{" "}
+                              {previewPrice(
+                                String(
+                                  (r.proposed?.levels || []).find(
+                                    (level: any) => level.code === "WHOLESALE",
+                                  )?.baseDiscount ?? "0",
+                                ),
+                                Number(r.proposed?.listPrice ?? 0),
+                              )}
+                            </div>
+                            <div>
+                              {t("Minimum", "الحد الأدنى")}:{" "}
+                              {r.proposed?.minimum ?? "—"}
+                            </div>
                           </td>
-                          {guidedMode && (
-                            <td>
-                              {t("Public", "عام")}: {r.proposed?.listPrice ?? "—"}
-                              <div>
-                                {t("Final", "النهائي")}:{" "}
-                                {previewPrice(
-                                  String(r.proposed?.baseDiscount ?? "0"),
-                                  Number(r.proposed?.listPrice ?? 0),
-                                )}
-                              </div>
-                              <div>
-                                {t("Wholesale", "الجملة")}:{" "}
-                                {previewPrice(
-                                  String(
-                                    (r.proposed?.levels || []).find(
-                                      (level: any) => level.code === "WHOLESALE",
-                                    )?.baseDiscount ?? "0",
-                                  ),
-                                  Number(r.proposed?.listPrice ?? 0),
-                                )}
-                              </div>
-                              <div>
-                                {t("Minimum", "الحد الأدنى")}:{" "}
-                                {r.proposed?.minimum ?? "—"}
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
+                        )}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -2145,7 +2847,11 @@ export default function Imports({
                           ),
                         },
                         async () => {
-                          await api("imports/" + job.id + "/rollback", "POST", {});
+                          await api(
+                            "imports/" + job.id + "/rollback",
+                            "POST",
+                            {},
+                          );
                           await open(job.id);
                           await load();
                         },
@@ -2183,14 +2889,8 @@ export default function Imports({
           onSave={async (p) => {
             return onAction(
               {
-                saving: t(
-                  "Saving corrected row…",
-                  "جارٍ حفظ الصف المصحح…",
-                ),
-                success: t(
-                  "Corrected row saved",
-                  "تم حفظ الصف المصحح",
-                ),
+                saving: t("Saving corrected row…", "جارٍ حفظ الصف المصحح…"),
+                success: t("Corrected row saved", "تم حفظ الصف المصحح"),
                 successDetail: t(
                   "The import row was updated for review.",
                   "تم تحديث صف الاستيراد للمراجعة.",

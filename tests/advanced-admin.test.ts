@@ -31,6 +31,7 @@ import {
   reopen as reopenImport,
   getImportPage,
   previewConfirmation,
+  processValidation,
 } from "../backend/imports/service";
 import { saveDraft, reviewIssue, issue } from "../backend/quotations/service";
 import {
@@ -218,9 +219,7 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           "Public Pricelist",
           "Currency",
         ]);
-        const values = Array.from(
-          sheet.getRow(2).values as ExcelJS.CellValue[],
-        )
+        const values = Array.from(sheet.getRow(2).values as ExcelJS.CellValue[])
           .slice(1)
           .map((value: ExcelJS.CellValue) => String(value ?? ""));
         assert.equal(values[0], "28900");
@@ -347,8 +346,10 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           "AWAITING_REVIEW",
         );
         assert.equal(
-          (await one(db, "SELECT active FROM products WHERE normalized_part='UNKNOWN'"))!
-            .active,
+          (await one(
+            db,
+            "SELECT active FROM products WHERE normalized_part='UNKNOWN'",
+          ))!.active,
           false,
         );
       },
@@ -414,8 +415,9 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
         assert.equal(rows[0].proposed.baseDiscount, "60");
         assert.equal(rows[0].proposed.minimum, "6.34");
         assert.equal(
-          rows[0].proposed.levels.find((level: any) => level.code === "WHOLESALE")
-            .baseDiscount,
+          rows[0].proposed.levels.find(
+            (level: any) => level.code === "WHOLESALE",
+          ).baseDiscount,
           "55",
         );
         assert.deepEqual(rows[1].errors, []);
@@ -423,8 +425,9 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
         assert.equal(rows[1].proposed.baseDiscount, "50");
         assert.equal(rows[1].proposed.minimum, "17.15");
         assert.equal(
-          rows[1].proposed.levels.find((level: any) => level.code === "WHOLESALE")
-            .baseDiscount,
+          rows[1].proposed.levels.find(
+            (level: any) => level.code === "WHOLESALE",
+          ).baseDiscount,
           "45",
         );
       },
@@ -519,6 +522,116 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
         assert.equal(row!.proposed.description, "Auto mapped breaker");
         assert.equal(row!.proposed.baseDiscount, "60");
         assert.equal(row!.proposed.minimum, "30.00");
+      },
+    );
+    await t.test(
+      "Basic ABB-style imports validate in the worker and preserve unrelated levels",
+      async () => {
+        const wholesaleBefore = toInput(
+          await getProduct(db, product.id),
+        ).levels!.find((level: any) => level.code === "WHOLESALE")!.fixedPrice;
+        const id = randomUUID();
+        await db.query(
+          "INSERT INTO import_jobs(id,filename,file_path,kind,status,owner_id,mode,summary) VALUES($1,'ABB.xlsx','fixture','EXCEL','AWAITING_REVIEW',$2,'CREATE_UPDATE',$3)",
+          [
+            id,
+            actor.id,
+            JSON.stringify({
+              rows: 2,
+              columns: [
+                "Material Code",
+                "Description ",
+                "Gross Price \n (SAR )",
+              ],
+            }),
+          ],
+        );
+        await db.query(
+          "INSERT INTO import_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5)",
+          [
+            randomUUID(),
+            id,
+            JSON.stringify({
+              "Material Code": "LS-BKJ63",
+              "Description ": "Updated ABB description",
+              "Gross Price \n (SAR )": "1420.3102898550724",
+            }),
+            randomUUID(),
+            JSON.stringify({
+              "Material Code": "1SDA038316R1",
+              "Description ": "UVD 24/30V",
+              "Gross Price \n (SAR )": "1420.3102898550724",
+            }),
+          ],
+        );
+        const queued: any = await mapRows(db, actor, id, {
+          mapping: {
+            partNumber: "Material Code",
+            description: "Description ",
+            "END_CUSTOMER.listPrice": "Gross Price \n (SAR )",
+          },
+          defaults: {
+            importProfile: "BASIC",
+            basicImport: {
+              priceType: "LIST_DISCOUNT",
+              adjustmentSource: "DEFAULT",
+              adjustmentValue: "10",
+            },
+            method: "LIST_DISCOUNT",
+            vat: "15",
+            defaultLevel: "END_CUSTOMER",
+            "END_CUSTOMER.active": true,
+            "END_CUSTOMER.method": "LIST_DISCOUNT",
+            "END_CUSTOMER.listPrice": "0",
+            "END_CUSTOMER.baseDiscount": "10",
+            quickImport: true,
+          },
+          version: 1,
+          mode: "CREATE_UPDATE",
+          quickImport: true,
+          background: true,
+        });
+        assert.equal(queued.queued, true);
+        assert.equal(
+          (await one(db, "SELECT status FROM import_jobs WHERE id=$1", [id]))!
+            .status,
+          "VALIDATING",
+        );
+        await processValidation(db, id, queued.id);
+        const staged = (
+          await db.query(
+            "SELECT proposed,errors FROM import_rows WHERE job_id=$1 ORDER BY row_number",
+            [id],
+          )
+        ).rows;
+        assert.deepEqual(staged[0].errors, []);
+        assert.equal(staged[0].proposed.description, "Updated ABB description");
+        assert.equal(
+          staged[0].proposed.levels.find(
+            (level: any) => level.code === "WHOLESALE",
+          ).fixedPrice,
+          wholesaleBefore,
+        );
+        assert.equal(
+          staged[0].proposed.levels.find(
+            (level: any) => level.code === "END_CUSTOMER",
+          ).listPrice,
+          "1420.31029",
+        );
+        assert.equal(
+          staged[0].proposed.levels.find(
+            (level: any) => level.code === "END_CUSTOMER",
+          ).baseDiscount,
+          "10",
+        );
+        assert.deepEqual(staged[1].errors, []);
+        const completed = await one(
+          db,
+          "SELECT status,summary FROM import_jobs WHERE id=$1",
+          [id],
+        );
+        assert.equal(completed!.status, "AWAITING_REVIEW");
+        assert.equal(completed!.summary.progress.percentage, 100);
       },
     );
     await t.test(
@@ -671,7 +784,9 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           new Set(drafts.map((draft) => draft.internalReference)).size,
           drafts.length,
         );
-        assert(drafts.every((draft) => /^QID-\d{6,}$/.test(draft.internalReference)));
+        assert(
+          drafts.every((draft) => /^QID-\d{6,}$/.test(draft.internalReference)),
+        );
         const reviews = await Promise.all(
           drafts.map((d, i) => reviewIssue(db, actors[i], d.id, config)),
         );

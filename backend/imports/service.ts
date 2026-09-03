@@ -86,8 +86,11 @@ const importMappingRequestSchema = z
     mapping: z.record(z.string(), z.string()),
     defaults: importDefaultsSchema,
     version: importVersionSchema,
-    mode: z.enum(["UPDATE_ONLY", "CREATE_UPDATE"]).optional(),
+    mode: z
+      .enum(["UPDATE_ONLY", "CREATE_UPDATE", "CREATE_NEW_ONLY"])
+      .optional(),
     quickImport: z.boolean().optional(),
+    background: z.boolean().optional(),
   })
   .strict();
 const bulkReviewRequestSchema = z
@@ -153,9 +156,10 @@ async function stageImportRow(
   mapping: Record<string, string>,
   productDefaults: Record<string, unknown>,
   guidedImport: z.infer<typeof guidedImportSchema> | null,
-  mode: "UPDATE_ONLY" | "CREATE_UPDATE",
+  mode: "UPDATE_ONLY" | "CREATE_UPDATE" | "CREATE_NEW_ONLY",
   quickImport: boolean,
   applyPricingDefaultsToExisting = false,
+  basicImport = false,
 ) {
   let proposed = extractMappedValues(row.raw, mapping);
   const errors: string[] = [];
@@ -192,9 +196,20 @@ async function stageImportRow(
       if (partNumber && !trimMappedValue(proposed.description))
         proposed.description = current?.description || partNumber;
     }
+    const candidateDefaults =
+      current && basicImport
+        ? Object.fromEntries(
+            Object.entries(productDefaults).filter(
+              ([key]) =>
+                !["method", "markup", "listPrice", "baseDiscount"].includes(
+                  key,
+                ),
+            ),
+          )
+        : productDefaults;
     proposed = importCandidate(
       proposed,
-      productDefaults,
+      candidateDefaults,
       current,
       applyPricingDefaultsToExisting,
     );
@@ -202,6 +217,10 @@ async function stageImportRow(
     if (!quickImport && !duplicate && mode === "UPDATE_ONLY")
       errors.push(
         "Unknown part number: Update Existing Only does not create products",
+      );
+    if (duplicate && mode === "CREATE_NEW_ONLY")
+      errors.push(
+        "Part number already exists: Create New Only does not update products",
       );
     return {
       proposed: parsed,
@@ -229,6 +248,8 @@ function splitImportDefaults(defaults: Record<string, unknown>) {
     guidedImport,
     quickImport,
     supplierQuotePriceRole,
+    importProfile,
+    basicImport,
     ...productDefaults
   } = defaults;
   return {
@@ -465,8 +486,10 @@ export async function getImportPage(
     ...job,
     capabilities: {
       canEdit: !["IMPORTED", "ROLLED_BACK"].includes(job.status),
-      canCreateCorrection: ["IMPORTED", "ROLLED_BACK"].includes(job.status) && totalRows > 0,
-      correctionUnavailableReason: totalRows > 0 ? "" : "Original extracted rows are no longer available",
+      canCreateCorrection:
+        ["IMPORTED", "ROLLED_BACK"].includes(job.status) && totalRows > 0,
+      correctionUnavailableReason:
+        totalRows > 0 ? "" : "Original extracted rows are no longer available",
     },
     summary: { ...(job.summary || {}), rows: totalRows },
     rows,
@@ -569,9 +592,9 @@ export async function mapRows(
   const mapping = Object.fromEntries(
     Object.entries(parsed.mapping).flatMap(([field, column]) => {
       const normalizedField = field.trim();
-      const normalizedColumn = column.trim();
-      return normalizedField && normalizedColumn
-        ? [[normalizedField, normalizedColumn]]
+      const exactColumn = column;
+      return normalizedField && exactColumn.trim()
+        ? [[normalizedField, exactColumn]]
         : [];
     }),
   );
@@ -595,17 +618,31 @@ export async function mapRows(
       "SELECT * FROM import_jobs WHERE id=$1 FOR UPDATE",
       [id],
     );
+    assert(job, 404, "Import not found");
     assert(
-      job && job.status === "AWAITING_REVIEW",
+      ["AWAITING_REVIEW", "FAILED"].includes(job.status),
       409,
       "Import is not ready for mapping",
     );
+    if (job.status === "FAILED") {
+      const available = await one(
+        tx,
+        "SELECT count(*)::int AS count FROM import_rows WHERE job_id=$1",
+        [id],
+      );
+      assert(
+        Number(available?.count || 0) > 0,
+        409,
+        "Extracted rows are unavailable; upload the file again",
+      );
+    }
     assert(job.version === data.version, 409, "Import changed. Reload");
     const mode = data.mode ?? job.mode;
     const quickImport = data.quickImport ?? quickImportEnabled(job.defaults);
     const applyPricingDefaultsToExisting =
-      job.summary?.profile === "SUPPLIER_QUOTE" &&
-      data.mapping.cost === "Unit price";
+      data.defaults?.importProfile === "BASIC" ||
+      (job.summary?.profile === "SUPPLIER_QUOTE" &&
+        data.mapping.cost === "Unit price");
     if (job.summary?.profile === "SUPPLIER_QUOTE") {
       const quotePriceMappings = supplierQuotePriceTargets.filter(
         (field) => data.mapping[field] === "Unit price",
@@ -616,10 +653,48 @@ export async function mapRows(
         "Choose exactly one destination for the supplier quote Unit price before validating the import",
       );
     }
-    if (mode === "CREATE_UPDATE") requirePermission(actor, "PRODUCT_CREATE");
+    if (["CREATE_UPDATE", "CREATE_NEW_ONLY"].includes(mode))
+      requirePermission(actor, "PRODUCT_CREATE");
     const { productDefaults, guidedImport } = splitImportDefaults(
       data.defaults,
     );
+    if (data.background) {
+      const validationDefaults = { ...data.defaults, quickImport };
+      await tx.query(
+        `UPDATE import_jobs
+         SET mapping=$2,defaults=$3,mode=$4,status='VALIDATING',error=NULL,
+             summary=summary||$5::jsonb,version=version+1,updated_at=now()
+         WHERE id=$1`,
+        [
+          id,
+          json(data.mapping),
+          json(validationDefaults),
+          mode,
+          json({
+            profile:
+              data.defaults?.importProfile || job.summary?.profile || null,
+            progress: {
+              phase: "QUEUED",
+              processedRows: 0,
+              totalRows: Number(job.summary?.rows || 0),
+              percentage: 0,
+              remainingSeconds: null,
+            },
+          }),
+        ],
+      );
+      await tx.query(
+        "DELETE FROM jobs WHERE kind='IMPORT_VALIDATE' AND payload->>'importId'=$1 AND status IN ('PENDING','RUNNING')",
+        [id],
+      );
+      const validationId = randomUUID();
+      await tx.query(
+        "INSERT INTO jobs(id,kind,payload) VALUES($1,'IMPORT_VALIDATE',$2)",
+        [validationId, json({ importId: id })],
+      );
+      await audit(tx, actor.id, "IMPORT_VALIDATION_QUEUED", "import_jobs", id);
+      return { ok: true, queued: true, id: validationId, status: "VALIDATING" };
+    }
     const rows = (
       await tx.query(
         "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number",
@@ -636,6 +711,7 @@ export async function mapRows(
         mode,
         quickImport,
         applyPricingDefaultsToExisting,
+        data.defaults?.importProfile === "BASIC",
       );
       await tx.query(
         "UPDATE import_rows SET proposed=$2,errors=$3,duplicate_id=$4,expected_version=$5,decision='REVIEW',verified=false WHERE id=$1",
@@ -654,6 +730,127 @@ export async function mapRows(
     );
     return { ok: true };
   });
+}
+
+export async function processValidation(
+  db: DB,
+  id: string,
+  workerJobId: string,
+) {
+  const job = await one(db, "SELECT * FROM import_jobs WHERE id=$1", [id]);
+  assert(
+    job && ["VALIDATING", "FAILED"].includes(job.status),
+    409,
+    "Import is not awaiting validation",
+  );
+  await db.query(
+    "UPDATE import_jobs SET status='VALIDATING',error=NULL,updated_at=now() WHERE id=$1",
+    [id],
+  );
+  const { productDefaults, guidedImport } = splitImportDefaults(
+    job.defaults || {},
+  );
+  const quickImport = quickImportEnabled(job.defaults);
+  const applyPricingDefaultsToExisting =
+    job.defaults?.importProfile === "BASIC" ||
+    (job.summary?.profile === "SUPPLIER_QUOTE" &&
+      job.mapping?.cost === "Unit price");
+  const count = await one(
+    db,
+    "SELECT count(*)::int AS total FROM import_rows WHERE job_id=$1",
+    [id],
+  );
+  const total = Number(count?.total || 0);
+  const started = Date.now();
+  const batchSize = 200;
+  let processed = 0;
+  while (processed < total) {
+    const rows = (
+      await db.query(
+        "SELECT * FROM import_rows WHERE job_id=$1 ORDER BY row_number LIMIT $2 OFFSET $3",
+        [id, batchSize, processed],
+      )
+    ).rows;
+    if (!rows.length) break;
+    await db.transaction(async (tx) => {
+      for (const row of rows) {
+        const staged = await stageImportRow(
+          tx,
+          row,
+          job.mapping || {},
+          productDefaults,
+          guidedImport,
+          job.mode,
+          quickImport,
+          applyPricingDefaultsToExisting,
+          job.defaults?.importProfile === "BASIC",
+        );
+        await tx.query(
+          "UPDATE import_rows SET proposed=$2,errors=$3,duplicate_id=$4,expected_version=$5,decision='REVIEW',verified=false WHERE id=$1",
+          [
+            row.id,
+            json(staged.proposed),
+            json(staged.errors),
+            staged.duplicateId,
+            staged.expectedVersion,
+          ],
+        );
+      }
+    });
+    processed += rows.length;
+    const elapsedSeconds = Math.max((Date.now() - started) / 1000, 0.1);
+    const remainingSeconds = processed
+      ? Math.max(
+          0,
+          Math.round(((total - processed) * elapsedSeconds) / processed),
+        )
+      : null;
+    const progress = {
+      phase: processed >= total ? "FINALIZING" : "VALIDATING",
+      processedRows: processed,
+      totalRows: total,
+      percentage: total
+        ? Math.min(99, Math.floor((processed / total) * 100))
+        : 100,
+      remainingSeconds,
+      startedAt: new Date(started).toISOString(),
+    };
+    await db.query(
+      "UPDATE import_jobs SET summary=summary||$2::jsonb,updated_at=now() WHERE id=$1",
+      [id, json({ progress })],
+    );
+    await db.query("UPDATE jobs SET locked_at=now() WHERE id=$1", [
+      workerJobId,
+    ]);
+  }
+  const stats = await one(
+    db,
+    `SELECT count(*) FILTER(WHERE coalesce(jsonb_array_length(errors),0)=0)::int AS valid,
+            count(*) FILTER(WHERE coalesce(jsonb_array_length(errors),0)>0)::int AS invalid
+     FROM import_rows WHERE job_id=$1`,
+    [id],
+  );
+  await db.query(
+    `UPDATE import_jobs SET status='AWAITING_REVIEW',error=NULL,
+       summary=summary||$2::jsonb,version=version+1,updated_at=now() WHERE id=$1`,
+    [
+      id,
+      json({
+        validation: {
+          validRows: Number(stats?.valid || 0),
+          invalidRows: Number(stats?.invalid || 0),
+        },
+        progress: {
+          phase: "COMPLETE",
+          processedRows: total,
+          totalRows: total,
+          percentage: 100,
+          remainingSeconds: 0,
+          startedAt: new Date(started).toISOString(),
+        },
+      }),
+    ],
+  );
 }
 export async function bulkReview(
   db: DB,
@@ -993,18 +1190,10 @@ async function rollbackImportedJob(tx: DB, actor: Actor, job: any) {
   }
 }
 
-export async function reopen(
-  db: DB,
-  actor: Actor,
-  id: string,
-  input: unknown,
-) {
+export async function reopen(db: DB, actor: Actor, id: string, input: unknown) {
   requirePermission(actor, "IMPORT_CONFIRM");
   requirePermission(actor, "PRODUCT_EDIT");
-  const data = z
-    .object({ version: importVersionSchema })
-    .strict()
-    .parse(input);
+  const data = z.object({ version: importVersionSchema }).strict().parse(input);
   return db.transaction(async (tx) => {
     const job = await one(
       tx,
@@ -1040,46 +1229,40 @@ export async function deleteImport(db: DB, actor: Actor, id: string) {
   requirePermission(actor, "IMPORT_CONFIRM");
   const uploadRoot = path.resolve(process.env.UPLOAD_DIR || ".data/uploads");
   let filePath = "";
-  return db.transaction(async (tx) => {
-    const job = await one(
-      tx,
-      "SELECT id,filename,file_path,status,version FROM import_jobs WHERE id=$1 FOR UPDATE",
-      [id],
-    );
-    assert(job, 404, "Import not found");
-    assert(
-      !["PROCESSING", "CONFIRMED"].includes(job.status),
-      409,
-      "This import is busy. Wait for it to finish before deleting it",
-    );
-    filePath = path.resolve(job.file_path || "");
-    const relative = path.relative(uploadRoot, filePath);
-    assert(
-      !!filePath &&
-        !path.isAbsolute(relative) &&
-        relative !== "" &&
-        !relative.startsWith(".."),
-      409,
-      "Import file path is outside the upload directory",
-    );
-    await tx.query(
-      "DELETE FROM jobs WHERE kind='IMPORT_EXTRACT' AND payload->>'importId'=$1",
-      [id],
-    );
-    await tx.query("DELETE FROM import_rows WHERE job_id=$1", [id]);
-    await tx.query("DELETE FROM import_jobs WHERE id=$1", [id]);
-    await audit(
-      tx,
-      actor.id,
-      "IMPORT_DELETE",
-      "import_jobs",
-      id,
-      job,
-      null,
-    );
-    return { ok: true, filename: job.filename, status: job.status };
-  }).then(async (result) => {
-    await fs.rm(filePath, { force: true });
-    return result;
-  });
+  return db
+    .transaction(async (tx) => {
+      const job = await one(
+        tx,
+        "SELECT id,filename,file_path,status,version FROM import_jobs WHERE id=$1 FOR UPDATE",
+        [id],
+      );
+      assert(job, 404, "Import not found");
+      assert(
+        !["PROCESSING", "CONFIRMED"].includes(job.status),
+        409,
+        "This import is busy. Wait for it to finish before deleting it",
+      );
+      filePath = path.resolve(job.file_path || "");
+      const relative = path.relative(uploadRoot, filePath);
+      assert(
+        !!filePath &&
+          !path.isAbsolute(relative) &&
+          relative !== "" &&
+          !relative.startsWith(".."),
+        409,
+        "Import file path is outside the upload directory",
+      );
+      await tx.query(
+        "DELETE FROM jobs WHERE kind='IMPORT_EXTRACT' AND payload->>'importId'=$1",
+        [id],
+      );
+      await tx.query("DELETE FROM import_rows WHERE job_id=$1", [id]);
+      await tx.query("DELETE FROM import_jobs WHERE id=$1", [id]);
+      await audit(tx, actor.id, "IMPORT_DELETE", "import_jobs", id, job, null);
+      return { ok: true, filename: job.filename, status: job.status };
+    })
+    .then(async (result) => {
+      await fs.rm(filePath, { force: true });
+      return result;
+    });
 }
