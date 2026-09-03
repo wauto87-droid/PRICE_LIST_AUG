@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { type DB, one } from "../core/db";
 import { json } from "../core/audit";
 import { quotationHtml, escapeHtml } from "../pdf/template";
+import { finalizeQuotationPdf } from "../pdf/cache";
 import { settings } from "../admin/service";
 import { exportCatalog } from "./export";
 import { exportSalesCheckXlsx, salesCheckHtml } from "./sales-check";
@@ -476,9 +477,11 @@ export async function runJob(db: DB) {
         }
       }
     }
-    await db.query("UPDATE jobs SET status='DONE',error=NULL WHERE id=$1", [
-      job.id,
-    ]);
+    if (job.kind === "QUOTE_PDF") await finalizeQuotationPdf(db, job);
+    else
+      await db.query("UPDATE jobs SET status='DONE',error=NULL WHERE id=$1", [
+        job.id,
+      ]);
   } catch (e) {
     const failure = e as Error;
     console.error("Worker job failed", job.id, failure.message);

@@ -371,14 +371,13 @@ export default function Quotations({
                 disabled={busy}
                 onClick={() =>
                   action(async () =>
-                    setPdf({
-                      ...(await api(
+                    setPdf(
+                      await api(
                         "quotations/" + selected.id + "/pdf",
                         "POST",
                         {},
-                      )),
-                      status: "PENDING",
-                    }),
+                      ),
+                    ),
                   )
                 }
               >

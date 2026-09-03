@@ -29,6 +29,7 @@ import {
 } from "../pricing/engine";
 import { quotationHtml } from "../pdf/template";
 import { quotationPdfDisposition } from "../pdf/filename";
+import { quotationPdfFingerprint } from "../pdf/cache";
 const response = (
   data: unknown,
   status = 200,
@@ -629,24 +630,44 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           });
         }
         if (action === "pdf" && method === "POST") {
-          const q = await quotes.getQuote(db, actor, id);
-          quotes.assertQuoteReadyForOutput(q);
-          const job = randomUUID();
-          await db.query(
-            "INSERT INTO jobs(id,kind,payload) VALUES($1,'QUOTE_PDF',$2)",
-            [
-              job,
-              json({
-                quoteId: id,
-                ownerId: actor.id,
-                snapshot: {
-                  ...q,
-                  company_snapshot: q.company_snapshot ?? settings,
-                },
-              }),
-            ],
+          return response(
+            await db.transaction(async (tx) => {
+              await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [
+                id,
+              ]);
+              const q = await quotes.getQuote(tx, actor, id);
+              quotes.assertQuoteReadyForOutput(q);
+              const snapshot = {
+                ...q,
+                company_snapshot: q.company_snapshot ?? settings,
+              };
+              const fingerprint = quotationPdfFingerprint(snapshot);
+              const cached = await one<{ id: string; status: string }>(
+                tx,
+                `SELECT id,status FROM jobs
+                 WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 AND payload->>'fingerprint'=$2
+                   AND status IN ('PENDING','RUNNING','DONE')
+                 ORDER BY created_at DESC,id DESC LIMIT 1`,
+                [id, fingerprint],
+              );
+              if (cached) return { ...cached, reused: true };
+
+              const job = randomUUID();
+              await tx.query(
+                "INSERT INTO jobs(id,kind,payload) VALUES($1,'QUOTE_PDF',$2)",
+                [
+                  job,
+                  json({
+                    quoteId: id,
+                    ownerId: actor.id,
+                    fingerprint,
+                    snapshot,
+                  }),
+                ],
+              );
+              return { id: job, status: "PENDING", reused: false };
+            }),
           );
-          return response({ id: job });
         }
       }
     }
@@ -693,6 +714,11 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       assert(job, 404, "Document not found");
       const quote = await quotes.getQuote(db, actor, job.payload.quoteId);
       if (action === "download") {
+        assert(
+          job.status !== "EXPIRED",
+          410,
+          "This PDF was superseded by a newer quotation PDF",
+        );
         assert(job.status === "DONE", 409, "PDF is not ready");
         return new Response(
           await fs.readFile(
@@ -1334,14 +1360,33 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if (id === "history") {
         auth.requirePermission(actor, "PRICE_HISTORY_VIEW");
         auth.requirePermission(actor, "COST_VIEW");
+        const filters = z
+          .object({
+            productId: z.string().uuid().optional(),
+            q: z.string().trim().max(160).default(""),
+            source: z
+              .enum(["ALL", "MANUAL", "IMPORT", "ROLLBACK"])
+              .default("ALL"),
+            sort: z.enum(["NEWEST", "OLDEST"]).default("NEWEST"),
+          })
+          .parse(Object.fromEntries(url.searchParams));
+        const direction = filters.sort === "OLDEST" ? "ASC" : "DESC";
         return response(
           (
             await db.query(
-              "SELECT h.*,p.part_number,u.name AS actor FROM price_history h JOIN products p ON p.id=h.product_id LEFT JOIN users u ON u.id=h.actor_id WHERE ($1::uuid IS NULL OR h.product_id=$1) ORDER BY h.created_at DESC LIMIT 300",
+              `SELECT h.*,p.part_number,p.description,u.name AS actor
+               FROM price_history h
+               JOIN products p ON p.id=h.product_id
+               LEFT JOIN users u ON u.id=h.actor_id
+               WHERE ($1::uuid IS NULL OR h.product_id=$1)
+                 AND ($2='' OR p.part_number ILIKE '%'||$2||'%' OR p.description ILIKE '%'||$2||'%' OR COALESCE(u.name,'') ILIKE '%'||$2||'%' OR h.source ILIKE '%'||$2||'%')
+                 AND ($3='ALL' OR h.source=$3)
+               ORDER BY h.created_at ${direction},h.id ${direction}
+               LIMIT 300`,
               [
-                url.searchParams.get("productId")
-                  ? uuid(url.searchParams.get("productId")!)
-                  : null,
+                filters.productId ?? null,
+                filters.q,
+                filters.source,
               ],
             )
           ).rows,

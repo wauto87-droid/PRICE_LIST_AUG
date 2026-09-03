@@ -41,6 +41,8 @@ type ProductMinimumFilter = "ALL" | "PROTECTED" | "UNPROTECTED";
 type ProductStatusFilter = "ALL" | "ACTIVE" | "ARCHIVED";
 type ProductMethodFilter = "ALL" | "COST_MARKUP" | "LIST_DISCOUNT" | "FIXED";
 type ProductContentFilter = "ALL" | "MISSING" | "COMPLETE";
+type HistorySourceFilter = "ALL" | "MANUAL" | "IMPORT" | "ROLLBACK";
+type HistorySort = "NEWEST" | "OLDEST";
 const sections = [
   ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
   [
@@ -146,6 +148,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       setDashboardMinimumProtectedSelectionOffset,
     ] = useState(0),
     [query, setQuery] = useState(""),
+    [historyQuery, setHistoryQuery] = useState(""),
+    [historySourceFilter, setHistorySourceFilter] =
+      useState<HistorySourceFilter>("ALL"),
+    [historySort, setHistorySort] = useState<HistorySort>("NEWEST"),
     [productQuery, setProductQuery] = useState(""),
     [productPage, setProductPage] = useState(0),
     [productSelectionOffset, setProductSelectionOffset] = useState(0),
@@ -204,6 +210,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     statusFilter?: ProductStatusFilter;
     methodFilter?: ProductMethodFilter;
     contentFilter?: ProductContentFilter;
+    historyQuery?: string;
+    historySourceFilter?: HistorySourceFilter;
+    historySort?: HistorySort;
     minimumProtectedPage?: number;
     minimumProtectedSelectionOffset?: number;
   }) {
@@ -238,6 +247,14 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 overrides?.minimumProtectedSelectionOffset ??
                   dashboardMinimumProtectedSelectionOffset,
               )
+            : section === "history"
+              ? "admin/history?" +
+                new URLSearchParams({
+                  q: overrides?.historyQuery ?? historyQuery,
+                  source:
+                    overrides?.historySourceFilter ?? historySourceFilter,
+                  sort: overrides?.historySort ?? historySort,
+                }).toString()
             : "admin/" + section,
       );
       if (
@@ -311,6 +328,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     }, 220);
     return () => clearTimeout(timer);
   }, [section, query, productQuery]);
+  useEffect(() => {
+    if (section !== "history") return;
+    const timer = setTimeout(() => void load(), 220);
+    return () => clearTimeout(timer);
+  }, [section, historyQuery, historySourceFilter, historySort]);
   useEffect(() => {
     if (user.permissions.includes("USER_MANAGE"))
       api("admin/roles")
@@ -1791,8 +1813,46 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               </>
             )}
             {["history", "audit"].includes(section) && (
-              <div className="table-scroll">
-                <table>
+              <>
+                {section === "history" && (
+                  <div className="actions wrap">
+                    <input
+                      aria-label={t("Search price history", "بحث في سجل الأسعار")}
+                      value={historyQuery}
+                      onChange={(event) => setHistoryQuery(event.target.value)}
+                      placeholder={t(
+                        "Search product, user, or action",
+                        "ابحث بالصنف أو المستخدم أو الإجراء",
+                      )}
+                    />
+                    <select
+                      aria-label={t("Action filter", "تصفية الإجراء")}
+                      value={historySourceFilter}
+                      onChange={(event) =>
+                        setHistorySourceFilter(
+                          event.target.value as HistorySourceFilter,
+                        )
+                      }
+                    >
+                      <option value="ALL">{t("All actions", "كل الإجراءات")}</option>
+                      <option value="MANUAL">{t("Manual", "يدوي")}</option>
+                      <option value="IMPORT">{t("Imported", "مستورد")}</option>
+                      <option value="ROLLBACK">{t("Rolled back", "تم التراجع")}</option>
+                    </select>
+                    <select
+                      aria-label={t("Sort price history", "ترتيب سجل الأسعار")}
+                      value={historySort}
+                      onChange={(event) =>
+                        setHistorySort(event.target.value as HistorySort)
+                      }
+                    >
+                      <option value="NEWEST">{t("Newest first", "الأحدث أولاً")}</option>
+                      <option value="OLDEST">{t("Oldest first", "الأقدم أولاً")}</option>
+                    </select>
+                  </div>
+                )}
+                <div className="table-scroll">
+                  <table>
                   <thead>
                     <tr>
                       <th>{t("Date", "التاريخ")}</th>
@@ -1817,8 +1877,9 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                  </table>
+                </div>
+              </>
             )}
             {section === "backups" && (
               <>
