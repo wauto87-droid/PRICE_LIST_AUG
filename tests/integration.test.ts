@@ -450,6 +450,7 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     ).data;
     assert.ok(allHistory.items.length > 0);
     assert.ok(["DRAFT", "ISSUED"].includes(allHistory.items[0].stage));
+    assert.equal(allHistory.items[0].part_number, "LC1D09M7");
     const walkIn = (
       await request("quotations", "POST", {
         customer: { name: "", number: "", mobile: "", reference: "", notes: "" },

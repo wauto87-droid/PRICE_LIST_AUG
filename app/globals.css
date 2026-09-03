@@ -3410,3 +3410,4 @@ body :is(h1, h2, h3, strong, b) {
   border-bottom-color: #86efac;
 }
 .recent-price-modal { width: min(1100px, 96vw); max-height: 90vh; overflow: auto; }
+.recent-price-modal .recent-price-part { min-width: 130px; white-space: nowrap; }
