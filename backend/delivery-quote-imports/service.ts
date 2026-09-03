@@ -833,7 +833,8 @@ export async function updateHeader(db: DB, actor: Actor, id: string, input: unkn
     const job = await loadJob(tx, actor, id, true);
     assert(job.status === "AWAITING_REVIEW", 409, "Delivery-note import is not awaiting review");
     assert(job.version === data.version, 409, "Import changed. Reload");
-    const header = normalizeDeliveryHeader({ ...(job.header ?? {}), customerCode: data.customerCode });
+    const savedCustomer = data.customerCode ? await one(tx, "SELECT name,mobile FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customerCode]) : null;
+    const header = normalizeDeliveryHeader({ ...(job.header ?? {}), customerCode: data.customerCode, customerName: savedCustomer?.name || job.header?.customerName || "", customerMobile: savedCustomer?.mobile || job.header?.customerMobile || "" });
     const rows = (await tx.query("SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number", [id])).rows;
     const summary = summarizeReview(rows, header);
     await tx.query("UPDATE delivery_quote_jobs SET header=$2,summary=$3,version=version+1,updated_at=now() WHERE id=$1", [id, json(header), json(summary)]);
@@ -874,11 +875,14 @@ export async function finalize(
       ? headerFromRows(included, job.mapping, job.header)
       : normalizeDeliveryHeader(job.header);
     assert(!header.blockedReason, 409, String(header.blockedReason));
+    const savedCustomer = header.customerCode ? await one(tx, "SELECT name,mobile FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [header.customerCode]) : null;
+    const quoteCustomer = toQuoteCustomer({ ...header, customerName: header.customerName || savedCustomer?.name || "" });
+    if (savedCustomer?.mobile) quoteCustomer.mobile = savedCustomer.mobile;
     const quote = await saveDraft(
       tx,
       actor,
       {
-        customer: toQuoteCustomer(header),
+        customer: quoteCustomer,
         lines: included.map((row) => {
           const baseInput = row.line_input || {};
           const rawDocNo =

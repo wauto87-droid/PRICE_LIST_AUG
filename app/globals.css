@@ -3411,3 +3411,6 @@ body :is(h1, h2, h3, strong, b) {
 }
 .recent-price-modal { width: min(1100px, 96vw); max-height: 90vh; overflow: auto; }
 .recent-price-modal .recent-price-part { min-width: 130px; white-space: nowrap; }
+.previous-price-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.previous-price-toggle input { width: 18px; height: 18px; flex: 0 0 auto; }
+.previous-price-toggle small { display: block; margin-top: 2px; }

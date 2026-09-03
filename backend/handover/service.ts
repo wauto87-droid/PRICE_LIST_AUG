@@ -6,8 +6,8 @@ import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
 import { AppError } from "../core/errors";
 import { audit, json } from "../core/audit";
-import { type Actor, has, requirePermission } from "../auth/service";
-import { normalizePart, selectedLevel } from "../pricing/engine";
+import { type Actor, has, pricingPolicy, requirePermission } from "../auth/service";
+import { calculateTargetPrice, customLineInput, lineInput, normalizePart, selectedLevel } from "../pricing/engine";
 import { getProduct, toInput } from "../products/service";
 import { quoteInput, snapshot } from "../quotations/service";
 
@@ -193,4 +193,61 @@ export async function recentPrices(db: DB, actor: Actor, raw: unknown) {
   const items = (await db.query(`SELECT e.id,q.status AS stage,e.part_number,e.description,e.quantity::text,e.selling_level,e.final_excl::text,e.final_incl::text,e.requested_discount::text,e.requested_markup::text,e.effective_discount::text,e.effective_markup::text,e.adjustment_mode,e.last_seen_at,e.customer_name,u.name AS staff_name,q.number AS quotation_number,q.id AS quotation_id,q.owner_id,(q.owner_id=$6 OR $7) AS can_open,CASE WHEN $3<>'' THEN btrim(COALESCE(q.customer->>'number',''))=$3 ELSE upper(regexp_replace(btrim(e.customer_name),'\\s+',' ','g'))=upper(regexp_replace(btrim($4),'\\s+',' ','g')) AND $4<>'' END AS same_customer FROM price_watch_events e JOIN quotations q ON q.id=e.quotation_id JOIN users u ON u.id=e.actor_id WHERE e.item_key=$1 AND q.status IN ('DRAFT','ISSUED') AND e.stage=q.status AND ($2='ALL' OR q.status=$2) AND ($5::uuid IS NULL OR q.id<>$5) ORDER BY same_customer DESC,e.last_seen_at DESC,e.id LIMIT $8 OFFSET $9`, [v.itemKey, v.stage, v.customerNumber, v.customerName, v.excludeQuotationId ?? null, actor.id, has(actor, "QUOTE_VIEW_ALL"), v.pageSize + 1, offset])).rows;
   await audit(db, actor.id, "QUOTE_PRICE_HISTORY_VIEW", "price_watch_events", v.itemKey);
   return { items: items.slice(0, v.pageSize), page: v.page, pageSize: v.pageSize, hasMore: items.length > v.pageSize };
+}
+
+const reuseSchema = z.object({
+  customerNumber: z.string().trim().max(80).default(""),
+  customerName: z.string().trim().max(150).default(""),
+  excludeQuotationId: z.string().uuid().optional(),
+  lines: z.array(z.object({ index: z.number().int().min(0), input: z.unknown() }).strict()).min(1).max(200),
+}).strict();
+
+export async function reusableCustomerPrices(db: DB, actor: Actor, raw: unknown) {
+  requirePermission(actor, "QUOTE_PRICE_HISTORY");
+  const value = reuseSchema.parse(raw);
+  assert(value.customerNumber !== "1", 400, "Previous-price reuse is unavailable for Walk-in Customer");
+  assert(value.customerNumber || value.customerName, 400, "Enter Customer Code or customer name first");
+  const results: any[] = [];
+  for (const item of value.lines) {
+    let parsed: any;
+    try {
+      const rawLine: any = item.input;
+      if (rawLine?.type === "CUSTOM") parsed = customLineInput.parse(rawLine);
+      else {
+        const { type: _type, ...catalogLine } = rawLine ?? {};
+        parsed = lineInput.parse(catalogLine);
+      }
+    }
+    catch { results.push({ index: item.index, status: "INVALID", reason: "Quotation line is incomplete" }); continue; }
+    const itemKey = parsed.type === "CUSTOM"
+      ? parsed.reusableItemId ? `REUSABLE:${parsed.reusableItemId}` : parsed.partNumber ? `CUSTOM-REF:${parsed.partNumber.normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase()}` : `CUSTOM-DESC:${parsed.description.normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase()}`
+      : `CATALOG:${parsed.productId}`;
+    const previous = await one(db, `SELECT e.final_excl::text,q.number AS quotation_number,q.status,e.last_seen_at,CASE WHEN $2<>'' THEN 'CODE' ELSE 'NAME' END AS customer_match FROM price_watch_events e JOIN quotations q ON q.id=e.quotation_id WHERE e.item_key=$1 AND e.stage=q.status AND q.status IN ('DRAFT','ISSUED') AND e.final_excl>0 AND ($4::uuid IS NULL OR q.id<>$4) AND (CASE WHEN $2<>'' THEN btrim(COALESCE(q.customer->>'number',''))=$2 ELSE upper(regexp_replace(btrim(COALESCE(q.customer->>'name','')),'\\s+',' ','g'))=upper(regexp_replace(btrim($3),'\\s+',' ','g')) END) ORDER BY CASE q.status WHEN 'ISSUED' THEN 0 ELSE 1 END,e.last_seen_at DESC,e.id LIMIT 1`, [itemKey, value.customerNumber, value.customerName, value.excludeQuotationId ?? null]);
+    if (!previous) { results.push({ index: item.index, itemKey, status: "NOT_FOUND" }); continue; }
+    if (parsed.type === "CUSTOM") {
+      results.push({ index: item.index, itemKey, status: "MATCHED", input: { ...parsed, unitPriceExcl: previous.final_excl, discount: "0" }, previous });
+      continue;
+    }
+    try {
+      const product = toInput(await getProduct(db, parsed.productId));
+      const price = calculateTargetPrice(product, pricingPolicy(actor), {
+        productId: parsed.productId,
+        sellingLevel: parsed.sellingLevel,
+        quantity: parsed.quantity,
+        targetFinalExcl: previous.final_excl,
+        override: false,
+        reason: "",
+        watcherEventId: parsed.watcherEventId,
+        importMeta: parsed.importMeta,
+      });
+      const adjusted = price.finalExcl !== Number(previous.final_excl).toFixed(2);
+      const { markup: _markup, ...discountInput } = parsed;
+      const input = price.adjustmentMode === "MARKUP"
+        ? { ...parsed, discount: "0", markup: price.requestedMarkup }
+        : { ...discountInput, discount: price.requestedDiscount };
+      results.push({ index: item.index, itemKey, status: adjusted ? "ADJUSTED" : "MATCHED", input, price, previous, reason: adjusted ? `Previous SAR ${Number(previous.final_excl).toFixed(2)} adjusted to permitted SAR ${price.finalExcl}.` : "" });
+    } catch (error) { results.push({ index: item.index, itemKey, status: "INVALID", reason: error instanceof Error ? error.message : "Unable to validate previous price" }); }
+  }
+  await audit(db, actor.id, "QUOTE_PREVIOUS_PRICE_REUSE", "price_watch_events", value.customerNumber || value.customerName, null, { lineCount: value.lines.length, matched: results.filter(x => x.status === "MATCHED" || x.status === "ADJUSTED").length });
+  return { results, summary: { matched: results.filter(x => x.status === "MATCHED").length, adjusted: results.filter(x => x.status === "ADJUSTED").length, notFound: results.filter(x => x.status === "NOT_FOUND").length, invalid: results.filter(x => x.status === "INVALID").length } };
 }

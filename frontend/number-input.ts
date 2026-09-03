@@ -12,9 +12,10 @@ type DiscountSafeNumberInput = Pick<
 >;
 
 export function preventWheelNumberInputChange(
-  event: Pick<WheelEvent<HTMLInputElement>, "currentTarget" | "preventDefault">,
+  event: Pick<WheelEvent<HTMLInputElement>, "currentTarget">,
 ) {
-  event.preventDefault();
+  // React registers wheel handlers as passive. Blurring before the browser's
+  // default action prevents number stepping without an invalid preventDefault.
   event.currentTarget.blur();
 }
 

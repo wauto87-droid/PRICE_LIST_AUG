@@ -136,6 +136,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     if (root === "quotation-price-history" && method === "GET")
       return response(await handover.recentPrices(db, actor, Object.fromEntries(url.searchParams)));
+    if (root === "quotation-previous-prices" && method === "POST")
+      return response(await handover.reusableCustomerPrices(db, actor, await body(req)));
     if (root === "templates" && method === "GET") {
       auth.requirePermission(actor, "IMPORT_CONFIRM");
       const kind = z.enum(["simple", "supplier-simple", "advanced"]).parse(id);
@@ -719,8 +721,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(
           (
             await db.query(
-              "SELECT * FROM customers WHERE name ILIKE $1 OR number ILIKE $1 ORDER BY name LIMIT 50",
-              ["%" + (url.searchParams.get("q") ?? "").slice(0, 100) + "%"],
+              "SELECT * FROM customers WHERE name ILIKE $1 OR number ILIKE $1 ORDER BY CASE WHEN btrim(number)=$2 THEN 0 ELSE 1 END,name LIMIT 50",
+              ["%" + (url.searchParams.get("q") ?? "").slice(0, 100) + "%", (url.searchParams.get("q") ?? "").slice(0, 100).trim()],
             )
           ).rows,
         );

@@ -451,6 +451,20 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.ok(allHistory.items.length > 0);
     assert.ok(["DRAFT", "ISSUED"].includes(allHistory.items[0].stage));
     assert.equal(allHistory.items[0].part_number, "LC1D09M7");
+    const reused = (
+      await request("quotation-previous-prices", "POST", {
+        customerNumber: "",
+        customerName: "Customer",
+        lines: [{ index: 0, input: line }],
+      })
+    ).data;
+    assert.equal(reused.results[0].status, "MATCHED");
+    assert.equal(reused.results[0].previous.status, "DRAFT");
+    await request("quotation-previous-prices", "POST", {
+      customerNumber: "1",
+      customerName: "",
+      lines: [{ index: 0, input: line }],
+    }, 400);
     const walkIn = (
       await request("quotations", "POST", {
         customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
@@ -458,6 +472,13 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       })
     ).data;
     assert.equal(walkIn.customer.number, "1");
+    await request("quotations", "POST", {
+      customer: { name: "Reusable Customer", number: "C-001", mobile: "0500000000", reference: "Account", notes: "" },
+      lines: [line],
+    });
+    const savedCustomers = (await request("customers?q=C-001")).data;
+    assert.equal(savedCustomers[0].number, "C-001");
+    assert.equal(savedCustomers[0].name, "Reusable Customer");
     cookie = staffCookie;
     csrf = staffCsrf;
   });

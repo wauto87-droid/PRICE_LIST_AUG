@@ -389,11 +389,12 @@ export async function saveDraft(
 ) {
   requirePermission(actor, id ? "QUOTE_EDIT" : "QUOTE_CREATE");
   const parsed = quoteInput.parse(input);
+  const normalizedCustomer = { ...parsed.customer, number: parsed.customer.number.trim() };
   const data = {
     ...parsed,
-    customer: parsed.customer.name.trim() || parsed.customer.number.trim()
-      ? parsed.customer
-      : { ...parsed.customer, number: "1" },
+    customer: parsed.customer.name.trim() || normalizedCustomer.number
+      ? normalizedCustomer
+      : { ...normalizedCustomer, number: "1" },
   };
   return db.transaction(async (tx) => {
     settings = (await one(
@@ -432,6 +433,13 @@ export async function saveDraft(
         409,
         "Draft changed on another device. Reload before saving",
       );
+    }
+    if (data.customer.number && data.customer.number !== "1" && data.customer.name.trim()) {
+      const savedCustomer = await one(tx, "SELECT id FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customer.number]);
+      if (savedCustomer)
+        await tx.query("UPDATE customers SET name=$2,mobile=$3,reference=$4 WHERE id=$1", [savedCustomer.id, data.customer.name, data.customer.mobile, data.customer.reference]);
+      else
+        await tx.query("INSERT INTO customers(id,name,number,mobile,reference) VALUES($1,$2,$3,$4,$5)", [randomUUID(), data.customer.name, data.customer.number, data.customer.mobile, data.customer.reference]);
     }
     const lines = await attachToSavedQuote(
       tx,

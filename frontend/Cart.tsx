@@ -22,7 +22,8 @@ import {
   normalizeTargetPrice,
   livePricingSignature,
 } from "./cart-live-pricing";
-import RecentQuotationPrices from "./RecentQuotationPrices";
+import RecentQuotationPrices, { priceHistoryItemKey } from "./RecentQuotationPrices";
+import { showConfirm } from "./confirm";
 
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
@@ -178,7 +179,10 @@ export default function Cart({
   const [options, setOptions] = useState<Record<string, any[]>>({});
   const [repricingRows, setRepricingRows] = useState<Record<number, boolean>>({});
   const [recentPriceRow, setRecentPriceRow] = useState<number | null>(null);
+  const [reusePreviousPrices, setReusePreviousPrices] = useState(false);
+  const [reuseBusy, setReuseBusy] = useState(false);
   const activePriceRow = useRef<number | null>(null);
+  const customerIdentity = useRef(`${cart.id || "NEW"}|${cart.customer.number?.trim() || ""}|${cart.customer.name?.trim() || ""}`);
   const cartRef = useRef(cart);
   const pricingTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const pricingSignatures = useRef<Record<number, string>>({});
@@ -213,6 +217,87 @@ export default function Cart({
     setCart(next);
   };
 
+  useEffect(() => {
+    const identity = `${cart.id || "NEW"}|${cart.customer.number?.trim() || ""}|${cart.customer.name?.trim() || ""}`;
+    if (identity === customerIdentity.current) return;
+    customerIdentity.current = identity;
+    setReusePreviousPrices(false);
+  }, [cart.id, cart.customer.number, cart.customer.name]);
+
+  function applyPreviousPriceResults(result: any) {
+    const byIndex = new Map(result.results.map((item: any) => [item.index, item]));
+    const current = cartRef.current;
+    const lines = current.lines.map((line: any, index: number) => {
+      const match: any = byIndex.get(index);
+      if (!match) return line;
+      if (match.itemKey && match.itemKey !== priceHistoryItemKey(line)) return line;
+      if (match.status !== "MATCHED" && match.status !== "ADJUSTED")
+        return { ...line, previousPriceChecked: true };
+      const input = { ...line.input, ...match.input };
+      return {
+        ...line,
+        input,
+        price: input.type === "CUSTOM" ? calculateCustom(input, String(settings.vat)) : match.price,
+        pending: false,
+        offline: false,
+        livePriceError: "",
+        targetPriceDraft: undefined,
+        targetPriceRequested: undefined,
+        targetPriceError: false,
+        priceEntryNotice: match.reason || "",
+        previousPriceChecked: true,
+        previousPriceSource: match.previous,
+      };
+    });
+    const next = { ...current, lines };
+    cartRef.current = next;
+    setCart(next);
+  }
+
+  async function findPreviousPrices(indexes: number[]) {
+    return api("quotation-previous-prices", "POST", {
+      customerNumber: String(cartRef.current.customer.number || "").trim(),
+      customerName: String(cartRef.current.customer.name || "").trim(),
+      ...(cartRef.current.id ? { excludeQuotationId: cartRef.current.id } : {}),
+      lines: indexes.map((index) => ({ index, input: cartRef.current.lines[index].input })),
+    });
+  }
+
+  async function enablePreviousPrices() {
+    const customerNumber = String(cart.customer.number || "").trim();
+    const customerName = String(cart.customer.name || "").trim();
+    if ((!customerNumber && !customerName) || customerNumber === "1") {
+      setError(t("Enter a named customer or Customer Code before using previous prices. Walk-in Customer is not supported.", "أدخل اسم العميل أو رمزه قبل استخدام الأسعار السابقة. العميل النقدي غير مدعوم."));
+      return;
+    }
+    setReuseBusy(true); setError("");
+    try {
+      if (!cart.lines.length) { setReusePreviousPrices(true); return; }
+      const result = await findPreviousPrices(cart.lines.map((_: any, index: number) => index));
+      const accepted = await showConfirm(t(
+        `Apply previous prices? Matched: ${result.summary.matched}, adjusted by current protection: ${result.summary.adjusted}, not found: ${result.summary.notFound}, invalid: ${result.summary.invalid}.`,
+        `تطبيق الأسعار السابقة؟ مطابق: ${result.summary.matched}، عُدّل حسب الحماية الحالية: ${result.summary.adjusted}، غير موجود: ${result.summary.notFound}، غير صالح: ${result.summary.invalid}.`,
+      ));
+      if (!accepted) return;
+      applyPreviousPriceResults(result);
+      setReusePreviousPrices(true);
+      setNotice(t("Previous customer prices were applied. Every price remains editable.", "تم تطبيق أسعار العميل السابقة. جميع الأسعار قابلة للتعديل."));
+    } catch (e) { setError((e as Error).message); }
+    finally { setReuseBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!reusePreviousPrices || reuseBusy || !online) return;
+    const indexes = cart.lines.flatMap((line: any, index: number) => line.previousPriceChecked ? [] : [index]);
+    if (!indexes.length) return;
+    setReuseBusy(true);
+    void findPreviousPrices(indexes).then((result) => {
+      applyPreviousPriceResults(result);
+      if (result.summary.matched || result.summary.adjusted)
+        setNotice(t("Previous customer price applied. You can still edit it.", "تم تطبيق سعر العميل السابق ويمكنك تعديله."));
+    }).catch((e) => setError(e.message)).finally(() => setReuseBusy(false));
+  }, [reusePreviousPrices, reuseBusy, online, cart.lines.length]);
+
   const moveToNextEntry = (
     event: React.KeyboardEvent<HTMLInputElement>,
     index: number,
@@ -228,6 +313,30 @@ export default function Cart({
     next?.focus();
     next?.select();
   };
+
+  async function loadCustomerByCode(rawCode: string) {
+    const code = rawCode.trim();
+    if (!online || !code || code === "1") return;
+    try {
+      const customers = await api(`customers?q=${encodeURIComponent(code)}`);
+      const customer = customers.find((item: any) => String(item.number || "").trim() === code);
+      if (!customer) return;
+      const current = cartRef.current;
+      const next = {
+        ...current,
+        customer: {
+          ...current.customer,
+          name: customer.name || current.customer.name,
+          number: code,
+          mobile: customer.mobile || "",
+          reference: customer.reference || current.customer.reference || "",
+        },
+      };
+      cartRef.current = next;
+      setCart(next);
+      setNotice(t(`Customer ${code} loaded.`, `تم تحميل العميل ${code}.`));
+    } catch (e) { setError((e as Error).message); }
+  }
 
   async function loadLevels(productId: string) {
     try {
@@ -678,6 +787,17 @@ export default function Cart({
           {cart.lines.length} {t("items", "أصناف")}
         </span>
       </div>
+      {user.permissions.includes("QUOTE_PRICE_HISTORY") && (
+        <label className="notice previous-price-toggle">
+          <input
+            type="checkbox"
+            checked={reusePreviousPrices}
+            disabled={reuseBusy || !online || String(cart.customer.number || "").trim() === "1" || (!String(cart.customer.number || "").trim() && !String(cart.customer.name || "").trim())}
+            onChange={(event) => event.target.checked ? void enablePreviousPrices() : setReusePreviousPrices(false)}
+          />
+          <span><b>{t("Use this customer's previous prices", "استخدام أسعار العميل السابقة")}</b><small>{t("Issued prices are preferred, then Draft prices. Applied prices remain editable.", "تُفضّل الأسعار المصدرة ثم أسعار المسودات. تبقى الأسعار قابلة للتعديل.")}</small></span>
+        </label>
+      )}
       <CustomLineForm
         t={t}
         vat={String(settings.vat)}
@@ -704,6 +824,7 @@ export default function Cart({
                   customer: { ...cart.customer, [key]: e.target.value },
                 })
               }
+              onBlur={() => { if (key === "number") void loadCustomerByCode(String(cart.customer.number || "")); }}
               placeholder={
                 key === "name"
                   ? t("Walk-in Customer (optional)", "عميل نقدي (اختياري)")
@@ -850,6 +971,11 @@ export default function Cart({
                         {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
                         {importedDeliveryMeta(l)?.docDate || "—"}
                       </small>
+                    )}
+                    {l.previousPriceSource && (
+                      <span className="badge success" title={`${l.previousPriceSource.status} ${l.previousPriceSource.quotation_number}`}>
+                        {t("Previous customer price", "سعر العميل السابق")}
+                      </span>
                     )}
                     {l.input?.type !== "CUSTOM" && (
                       <label>
