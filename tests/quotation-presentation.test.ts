@@ -55,7 +55,7 @@ test("Quotation PDF filenames use the snapshotted number and safe customer name"
   assert.doesNotMatch(disposition, /[\r\n]/);
 });
 
-test("Customer notes print once after totals and before quotation terms", () => {
+test("Customer notes print once after totals and before the footer", () => {
   const html = quotationHtml(
     {
       number: "DR-0001",
@@ -84,9 +84,7 @@ test("Customer notes print once after totals and before quotation terms", () => 
   assert(
     html.indexOf('class="totals"') < html.indexOf('class="customer-notes"'),
   );
-  assert(
-    html.indexOf('class="customer-notes"') < html.indexOf('class="terms"'),
-  );
+  assert(html.indexOf('class="customer-notes"') < html.indexOf("<footer>"));
 
   const blank = quotationHtml(
     {
@@ -107,6 +105,31 @@ test("Customer notes print once after totals and before quotation terms", () => 
     "data:image/svg+xml;base64,AA==",
   );
   assert.doesNotMatch(blank, /class="customer-notes"/);
+  assert.doesNotMatch(blank, /class="terms"/);
+});
+
+test("Validity prints in the header while optional closing terms remain optional", () => {
+  const html = quotationHtml(
+    {
+      number: "DR-0003",
+      status: "DRAFT",
+      created_at: "2026-09-02T00:00:00Z",
+      customer: { name: "Customer", number: "", mobile: "", reference: "" },
+      lines: [],
+      totals: { subtotal: "0.00", vat: "0.00", total: "0.00" },
+    },
+    {
+      companyName: "AMT",
+      companyArabic: "",
+      currency: "SAR",
+      pdfUnitPrices: "BOTH",
+      quotation: { validityDays: 30 },
+    },
+    "",
+  );
+  assert.match(html, /class="validity">Valid for \/ الصلاحية: 30 days \/ أيام/);
+  assert(html.indexOf('class="validity"') < html.indexOf("</header>"));
+  assert.doesNotMatch(html, /class="terms"/);
 });
 
 test("Customer-facing quotation output omits internal discount percentages", () => {
