@@ -495,7 +495,7 @@ export default function Imports({
     if (
       !(await showConfirm(
         t(
-          "Reopen this import for mapping? Imported product changes will be rolled back first. Later product edits can block this action.",
+          "Create a correction copy for mapping? Existing products and this import will remain unchanged.",
           "إعادة فتح هذا الاستيراد للربط؟ سيتم التراجع عن تغييرات الأصناف المستوردة أولاً. قد تمنع تعديلات الأصناف اللاحقة هذا الإجراء.",
         ),
       ))
@@ -512,10 +512,10 @@ export default function Imports({
         error: t("Import could not be reopened", "تعذر إعادة فتح الاستيراد"),
       },
       async () => {
-        await api("imports/" + job.id + "/reopen", "POST", {
+        const corrected = await api("imports/" + job.id + "/correction", "POST", {
           version: job.version,
         });
-        await open(job.id);
+        await open(corrected.id);
         await load();
       },
     );
@@ -2158,7 +2158,7 @@ export default function Imports({
                   disabled={busy || actionBusy}
                   onClick={() => void reopenForMapping()}
                 >
-                  {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+                  {t("Create correction copy", "إنشاء نسخة تصحيح")}
                 </button>
               </>
             )}
@@ -2167,7 +2167,7 @@ export default function Imports({
                 disabled={busy || actionBusy}
                 onClick={() => void reopenForMapping()}
               >
-                {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+                {t("Create correction copy", "إنشاء نسخة تصحيح")}
               </button>
             )}
             {error && <div className="notice error">{error}</div>}

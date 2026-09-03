@@ -499,6 +499,7 @@ export default function App() {
                       ),
                     )
                   }
+                  onTemplates={() => setTab("quotations")}
                 />
                 <div className="actions footer-actions">
                   <button
@@ -555,7 +556,23 @@ export default function App() {
               ))}
             {tab === "quotations" &&
               (online ? (
-                <Quotations t={t} user={session.user} onOpen={openQuote} />
+                <Quotations
+                  t={t}
+                  user={session.user}
+                  onOpen={openQuote}
+                  cart={cart}
+                  onUseTemplate={(next, warning) => {
+                    setCart(next);
+                    setTab("draft");
+                    setMessage(
+                      warning ||
+                        t(
+                          "Template loaded into a new quotation.",
+                          "تم تحميل القالب في عرض سعر جديد.",
+                        ),
+                    );
+                  }}
+                />
               ) : (
                 <div className="card notice">
                   {t(

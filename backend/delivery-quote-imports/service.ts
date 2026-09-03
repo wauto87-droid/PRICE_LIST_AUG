@@ -209,11 +209,11 @@ async function productMatch(db: DB, partNumber: string) {
   const normalized = normalizePart(partNumber);
   return one(
     db,
-    `SELECT p.id
+    `SELECT p.id,NULL::text AS matched_alias
      FROM products p
      WHERE p.normalized_part=$1
      UNION ALL
-     SELECT a.product_id AS id
+     SELECT a.product_id AS id,a.normalized AS matched_alias
      FROM product_aliases a
      WHERE a.normalized=$1
      LIMIT 1`,
@@ -264,6 +264,8 @@ async function stageRow(
   if (!issues.length && action === "ADD" && partNumber) {
     const matched = await productMatch(db, partNumber);
     if (matched) {
+      if (matched.matched_alias)
+        (importMeta as any).matchedAlias = matched.matched_alias;
       const row = await getProduct(db, matched.id);
       const input = toInput(row);
       const level = selectedLevel(input);
@@ -612,6 +614,11 @@ export async function get(
   );
   return {
     ...job,
+    capabilities: {
+      canEdit: job.status !== "COMPLETED",
+      canCreateCorrection: job.status === "COMPLETED" && (count?.total ?? 0) > 0,
+      correctionUnavailableReason: (count?.total ?? 0) > 0 ? "" : "Original extracted rows are no longer available",
+    },
     rows,
     page,
     pageSize,
@@ -897,6 +904,18 @@ export async function finalize(
       },
       {},
     );
+    const usedAliases = included.flatMap((row) => {
+      const alias = row.line_input?.importMeta?.matchedAlias;
+      return alias ? [alias] : [];
+    });
+    if (usedAliases.length) {
+      const uniqueAliases = [...new Set(usedAliases)];
+      await tx.query(
+        "UPDATE product_aliases SET usage_count=usage_count+1,last_used_at=now() WHERE normalized=ANY($1::text[]) AND kind='DELIVERY_NOTE'",
+        [uniqueAliases],
+      );
+      await audit(tx, actor.id, "DELIVERY_ALIAS_USE", "delivery_quote_jobs", id, null, { aliases: uniqueAliases });
+    }
     await tx.query(
       `UPDATE delivery_quote_jobs
        SET status='COMPLETED',quote_id=$2,version=version+1,updated_at=now()

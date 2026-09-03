@@ -463,6 +463,11 @@ export async function getImportPage(
   }
   return {
     ...job,
+    capabilities: {
+      canEdit: !["IMPORTED", "ROLLED_BACK"].includes(job.status),
+      canCreateCorrection: ["IMPORTED", "ROLLED_BACK"].includes(job.status) && totalRows > 0,
+      correctionUnavailableReason: totalRows > 0 ? "" : "Original extracted rows are no longer available",
+    },
     summary: { ...(job.summary || {}), rows: totalRows },
     rows,
     rowView,

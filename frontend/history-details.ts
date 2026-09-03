@@ -168,6 +168,9 @@ const permissions: Record<string, [string, string]> = {
   QUOTE_ISSUE: ["Issue quotations", "إصدار عروض"],
   QUOTE_VIEW_ALL: ["View all quotations", "عرض جميع العروض"],
   QUOTE_EDIT_ALL: ["Edit all drafts", "تعديل جميع المسودات"],
+  DELIVERY_ALIAS_MANAGE: ["Manage learned delivery matches", "إدارة مطابقات إذن التسليم"],
+  QUOTE_TEMPLATE_MANAGE: ["Manage quotation templates", "إدارة قوالب عروض الأسعار"],
+  QUOTE_PRICE_HISTORY: ["View recent quotation prices", "عرض أسعار العروض السابقة"],
   OVERRIDE_MINIMUM_PRICE: [
     "Approve below-minimum prices",
     "اعتماد أسعار أقل من الحد الأدنى",

@@ -4,14 +4,19 @@ import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
+import QuotationTemplates from "./QuotationTemplates";
 export default function Quotations({
   t,
   onOpen,
   user,
+  cart,
+  onUseTemplate,
 }: {
   t: Translate;
   onOpen: (q: any) => void;
   user: any;
+  cart: any;
+  onUseTemplate: (cart: any, message?: string) => void;
 }) {
   const [rows, setRows] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(null),
@@ -78,6 +83,7 @@ export default function Quotations({
         </div>
         <button onClick={load}>{t("Refresh", "تحديث")}</button>
       </div>
+      <QuotationTemplates t={t} cart={cart} onUse={onUseTemplate} />
       <form
         className="form-grid three"
         onSubmit={(e) => {

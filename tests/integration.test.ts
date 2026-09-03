@@ -399,6 +399,53 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
       assert.equal(event!.effective_markup, "205.549846");
     },
   );
+  await t.test("Learned matches, assigned templates, and recent prices are permission-safe", async () => {
+    cookie = adminCookie;
+    csrf = adminCsrf;
+    const learned = (await request("learned-delivery-matches?q=ERP-LC1D09")).data;
+    assert.equal(learned.items[0].label, "ERP-LC1D09");
+    assert.equal(learned.items[0].created_by, adminId);
+    const template = (
+      await request("quotation-templates", "POST", {
+        name: "Assigned starter",
+        description: "Safe current pricing",
+        status: "ACTIVE",
+        content: {
+          customer: { name: "Template customer", number: "", mobile: "", reference: "", notes: "" },
+          includeFields: ["name"],
+          lines: [line],
+        },
+        userIds: [staffId],
+      })
+    ).data;
+    cookie = staffCookie;
+    csrf = staffCsrf;
+    const staffTemplates = (await request("quotation-templates")).data;
+    assert.equal(staffTemplates.items.length, 1);
+    const instantiated = (
+      await request(`quotation-templates/${template.id}/instantiate`, "POST", {})
+    ).data;
+    assert.equal(instantiated.customer.name, "Template customer");
+    assert.equal(instantiated.lines[0].price.adjustmentMode, "MARKUP");
+    assert.equal(instantiated.warnings.length, 1);
+    await request(
+      `quotation-price-history?itemKey=${encodeURIComponent(`CATALOG:${productId}`)}&stage=DRAFT`,
+      "GET",
+      undefined,
+      403,
+    );
+    cookie = adminCookie;
+    csrf = adminCsrf;
+    const history = (
+      await request(
+        `quotation-price-history?itemKey=${encodeURIComponent(`CATALOG:${productId}`)}&stage=DRAFT&pageSize=10`,
+      )
+    ).data;
+    assert.ok(history.items.length > 0);
+    assert.equal("master_excl" in history.items[0], false);
+    cookie = staffCookie;
+    csrf = staffCsrf;
+  });
   await t.test(
     "Custom-only and mixed drafts persist without bypassing catalog items",
     async () => {

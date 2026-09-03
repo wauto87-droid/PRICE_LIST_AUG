@@ -32,6 +32,7 @@ import ReusableCustomItems from "./ReusableCustomItems";
 import PriceWatcher from "./PriceWatcher";
 import ProductEnrichmentPanel from "./ProductEnrichmentPanel";
 import AdminDashboard from "./AdminDashboard";
+import LearnedDeliveryMatches from "./LearnedDeliveryMatches";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
@@ -70,6 +71,12 @@ const sections = [
     "Reusable Custom Items",
     "الأصناف المخصصة المحفوظة",
     "REUSABLE_CUSTOM_MANAGE",
+  ],
+  [
+    "learned-delivery-matches",
+    "Learned Delivery Matches",
+    "رموز إذن التسليم المحفوظة",
+    "DELIVERY_ALIAS_MANAGE",
   ],
   ["brands", "Brands", "العلامات", "PRODUCT_EDIT"],
   ["categories", "Categories", "الفئات", "PRODUCT_EDIT"],
@@ -634,6 +641,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               "sales-price-check",
               "quantity-finder",
               "reusable-custom-items",
+              "learned-delivery-matches",
             ].includes(section) && (
               <button disabled={busy} onClick={() => void load()}>
                 {t("Refresh", "تحديث")}
@@ -662,6 +670,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <PriceWatcher t={t} />
         ) : section === "reusable-custom-items" ? (
           <ReusableCustomItems t={t} />
+        ) : section === "learned-delivery-matches" ? (
+          <LearnedDeliveryMatches t={t} />
         ) : !data ? (
           <p>
             {error

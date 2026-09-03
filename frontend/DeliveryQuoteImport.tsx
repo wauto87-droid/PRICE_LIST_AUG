@@ -157,18 +157,18 @@ export default function DeliveryQuoteImport({
     if (
       !(await showConfirm(
         t(
-          "Reopen this import for mapping? Its unchanged draft quotation will be removed. Edited or issued quotations cannot be reopened.",
+          "Create a correction copy for mapping? The existing quotation and import will remain unchanged.",
           "إعادة فتح هذا الاستيراد للربط؟ سيتم حذف عرض السعر المسودة غير المعدل. لا يمكن إعادة فتح عروض الأسعار المعدلة أو المصدرة.",
         ),
       ))
     )
       return;
     await run(async () => {
-      await api(`delivery-quote-imports/${job.id}/reopen`, "POST", {
+      const corrected: any = await api(`delivery-quote-imports/${job.id}/correction`, "POST", {
         version: job.version,
       });
       setTab("IMPORT");
-      await open(job.id);
+      await open(corrected.id);
     });
   }
 
@@ -912,7 +912,7 @@ export default function DeliveryQuoteImport({
             )}
           </span>
           <button type="button" disabled={busy} onClick={() => void reopenForMapping()}>
-            {t("Reopen and remap", "إعادة الفتح وإعادة الربط")}
+            {t("Create correction copy", "إنشاء نسخة تصحيح")}
           </button>
         </div>
       )}

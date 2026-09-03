@@ -19,6 +19,7 @@ import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import * as priceWatcher from "../price-watcher/service";
 import * as productEnrichment from "../product-enrichment/service";
+import * as handover from "../handover/service";
 import {
   calculate,
   calculateTargetPrice,
@@ -108,6 +109,33 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
+    if (root === "learned-delivery-matches") {
+      if (!id && method === "GET")
+        return response(await handover.learnedMatches(db, actor, Object.fromEntries(url.searchParams)));
+      if (id && method === "PUT")
+        return response(await handover.updateLearnedMatch(db, actor, decodeURIComponent(id), await body(req)));
+      if (id && method === "DELETE")
+        return response(await handover.deleteLearnedMatch(db, actor, decodeURIComponent(id), await body(req)));
+    }
+    if (root === "quotation-templates") {
+      if (!id && method === "GET")
+        return response(await handover.listTemplates(db, actor));
+      if (!id && method === "POST")
+        return response(await handover.saveTemplate(db, actor, undefined, await body(req)));
+      if (id) {
+        uuid(id);
+        if (!action && method === "PUT")
+          return response(await handover.saveTemplate(db, actor, id, await body(req)));
+        if (!action && method === "DELETE")
+          return response(await handover.deleteTemplate(db, actor, id, await body(req)));
+        if (action === "duplicate" && method === "POST")
+          return response(await handover.duplicateTemplate(db, actor, id));
+        if (action === "instantiate" && method === "POST")
+          return response(await handover.instantiateTemplate(db, actor, id));
+      }
+    }
+    if (root === "quotation-price-history" && method === "GET")
+      return response(await handover.recentPrices(db, actor, Object.fromEntries(url.searchParams)));
     if (root === "templates" && method === "GET") {
       auth.requirePermission(actor, "IMPORT_CONFIRM");
       const kind = z.enum(["simple", "supplier-simple", "advanced"]).parse(id);
@@ -741,7 +769,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(
           (
             await db.query(
-              "SELECT id,filename,kind,status,summary,error,version,created_at FROM import_jobs ORDER BY created_at DESC LIMIT 100",
+              "SELECT id,filename,kind,status,summary,error,version,source_job_id,created_at FROM import_jobs ORDER BY created_at DESC LIMIT 100",
             )
           ).rows,
         );
@@ -774,6 +802,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await imports.mapRows(db, actor, id, await body(req)),
           );
+        if (action === "correction" && method === "POST")
+          return response(await handover.correctCatalogImport(db, actor, id, await body(req)));
         if (action === "review" && method === "POST")
           return response(
             await imports.reviewRows(db, actor, id, await body(req)),
@@ -1104,6 +1134,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await deliveryQuoteImports.reopen(db, actor, id, await body(req)),
           );
+        if (action === "correction" && method === "POST")
+          return response(await handover.correctDeliveryImport(db, actor, id, await body(req)));
         if (!action && method === "DELETE")
           return response(await deliveryQuoteImports.remove(db, actor, id));
       }

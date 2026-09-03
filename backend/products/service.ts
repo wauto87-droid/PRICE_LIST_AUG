@@ -23,7 +23,7 @@ import {
   levelPrice,
 } from "../pricing/engine";
 import Decimal from "decimal.js";
-export const productSelect = `SELECT p.*,pp.*,b.name AS brand,c.name AS category,COALESCE((SELECT json_agg(a.label) FROM product_aliases a WHERE a.product_id=p.id),'[]') AS aliases,
+export const productSelect = `SELECT p.*,pp.*,b.name AS brand,c.name AS category,COALESCE((SELECT json_agg(a.label) FROM product_aliases a WHERE a.product_id=p.id AND a.kind<>'DELIVERY_NOTE'),'[]') AS aliases,
 (SELECT json_agg(json_build_object('code',l.code,'active',l.active,'method',l.method,'fixedPrice',l.fixed_price::text,'markup',l.markup::text,'listPrice',l.list_price::text,'baseDiscount',l.base_discount::text) ORDER BY CASE l.code WHEN 'WHOLESALE' THEN 0 WHEN 'RETAIL' THEN 1 ELSE 2 END) FROM product_selling_levels l WHERE l.product_id=p.id) AS levels
 FROM products p JOIN product_pricing pp ON pp.product_id=p.id LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id`;
 export function toInput(row: Record<string, any>): ProductInput {
@@ -259,7 +259,7 @@ export async function saveProduct(
         level.baseDiscount,
       ],
     );
-  await db.query("DELETE FROM product_aliases WHERE product_id=$1", [
+  await db.query("DELETE FROM product_aliases WHERE product_id=$1 AND kind<>'DELIVERY_NOTE'", [
     productId,
   ]);
   for (const alias of aliases)
@@ -471,8 +471,8 @@ export async function addProductAlias(
       created: false,
     };
   await db.query(
-    "INSERT INTO product_aliases(normalized,product_id,label,kind) VALUES($1,$2,$3,$4)",
-    [normalized, productId, input.alias, input.kind],
+    "INSERT INTO product_aliases(normalized,product_id,label,kind,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)",
+    [normalized, productId, input.alias, input.kind, actor.id],
   );
   await audit(
     db,

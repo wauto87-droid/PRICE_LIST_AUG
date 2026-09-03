@@ -99,10 +99,10 @@ async function upsertEvent(
   await db.query(
     `INSERT INTO price_watch_events(
        id,actor_id,stage,source,product_id,reusable_item_id,item_key,part_number,description,unit,
-       selling_level,quantity,master_excl,final_excl,final_incl,requested_discount,effective_discount,requested_markup,effective_markup,
+       selling_level,quantity,master_excl,final_excl,final_incl,requested_discount,effective_discount,requested_markup,effective_markup,adjustment_mode,
        vat_rate,subtotal,total,minimum_reached,discount_limited,quotation_id,quotation_line_index,
        customer_name,quote_round_off
-     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
      ON CONFLICT(id) DO UPDATE SET
        stage=CASE WHEN
          CASE EXCLUDED.stage WHEN 'ISSUED' THEN 4 WHEN 'DRAFT' THEN 3 WHEN 'CART' THEN 2 ELSE 1 END >=
@@ -113,7 +113,7 @@ async function upsertEvent(
        unit=EXCLUDED.unit,selling_level=EXCLUDED.selling_level,quantity=EXCLUDED.quantity,
        master_excl=EXCLUDED.master_excl,final_excl=EXCLUDED.final_excl,final_incl=EXCLUDED.final_incl,
        requested_discount=EXCLUDED.requested_discount,effective_discount=EXCLUDED.effective_discount,
-       requested_markup=EXCLUDED.requested_markup,effective_markup=EXCLUDED.effective_markup,
+       requested_markup=EXCLUDED.requested_markup,effective_markup=EXCLUDED.effective_markup,adjustment_mode=EXCLUDED.adjustment_mode,
        vat_rate=EXCLUDED.vat_rate,subtotal=EXCLUDED.subtotal,total=EXCLUDED.total,
        minimum_reached=EXCLUDED.minimum_reached,discount_limited=EXCLUDED.discount_limited,
        quotation_id=COALESCE(EXCLUDED.quotation_id,price_watch_events.quotation_id),
@@ -141,6 +141,7 @@ async function upsertEvent(
       input.price.effectiveDiscount,
       input.price.requestedMarkup ?? "0",
       input.price.effectiveMarkup ?? "0",
+      input.price.adjustmentMode ?? "DISCOUNT",
       input.price.vatRate,
       input.price.subtotal,
       input.price.total,

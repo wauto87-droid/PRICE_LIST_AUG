@@ -22,6 +22,7 @@ import {
   normalizeTargetPrice,
   livePricingSignature,
 } from "./cart-live-pricing";
+import RecentQuotationPrices from "./RecentQuotationPrices";
 
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
@@ -159,6 +160,7 @@ export default function Cart({
   settings,
   online,
   onSaved,
+  onTemplates,
 }: {
   t: Translate;
   user: any;
@@ -167,6 +169,7 @@ export default function Cart({
   settings: any;
   online: boolean;
   onSaved: (q: any) => void;
+  onTemplates?: () => void;
 }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -174,6 +177,8 @@ export default function Cart({
   const [suggestedCustomPart, setSuggestedCustomPart] = useState("");
   const [options, setOptions] = useState<Record<string, any[]>>({});
   const [repricingRows, setRepricingRows] = useState<Record<number, boolean>>({});
+  const [recentPriceRow, setRecentPriceRow] = useState<number | null>(null);
+  const activePriceRow = useRef<number | null>(null);
   const cartRef = useRef(cart);
   const pricingTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const pricingSignatures = useRef<Record<number, string>>({});
@@ -186,6 +191,16 @@ export default function Cart({
     cart.lines.some((line: any) => cartLineHasBlockingError(line)) ||
     !!sum.error;
   cartRef.current = cart;
+  useEffect(() => {
+    if (!user.permissions.includes("QUOTE_PRICE_HISTORY")) return;
+    const open = (event: KeyboardEvent) => {
+      if (event.key !== "F10" || activePriceRow.current === null || !cartRef.current.lines[activePriceRow.current]) return;
+      event.preventDefault();
+      setRecentPriceRow(activePriceRow.current);
+    };
+    window.addEventListener("keydown", open);
+    return () => window.removeEventListener("keydown", open);
+  }, [user.permissions]);
 
   const setCartLine = (index: number, build: (line: any) => any) => {
     const current = cartRef.current;
@@ -763,7 +778,7 @@ export default function Cart({
                 }}
               />
               {cart.lines.map((l: any, i: number) => (
-                <tr key={i}>
+                <tr key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
                   <td>
                     {l.input?.type === "CUSTOM" ? (
                       <>
@@ -1032,6 +1047,9 @@ export default function Cart({
                   </td>
                   <td>
                     <div className="actions">
+                      {user.permissions.includes("QUOTE_PRICE_HISTORY") && (
+                        <button title={t("Recent prices (F10)", "الأسعار السابقة (F10)")} onClick={() => setRecentPriceRow(i)}>F10</button>
+                      )}
                       <button
                         title={t("Move up", "للأعلى")}
                         aria-label={t(
@@ -1091,6 +1109,9 @@ export default function Cart({
           )}
         </div>
       )}
+      {recentPriceRow !== null && cart.lines[recentPriceRow] && (
+        <RecentQuotationPrices t={t} line={cart.lines[recentPriceRow]} customer={cart.customer} quotationId={cart.id} onClose={() => setRecentPriceRow(null)} />
+      )}
       {sum && (
         <div className="cart-totals">
           <span>
@@ -1144,6 +1165,11 @@ export default function Cart({
         </div>
       )}
       <div className="actions footer-actions">
+        {user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
+          <button disabled={!cart.lines.length} onClick={onTemplates}>
+            {t("Save as template", "حفظ كقالب")}
+          </button>
+        )}
         <button
           disabled={!online || busy || !cart.lines.length}
           onClick={reprice}
