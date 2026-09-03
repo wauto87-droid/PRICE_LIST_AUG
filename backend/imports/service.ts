@@ -123,6 +123,7 @@ export function extractMappedValues(
 ) {
   const proposed: Record<string, any> = {};
   for (const [field, column] of Object.entries(mapping)) {
+    const value =
       raw[column] ??
       Object.entries(raw).find(
         ([header]) => normalizeImportColumn(header) === normalizeImportColumn(column),
