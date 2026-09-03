@@ -32,6 +32,12 @@ export default function Quotations({
     scope: "mine",
   });
   const searchGeneration = useRef(0);
+  const totalQuantity = selected?.lines.reduce(
+    (sum: number, line: any) => sum + Number(line.price?.quantity ?? 0),
+    0,
+  );
+  const formatQuantity = (value: number) =>
+    value.toFixed(3).replace(/\.?(?:0+)$/, "");
   const load = () => {
     const generation = ++searchGeneration.current;
     return api(
@@ -233,7 +239,7 @@ export default function Quotations({
             {selected.lines.map((l: any, i: number) => (
               <div className="quote-line" key={i}>
                 <span>
-                  <strong>{l.partNumber}</strong>
+                  <strong>{i + 1}. {l.partNumber}</strong>
                   <small>
                     {l.source === "CUSTOM" || l.input?.type === "CUSTOM"
                       ? t("Custom item", "صنف مخصص")
@@ -247,6 +253,9 @@ export default function Quotations({
                 <b>{l.price.total}</b>
               </div>
             ))}
+            <p className="text-end">
+              {t("Total Quantity", "إجمالي الكمية")}: {formatQuantity(totalQuantity)}
+            </p>
             <h3 className="text-end">SAR {selected.totals.total}</h3>
             {review && (
               <div className="review-panel">
@@ -304,6 +313,9 @@ export default function Quotations({
                 </button>
               </div>
             )}
+            <small className="muted">
+              {t("Internal reference", "المرجع الداخلي")}: {selected.internalReference}
+            </small>
             <div className="actions wrap">
               {selected.status === "DRAFT" && (
                 <>

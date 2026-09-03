@@ -663,6 +663,15 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
         const drafts = await Promise.all(
           actors.map((a) => saveDraft(db, a, request, config)),
         );
+        assert.equal(
+          new Set(drafts.map((draft) => draft.number)).size,
+          drafts.length,
+        );
+        assert.equal(
+          new Set(drafts.map((draft) => draft.internalReference)).size,
+          drafts.length,
+        );
+        assert(drafts.every((draft) => /^QID-\d{6,}$/.test(draft.internalReference)));
         const reviews = await Promise.all(
           drafts.map((d, i) => reviewIssue(db, actors[i], d.id, config)),
         );
@@ -676,6 +685,7 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
           "AMT-QT-000002",
         ]);
         issued = quotes[0];
+        assert.equal(issued.internalReference, drafts[0].internalReference);
         let consumed = "";
         await assert.rejects(
           db.transaction(async (tx) => {

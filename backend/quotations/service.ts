@@ -309,6 +309,7 @@ function publicLine(line: any, actor: Actor) {
 export function publicQuote(q: any, actor: Actor) {
   return {
     ...q,
+    internalReference: q.internal_reference,
     totals: {
       quoteDiscount: "0.00",
       targetTotal: "",
@@ -377,6 +378,14 @@ export async function nextDraftNumber(db: DB, settings: any) {
     if (!(await one(db, "SELECT id FROM quotations WHERE number=$1", [number])))
       return number;
   }
+}
+export async function nextInternalReference(db: DB) {
+  // Sequence values are never reused, including after a failed transaction.
+  const row = await one(
+    db,
+    "SELECT nextval('quotation_internal_reference_seq')::text AS serial",
+  );
+  return `QID-${row!.serial.padStart(6, "0")}`;
 }
 export async function saveDraft(
   db: DB,
@@ -458,10 +467,11 @@ export async function saveDraft(
       );
     else
       await tx.query(
-        "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,$2,'DRAFT',$3,$4,$5,$6)",
+        "INSERT INTO quotations(id,number,internal_reference,status,owner_id,customer,lines,totals) VALUES($1,$2,$3,'DRAFT',$4,$5,$6,$7)",
         [
           quoteId,
           await nextDraftNumber(tx, settings),
+          await nextInternalReference(tx),
           actor.id,
           json(data.customer),
           json(lines),

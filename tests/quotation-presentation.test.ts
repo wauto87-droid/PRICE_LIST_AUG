@@ -149,3 +149,28 @@ test("Customer-facing quotation output omits internal discount percentages", () 
   assert.match(html, /80\.00/);
   assert.match(html, /92\.00/);
 });
+
+test("Printed quotations number lines and total quantities without internal references", () => {
+  const html = quotationHtml(
+    {
+      number: "DR-0004",
+      internal_reference: "QID-000001",
+      status: "DRAFT",
+      created_at: "2026-09-02T00:00:00Z",
+      customer: { name: "Customer", number: "", mobile: "", reference: "" },
+      lines: [
+        { partNumber: "ITEM-1", description: "First", unit: "pcs", price: { quantity: "1.5", finalExcl: "10", finalIncl: "11.5", subtotal: "15", vatAmount: "2.25", vatRate: "15", total: "17.25" } },
+        { partNumber: "ITEM-2", description: "Second", unit: "pcs", price: { quantity: "2.25", finalExcl: "10", finalIncl: "11.5", subtotal: "22.5", vatAmount: "3.38", vatRate: "15", total: "25.88" } },
+      ],
+      totals: { subtotal: "37.50", vat: "5.63", total: "43.13" },
+    },
+    { companyName: "AMT", companyArabic: "", currency: "SAR", pdfUnitPrices: "BOTH", quotation: {} },
+    "",
+  );
+  assert.match(html, /Ref \/ المرجع/);
+  assert.match(html, /Total Quantity \/ إجمالي الكمية/);
+  assert.match(html, /3\.75/);
+  assert.match(html, /<td class="num">1<\/td>/);
+  assert.match(html, /<td class="num">2<\/td>/);
+  assert.doesNotMatch(html, /QID-000001/);
+});
