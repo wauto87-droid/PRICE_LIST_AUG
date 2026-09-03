@@ -443,6 +443,20 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     ).data;
     assert.ok(history.items.length > 0);
     assert.equal("master_excl" in history.items[0], false);
+    const allHistory = (
+      await request(
+        `quotation-price-history?itemKey=${encodeURIComponent(`CATALOG:${productId}`)}&stage=ALL&pageSize=20`,
+      )
+    ).data;
+    assert.ok(allHistory.items.length > 0);
+    assert.ok(["DRAFT", "ISSUED"].includes(allHistory.items[0].stage));
+    const walkIn = (
+      await request("quotations", "POST", {
+        customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
+        lines: [line],
+      })
+    ).data;
+    assert.equal(walkIn.customer.number, "1");
     cookie = staffCookie;
     csrf = staffCsrf;
   });

@@ -47,6 +47,7 @@ export default function DeliveryQuoteImport({
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("all");
   const [showCustomerColumn, setShowCustomerColumn] = useState(false);
+  const [customerCodeDraft, setCustomerCodeDraft] = useState("");
   const [tab, setTab] = useState<"IMPORT" | "OUTPUTS" | "ADMIN">("OUTPUTS");
   const [outputFilters, setOutputFilters] = useState(defaultHistoryFilters);
   const [adminFilters, setAdminFilters] = useState(defaultHistoryFilters);
@@ -58,6 +59,7 @@ export default function DeliveryQuoteImport({
     date: "",
     docNo: "",
     customerName: "",
+    customerCode: "",
     partNumber: "",
     description: "",
     quantity: "",
@@ -99,6 +101,7 @@ export default function DeliveryQuoteImport({
     setShowCustomerColumn(false);
     const columns = next.summary?.columns || [];
     setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
+    setCustomerCodeDraft(String((next.header || next.summary)?.customerCode || ""));
     setSelected({});
   };
 
@@ -143,6 +146,7 @@ export default function DeliveryQuoteImport({
       date: mapping.date,
       docNo: mapping.docNo,
       customerName: mapping.customerName,
+      ...(mapping.customerCode ? { customerCode: mapping.customerCode } : {}),
       partNumber: mapping.partNumber,
       description: mapping.description,
       quantity: mapping.quantity,
@@ -368,6 +372,7 @@ export default function DeliveryQuoteImport({
                   <span>
                     {t("Customer", "العميل")}: {item.customer_name || "—"}
                   </span>
+                  <span>{t("Customer Code", "رمز العميل")}: {item.customer_code || "—"}</span>
                   <span title={deliveryReferences(item)}>
                     {t("Delivery reference", "مرجع التسليم")}: {deliveryReferences(item) || "—"}
                   </span>
@@ -523,6 +528,7 @@ export default function DeliveryQuoteImport({
           <span>
             {t("Delivery rows", "صفوف التسليم")}: {job.summary?.totalRows || 0}
           </span>
+          <span>{t("Customer Code", "رمز العميل")}: {headerSummary.customerCode || "—"}</span>
           <span>
             {t("Delivery references", "مراجع التسليم")}:{" "}
             {Array.isArray(headerSummary.docNos) && headerSummary.docNos.length
@@ -537,6 +543,7 @@ export default function DeliveryQuoteImport({
             ["date", "Date", "التاريخ"],
             ["docNo", "Delivery no.", "رقم إذن التسليم"],
             ["customerName", "Customer name", "اسم العميل"],
+            ["customerCode", "Customer Code (optional)", "رمز العميل (اختياري)"],
             ["partNumber", "Part number", "رقم الصنف"],
             ["description", "Description", "الوصف"],
             ["quantity", "Quantity", "الكمية"],
@@ -568,6 +575,10 @@ export default function DeliveryQuoteImport({
       )}
       {job?.status === "AWAITING_REVIEW" && (
         <>
+          <div className="form-grid three">
+            <label>{t("Customer Code (optional)", "رمز العميل (اختياري)")}<input value={customerCodeDraft} onChange={(e) => setCustomerCodeDraft(e.target.value)} placeholder={t("Used to highlight this customer's previous prices", "يُستخدم لتمييز الأسعار السابقة لهذا العميل")}/></label>
+            <button disabled={busy || customerCodeDraft === String(headerSummary.customerCode || "")} onClick={() => void run(async () => { await api(`delivery-quote-imports/${job.id}/header`, "POST", { version: job.version, customerCode: customerCodeDraft }); await open(job.id, filter); })}>{t("Save Customer Code", "حفظ رمز العميل")}</button>
+          </div>
           <div className="notice">
             {job.summary?.blockedReason
               ? job.summary.blockedReason

@@ -388,7 +388,13 @@ export async function saveDraft(
   requestId?: string,
 ) {
   requirePermission(actor, id ? "QUOTE_EDIT" : "QUOTE_CREATE");
-  const data = quoteInput.parse(input);
+  const parsed = quoteInput.parse(input);
+  const data = {
+    ...parsed,
+    customer: parsed.customer.name.trim() || parsed.customer.number.trim()
+      ? parsed.customer
+      : { ...parsed.customer, number: "1" },
+  };
   return db.transaction(async (tx) => {
     settings = (await one(
       tx,
@@ -564,7 +570,7 @@ export async function issue(
     );
     const customer = {
       ...q.customer,
-      name: q.customer.name || (!q.customer.number ? "Walk-in Customer" : ""),
+      name: q.customer.name || (!q.customer.number || q.customer.number.trim() === "1" ? "Walk-in Customer" : ""),
     };
     const allocated = await allocateNumber(tx, id, actor, settings);
     const logo =

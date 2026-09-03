@@ -18,6 +18,7 @@ import {
   reopen,
   history,
   historyDateBounds,
+  updateHeader,
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
 import { quotationHtml } from "../backend/pdf/template";
@@ -43,6 +44,7 @@ test("DNN delivery-note headers map Balance as the quotation quantity", () => {
       date: "Date",
       docNo: "Delivery no.",
       customerName: "Cust.Name",
+      customerCode: "",
       partNumber: "Item Code",
       description: "Item Name",
       quantity: "Balance",
@@ -175,7 +177,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   const jobId = randomUUID();
   await db.query(
     "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'delivery.csv',$2,'AWAITING_MAPPING',$3,$4)",
-    [jobId, filePath, actor.id, json({ columns: ["Date", "Doc", "Customer", "Item", "Description", "Qty", "Price"] })],
+    [jobId, filePath, actor.id, json({ columns: ["Date", "Doc", "Customer", "Customer Code", "Item", "Description", "Qty", "Price"] })],
   );
   await db.query(
     "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,1,$3),($4,$2,2,$5),($6,$2,3,$7)",
@@ -186,6 +188,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
         Date: "2026-08-31",
         Doc: "DN-100",
         Customer: "ACME",
+        "Customer Code": "001",
         Item: "LC1D09M7",
         Description: "Contactor",
         Qty: "2",
@@ -196,6 +199,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
         Date: "2026-08-31",
         Doc: "DN-100",
         Customer: "ACME",
+        "Customer Code": "001",
         Item: "SITE-WORK",
         Description: "Site work",
         Qty: "1",
@@ -206,6 +210,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
         Date: "2026-08-30",
         Doc: "1463",
         Customer: "ACME",
+        "Customer Code": "001",
         Item: "LC1D09M7",
         Description: "Returned contactor",
         Qty: "1",
@@ -218,6 +223,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
     date: "Date",
     docNo: "Doc",
     customerName: "Customer",
+    customerCode: "Customer Code",
     partNumber: "Item",
     description: "Description",
     quantity: "Qty",
@@ -226,6 +232,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   let opened: any = await get(db, actor, jobId);
   assert.equal(opened.status, "AWAITING_REVIEW");
   assert.equal(opened.summary.customerName, "ACME");
+  assert.equal(opened.summary.customerCode, "001");
   assert.equal(opened.summary.matchedRows, 2);
   assert.equal(opened.summary.customRows, 1);
   const matched = opened.rows.find((row: any) => row.resolution === "MATCHED_CATALOG");
@@ -269,6 +276,7 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
     version: opened.version,
   });
   assert.equal(quote.customer.name, "ACME");
+  assert.equal(quote.customer.number, "001");
   assert.match(quote.customer.reference, /DN-100/);
   assert.doesNotMatch(quote.customer.reference, /1463/);
   assert.match(quote.customer.notes, /Delivery dates: 2026-08-31/);
@@ -400,6 +408,8 @@ test("Delivery-note quotation import accepts files with no mapped price column",
   assert.equal(matched.raw["Doc.No"], "DN-300");
   assert.equal(matched.completed, true);
   assert.equal(custom.completed, false);
+  await updateHeader(db, actor, jobId, { version: opened.version, customerCode: "0007" });
+  opened = await get(db, actor, jobId);
   await reviewRows(db, actor, jobId, {
     version: opened.version,
     rowIds: [customRowId],
@@ -414,6 +424,7 @@ test("Delivery-note quotation import accepts files with no mapped price column",
     version: opened.version,
   });
   assert.equal(quote.customer.name, "ACME");
+  assert.equal(quote.customer.number, "0007");
   assert.equal(quote.lines.length, 2);
   assert.equal(quote.lines[0].source, "CATALOG");
   assert.equal(quote.lines[0].price.finalExcl, "45.00");

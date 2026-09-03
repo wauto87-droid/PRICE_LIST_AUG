@@ -802,6 +802,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await imports.mapRows(db, actor, id, await body(req)),
           );
+        if (action === "header" && method === "POST")
+          return response(await deliveryQuoteImports.updateHeader(db, actor, id, await body(req)));
         if (action === "correction" && method === "POST")
           return response(await handover.correctCatalogImport(db, actor, id, await body(req)));
         if (action === "review" && method === "POST")

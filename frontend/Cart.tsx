@@ -690,7 +690,7 @@ export default function Cart({
       <div className="form-grid">
         {[
           ["name", "Customer name", "اسم العميل"],
-          ["number", "Customer number", "رقم العميل"],
+          ["number", "Customer Code", "رمز العميل"],
           ["mobile", "Mobile", "الجوال"],
           ["reference", "Reference", "المرجع"],
         ].map(([key, en, ar]) => (
@@ -712,6 +712,10 @@ export default function Cart({
             />
           </label>
         ))}
+        <div className="notice">
+          <span>{t("Customer Code improves same-customer price highlighting.", "رمز العميل يحسن تمييز الأسعار السابقة لنفس العميل.")}</span>
+          <button type="button" onClick={() => setCart({ ...cart, customer: { ...cart.customer, name: "", number: "1" } })}>{t("Walk-in Customer", "عميل نقدي")}</button>
+        </div>
         <label className="cart-notes">
           {t("Notes", "ملاحظات")}
           <textarea

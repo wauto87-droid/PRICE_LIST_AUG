@@ -2,6 +2,7 @@ export type DeliveryQuoteMapping = {
   date: string;
   docNo: string;
   customerName: string;
+  customerCode: string;
   partNumber: string;
   description: string;
   quantity: string;
@@ -32,6 +33,9 @@ export function deliveryQuoteMappingDefaults(
     customerName:
       saved.customerName ||
       autoMap(columns, ["custname", "customername", "customer", "partyname"]),
+    customerCode:
+      saved.customerCode ||
+      autoMap(columns, ["customercode", "customerno", "customernumber", "custcode", "custno", "partycode", "accountcode"]),
     partNumber:
       saved.partNumber ||
       autoMap(columns, ["item", "partnumber", "partreference", "itemcode"]),

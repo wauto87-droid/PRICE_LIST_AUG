@@ -29,6 +29,7 @@ const mappingSchema = z
     date: z.string().min(1),
     docNo: z.string().min(1),
     customerName: z.string().min(1),
+    customerCode: z.string().default(""),
     partNumber: z.string().min(1),
     description: z.string().min(1),
     quantity: z.string().min(1),
@@ -64,6 +65,7 @@ const finalizeSchema = z
   .strict();
 
 const reopenSchema = finalizeSchema;
+const headerSchema = z.object({ version: z.coerce.number().int(), customerCode: z.string().trim().max(80).default("") }).strict();
 
 const historyDateSchema = z
   .string()
@@ -231,6 +233,7 @@ async function stageRow(
   mapping: z.infer<typeof mappingSchema>,
 ) {
   const customerName = String(raw[mapping.customerName] ?? "").trim();
+  const customerCode = mapping.customerCode ? String(raw[mapping.customerCode] ?? "").trim() : "";
   const docNo = formatDeliveryDocNo(raw[mapping.docNo]);
   const docDate = formatDeliveryDate(raw[mapping.date]);
   const partNumber = String(raw[mapping.partNumber] ?? "").trim();
@@ -306,6 +309,7 @@ async function stageRow(
         (resolution === "UNMATCHED_CUSTOM" && moneyPattern.test(sourcePrice))));
   return {
     customerName,
+    customerCode,
     docNo,
     docDate,
     partNumber,
@@ -335,10 +339,13 @@ async function loadJob(tx: DB, actor: Actor, id: string, forUpdate = false) {
 
 function headerState(rows: any[]) {
   const customers = uniqueCustomerNames(rows.map((row) => row.customerName));
+  const customerCodes = uniqueNonBlank(rows.map((row) => String(row.customerCode ?? "").trim()));
   const docNos = uniqueNonBlank(rows.map((row) => formatDeliveryDocNo(row.docNo)));
   const dates = uniqueNonBlank(rows.map((row) => formatDeliveryDate(row.docDate)));
   return {
     customerName: customers[0] ?? "",
+    customerCode: customerCodes[0] ?? "",
+    customerCodes,
     customerCount: customers.length,
     customers,
     docNos,
@@ -346,6 +353,8 @@ function headerState(rows: any[]) {
     blockedReason:
       customers.length > 1
         ? "Delivery note file contains more than one customer name. Split the file or fix the customer column before finalizing."
+        : customerCodes.length > 1
+          ? "Delivery note file contains more than one customer code. Split the file or fix the customer-code column before finalizing."
         : "",
   };
 }
@@ -355,6 +364,7 @@ function normalizeDeliveryHeader(header: any) {
   return {
     ...source,
     customerName: String(source.customerName ?? "").trim(),
+    customerCode: String(source.customerCode ?? "").trim(),
     docNos: uniqueNonBlank(
       (Array.isArray(source.docNos) ? source.docNos : []).map(
         formatDeliveryDocNo,
@@ -368,19 +378,21 @@ function normalizeDeliveryHeader(header: any) {
   };
 }
 
-function headerFromRows(rows: any[], mapping: any) {
-  return normalizeDeliveryHeader(
+function headerFromRows(rows: any[], mapping: any, existing: any = {}) {
+  const derived = normalizeDeliveryHeader(
     headerState(
       rows.map((row) => {
         const importMeta = row.line_input?.importMeta ?? {};
         return {
           customerName: String(row.raw?.[mapping?.customerName] ?? "").trim(),
+          customerCode: mapping?.customerCode ? String(row.raw?.[mapping.customerCode] ?? "").trim() : "",
           docNo: importMeta.docNo ?? row.raw?.[mapping?.docNo],
           docDate: importMeta.docDate ?? row.raw?.[mapping?.date],
         };
       }),
     ),
   );
+  return { ...derived, customerCode: derived.customerCode || String(existing?.customerCode ?? "").trim() };
 }
 
 function summarizeReview(rows: any[], header: any) {
@@ -397,6 +409,7 @@ function summarizeReview(rows: any[], header: any) {
     customRows: rows.filter((row) => row.resolution === "UNMATCHED_CUSTOM")
       .length,
     customerName: header.customerName,
+    customerCode: header.customerCode,
     docNos: header.docNos,
     dates: header.dates,
     blockedReason: header.blockedReason,
@@ -417,7 +430,7 @@ function toQuoteCustomer(header: any) {
     );
   return {
     name: normalized.customerName,
-    number: "",
+    number: normalized.customerCode || (!normalized.customerName ? "1" : ""),
     mobile: "",
     reference,
     notes: notesParts.join("\n"),
@@ -519,6 +532,7 @@ export async function history(db: DB, actor: Actor, input: unknown) {
       j.filename ILIKE ${pattern} ESCAPE '\\'
       OR COALESCE(q.number,'') ILIKE ${pattern} ESCAPE '\\'
       OR COALESCE(j.header->>'customerName',j.summary->>'customerName',q.customer->>'name','') ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(j.header->>'customerCode',j.summary->>'customerCode',q.customer->>'number','') ILIKE ${pattern} ESCAPE '\\'
       OR COALESCE(j.header->'docNos',j.summary->'docNos','[]'::jsonb)::text ILIKE ${pattern} ESCAPE '\\'
     )`);
   }
@@ -566,6 +580,7 @@ export async function history(db: DB, actor: Actor, input: unknown) {
       `SELECT j.id,j.filename,j.status,j.summary,j.error,j.quote_id,j.version,
               j.created_at,j.updated_at,q.number AS quotation_number,
               COALESCE(j.header->>'customerName',j.summary->>'customerName',q.customer->>'name','') AS customer_name,
+              COALESCE(j.header->>'customerCode',j.summary->>'customerCode',q.customer->>'number','') AS customer_code,
               COALESCE(j.header->'docNos',j.summary->'docNos','[]'::jsonb) AS delivery_references
        FROM delivery_quote_jobs j
        LEFT JOIN quotations q ON q.id=j.quote_id
@@ -811,6 +826,22 @@ export async function reviewRows(
   });
 }
 
+export async function updateHeader(db: DB, actor: Actor, id: string, input: unknown) {
+  permission(actor);
+  const data = headerSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const job = await loadJob(tx, actor, id, true);
+    assert(job.status === "AWAITING_REVIEW", 409, "Delivery-note import is not awaiting review");
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    const header = normalizeDeliveryHeader({ ...(job.header ?? {}), customerCode: data.customerCode });
+    const rows = (await tx.query("SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number", [id])).rows;
+    const summary = summarizeReview(rows, header);
+    await tx.query("UPDATE delivery_quote_jobs SET header=$2,summary=$3,version=version+1,updated_at=now() WHERE id=$1", [id, json(header), json(summary)]);
+    await audit(tx, actor.id, "DELIVERY_QUOTE_CUSTOMER_CODE", "delivery_quote_jobs", id, null, { customerCode: data.customerCode });
+    return { ok: true };
+  });
+}
+
 export async function finalize(
   db: DB,
   actor: Actor,
@@ -840,7 +871,7 @@ export async function finalize(
     const included = rows.filter((row) => row.action === "ADD");
     assert(included.length > 0, 400, "Select at least one row for the quotation");
     const header = job.mapping
-      ? headerFromRows(included, job.mapping)
+      ? headerFromRows(included, job.mapping, job.header)
       : normalizeDeliveryHeader(job.header);
     assert(!header.blockedReason, 409, String(header.blockedReason));
     const quote = await saveDraft(
