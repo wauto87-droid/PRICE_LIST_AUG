@@ -98,6 +98,11 @@ const cleanPreset = (preset: DiscountPreset): DiscountPreset => ({
 });
 const normalizeHeader = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, "");
+const valueFromMappedColumn = (raw: Record<string, unknown>, column: string) =>
+  raw[column] ??
+  Object.entries(raw).find(
+    ([header]) => normalizeHeader(header) === normalizeHeader(column),
+  )?.[1];
 const supplierSimpleFields = [
   "partNumber",
   "description",
@@ -763,9 +768,11 @@ export default function Imports({
   const skippedRows = job?.quickStats?.skippedRows ?? 0;
   const totalRows = job?.totalRows ?? job?.rows?.length ?? 0;
   const sampleRow = job?.rows?.find((row: any) =>
-    String(row.raw?.[basicPriceColumn] ?? "").trim(),
+    String(valueFromMappedColumn(row.raw || {}, basicPriceColumn) ?? "").trim(),
   );
-  const samplePriceSource = sampleRow?.raw?.[basicPriceColumn];
+  const samplePriceSource = sampleRow
+    ? valueFromMappedColumn(sampleRow.raw || {}, basicPriceColumn)
+    : undefined;
   const samplePrice = Number(samplePriceSource);
   const sampleAdjustment = Number(
     basicAdjustmentSource === "COLUMN"

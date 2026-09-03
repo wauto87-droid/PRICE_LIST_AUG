@@ -117,14 +117,19 @@ const nonEmptyCell = (value: unknown) =>
 const trimMappedValue = (value: unknown) =>
   nonEmptyCell(value) ? String(value).trim() : undefined;
 
-function extractMappedValues(
+export function extractMappedValues(
   raw: Record<string, unknown>,
   mapping: Record<string, string>,
 ) {
   const proposed: Record<string, any> = {};
-  for (const [field, column] of Object.entries(mapping))
-    if (nonEmptyCell(raw[column]))
-      proposed[field] = normalizeImportedDecimal(field, raw[column]).value;
+  for (const [field, column] of Object.entries(mapping)) {
+      raw[column] ??
+      Object.entries(raw).find(
+        ([header]) => normalizeImportColumn(header) === normalizeImportColumn(column),
+      )?.[1];
+    if (nonEmptyCell(value))
+      proposed[field] = normalizeImportedDecimal(field, value).value;
+  }
   if (typeof proposed.minimumEnabled === "string")
     proposed.minimumEnabled = ["true", "1", "yes", "on"].includes(
       proposed.minimumEnabled.toLowerCase(),

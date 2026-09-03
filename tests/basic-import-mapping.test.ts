@@ -4,6 +4,7 @@ import {
   hasSupplierSimpleColumns,
   rankedMappedColumn,
 } from "../frontend/Imports";
+import { extractMappedValues } from "../backend/imports/service";
 
 test("Basic import ranks ABB columns without guessing the alternate product ID", () => {
   const columns = [
@@ -64,5 +65,24 @@ test("Dedicated supplier template still opens supplier-simple mode", () => {
       "Activity",
     ]),
     true,
+  );
+});
+
+test("Basic import resolves Excel headers with different whitespace", () => {
+  assert.deepEqual(
+    extractMappedValues(
+      {
+        "Material Code": "1SDA038316R1",
+        "Gross Price \n (SAR )": "1420.3102898550724",
+      },
+      {
+        partNumber: "Material Code",
+        "END_CUSTOMER.listPrice": "Gross Price (SAR )",
+      },
+    ),
+    {
+      partNumber: "1SDA038316R1",
+      "END_CUSTOMER.listPrice": "1420.31029",
+    },
   );
 });
