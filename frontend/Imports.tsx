@@ -167,8 +167,20 @@ export const rankedMappedColumn = (columns: string[], field: string) => {
   const candidates = matches.filter((item) => item.rank === best);
   return { column: candidates[0].column, ambiguous: candidates.length > 1 };
 };
-const hasSupplierSimpleColumns = (columns: string[]) =>
-  supplierSimpleFields.every((field) => !!findMappedColumn(columns, field));
+// Supplier-simple mode is reserved for its dedicated spreadsheet template.
+// Generic part, description, and price headers must remain in Basic import.
+export const hasSupplierSimpleColumns = (columns: string[]) =>
+  [...supplierSimpleFields, "groupColumn"].every((field) =>
+    columns.some(
+      (column) =>
+        normalizeHeader(column) ===
+        normalizeHeader(
+          supplierSimpleColumns[
+            field as keyof typeof supplierSimpleColumns
+          ],
+        ),
+    ),
+  );
 const isSupplierSimpleMapping = (
   mapping: Record<string, string>,
   columns: string[],
