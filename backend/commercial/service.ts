@@ -221,7 +221,7 @@ export async function stockBalances(db: DB, actor: Actor, raw: unknown) {
     where.push(`w.id=$${args.length}`);
   }
   const base = `FROM warehouses w CROSS JOIN products p
-    LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM inventory_movements GROUP BY warehouse_id,product_id) m
+    LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM inventory_movements WHERE kind NOT IN ('RESERVE','RELEASE') GROUP BY warehouse_id,product_id) m
       ON m.warehouse_id=w.id AND m.product_id=p.id
     LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM stock_reservations WHERE status='ACTIVE' GROUP BY warehouse_id,product_id) r
       ON r.warehouse_id=w.id AND r.product_id=p.id
@@ -1766,7 +1766,7 @@ export async function listOnlineOrders(db: DB, actor: Actor, raw: unknown) {
   args.push(input.pageSize, (input.page - 1) * input.pageSize);
   const items = (
     await db.query(
-      `SELECT * FROM ecommerce_orders WHERE ${where} ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      `SELECT o.*,COALESCE(o.guest_contact,(SELECT jsonb_build_object('name',c.name,'mobile',a.mobile,'email',a.email,'number',c.number) FROM customer_accounts a LEFT JOIN customers c ON c.id=a.customer_id WHERE a.id=o.customer_account_id)) guest_contact FROM ecommerce_orders o WHERE ${where} ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
       args,
     )
   ).rows;
@@ -1835,7 +1835,7 @@ export async function approveOnlineOrder(
       [
         salesId,
         number,
-        json(web.guest_contact ?? {}),
+        json(web.guest_contact ?? (await one(tx,"SELECT c.id,c.name,c.number,a.email,a.mobile FROM customer_accounts a LEFT JOIN customers c ON c.id=a.customer_id WHERE a.id=$1",[web.customer_account_id])) ?? {}),
         json(lines),
         json(web.totals),
         data.warehouseId,

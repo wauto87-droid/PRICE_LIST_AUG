@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import CommercialLists from "./CommercialLists";
+import StorefrontAdmin from "./StorefrontAdmin";
+import { ProductImageGallery } from "./ProductImages";
 
 type Section =
   | "overview"
@@ -15,6 +17,11 @@ type Section =
 
 export default function Commercial({ t, user }: { t: Translate; user: any }) {
   const [section, setSection] = useState<Section>("overview");
+  const [stockQuery, setStockQuery] = useState(""),
+    [stockSearch, setStockSearch] = useState(""),
+    [stockPage, setStockPage] = useState(1),
+    [stockSize, setStockSize] = useState(50),
+    [stockDetail, setStockDetail] = useState<any>();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,7 +31,9 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
   >({});
   const canInventory = user.permissions.includes("INVENTORY_VIEW");
   const canPurchase = user.permissions.includes("PURCHASE_MANAGE");
+  const loadSequence = useRef(0);
   async function load() {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
@@ -36,7 +45,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
             : section === "warehouses"
               ? "warehouses"
               : section === "stock"
-                ? "inventory/balances"
+                ? `inventory/balances?query=${encodeURIComponent(stockQuery)}&page=${stockPage}&pageSize=${stockSize}`
                 : section === "suppliers"
                   ? "suppliers"
                   : section === "orders"
@@ -49,16 +58,16 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
         result.warehouses = (
           await api("warehouses?pageSize=100&active=ACTIVE")
         ).items;
-      setData(result);
+      if (sequence === loadSequence.current) setData(result);
     } catch (e) {
-      setError((e as Error).message);
+      if (sequence === loadSequence.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }
   useEffect(() => {
     load();
-  }, [section]);
+  }, [section, stockQuery, stockPage, stockSize]);
   async function saveWarehouse(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -381,6 +390,47 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
       {!loading && section === "stock" && (
         <div className="card compact-card">
           <h3>{t("Warehouse availability", "توفر المخزون")}</h3>
+          <form
+            className="actions"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setStockQuery(stockSearch);
+              setStockPage(1);
+            }}
+          >
+            <input
+              aria-label={t(
+                "Search all stock products",
+                "بحث جميع منتجات المخزون",
+              )}
+              placeholder={t(
+                "Search part number or description",
+                "ابحث برقم الصنف أو الوصف",
+              )}
+              value={stockSearch}
+              onChange={(e) => setStockSearch(e.target.value)}
+            />
+            <button>{t("Search", "بحث")}</button>
+            <label>
+              {t("Rows per page", "صفوف الصفحة")}
+              <select
+                value={stockSize}
+                onChange={(e) => {
+                  setStockSize(Number(e.target.value));
+                  setStockPage(1);
+                }}
+              >
+                <option>20</option>
+                <option>50</option>
+                <option>100</option>
+              </select>
+            </label>
+          </form>
+          <p>
+            {data?.total || 0}{" "}
+            {t("warehouse/product entries", "سجل مستودع / منتج")} ·{" "}
+            {t("Page", "صفحة")} {data?.page || 1} / {data?.totalPages || 1}
+          </p>
           <div className="dense-table-wrap">
             <table className="dense-table">
               <thead>
@@ -398,9 +448,25 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                   <tr key={`${r.warehouse_id}-${r.product_id}`}>
                     <td>{r.warehouse_code}</td>
                     <td>
-                      <strong>{r.part_number}</strong>
+                      {user.permissions.includes("PRODUCT_VIEW") ? (
+                        <button
+                          onClick={async () => {
+                            try {
+                              setStockDetail(
+                                await api(`products/${r.product_id}`),
+                              );
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          {r.part_number}
+                        </button>
+                      ) : (
+                        <strong>{r.part_number}</strong>
+                      )}
                     </td>
-                    <td className="truncate-cell" title={r.description}>
+                    <td style={{ whiteSpace: "normal", minWidth: 220 }}>
                       {r.description}
                     </td>
                     <td>{r.on_hand}</td>
@@ -413,6 +479,53 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
               </tbody>
             </table>
           </div>
+          <div className="actions">
+            <button
+              disabled={stockPage <= 1}
+              onClick={() => setStockPage((p) => p - 1)}
+            >
+              {t("Previous", "السابق")}
+            </button>
+            <span>
+              {data?.page || 1} / {data?.totalPages || 1}
+            </span>
+            <button
+              disabled={stockPage >= (data?.totalPages || 1)}
+              onClick={() => setStockPage((p) => p + 1)}
+            >
+              {t("Next", "التالي")}
+            </button>
+          </div>
+          {stockDetail && (
+            <section className="card">
+              <div className="section-head">
+                <h3>{stockDetail.partNumber}</h3>
+                <button onClick={() => setStockDetail(undefined)}>
+                  {t("Close details", "إغلاق التفاصيل")}
+                </button>
+              </div>
+              <p>{stockDetail.description}</p>
+              <p>
+                {stockDetail.brand} · {stockDetail.category} ·{" "}
+                {stockDetail.unit}
+              </p>
+              <ProductImageGallery productId={stockDetail.id} t={t} />
+              <dl>
+                {Object.entries(stockDetail.details || {}).map(
+                  ([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>
+                        {typeof value === "object"
+                          ? JSON.stringify(value)
+                          : String(value)}
+                      </dd>
+                    </div>
+                  ),
+                )}
+              </dl>
+            </section>
+          )}
         </div>
       )}
       {!loading && section === "suppliers" && (
@@ -522,6 +635,10 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
           )}
         </div>
       )}
+      {section === "storefront" &&
+        user.permissions.includes("STOREFRONT_MANAGE") && (
+          <StorefrontAdmin t={t} />
+        )}
       {!loading && ["orders", "purchasing", "storefront"].includes(section) && (
         <CommercialLists
           section={section}

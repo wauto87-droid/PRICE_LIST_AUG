@@ -8,6 +8,7 @@ import * as commercial from "../backend/commercial/service";
 import * as storefront from "../backend/storefront/service";
 
 test("quotation approval, issue, customer view and acceptance form one guarded lifecycle", async () => {
+  Object.assign(process.env, { NODE_ENV: "test" });
   const db = await embedded();
   await migrate(db);
   const userId = randomUUID();

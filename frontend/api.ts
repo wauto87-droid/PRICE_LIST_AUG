@@ -73,8 +73,8 @@ export async function api<T = any>(
     window.dispatchEvent(new Event("amt-session-expired"));
   const data = await readApiResponse(result);
   if (!result.ok) {
-    const details = Array.isArray(data.details)
-      ? data.details
+    const details = Array.isArray(data?.details)
+      ? data?.details
           .map((i: any) => {
             const pathLabel = Array.isArray(i.path)
               ? i.path.filter(Boolean).join(".")
@@ -85,7 +85,8 @@ export async function api<T = any>(
           .join("; ")
       : "";
     const error = new Error(
-      data.error + (details ? " — " + details : ""),
+      (data?.error || `Request failed (${result.status})`) +
+        (details ? " — " + details : ""),
     ) as Error & { status: number };
     error.status = result.status;
     throw error;

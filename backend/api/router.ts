@@ -113,18 +113,79 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       });
     }
     if (root === "storefront") {
+      const account = await storefront.authenticateAccount(db, req);
+      if (!["GET", "HEAD"].includes(method)) auth.checkOrigin(req);
+      if (id === "account") {
+        if (action === "me" && method === "GET")
+          return response({ account: account || null });
+        if (action === "login" && method === "POST") {
+          await auth.throttle(db, "store-login", 200);
+          const data = await body(req);
+          await auth.throttle(
+            db,
+            `store-login:${String(data.login).toLowerCase()}`,
+            15,
+          );
+          const result = await storefront.loginAccount(db, data);
+          return response({ account: result.account }, 200, {
+            "Set-Cookie": storefront.accountSessionCookie(result.token),
+          });
+        }
+        if (action === "register" && method === "POST")
+          return response(
+            await storefront.registerAccount(db, await body(req)),
+          );
+        if (action === "logout" && method === "POST") {
+          await storefront.logoutAccount(db, req);
+          return response({ ok: true }, 200, {
+            "Set-Cookie": storefront.accountSessionCookie(""),
+          });
+        }
+      }
+      if (id === "products" && action && method === "GET")
+        return response(
+          await storefront.productDetail(db, uuid(action), account),
+        );
+      if (id === "images" && action && method === "GET")
+        return new Response(
+          new Uint8Array(await storefront.publicImage(db, uuid(action))),
+          {
+            headers: {
+              "Content-Type": "image/webp",
+              "Cache-Control": "no-store",
+            },
+          },
+        );
+      if (id === "preview" && method === "POST")
+        return response(await storefront.preview(db, await body(req), account));
+      if (id === "orders" && action && method === "POST")
+        return response(
+          await storefront.orderStatus(
+            db,
+            uuid(action),
+            await body(req),
+            account,
+          ),
+        );
       if (id === "configuration" && method === "GET")
         return response(await storefront.configuration(db));
       if (id === "catalog" && method === "GET")
         return response(
-          await storefront.catalog(db, Object.fromEntries(url.searchParams)),
+          await storefront.catalog(
+            db,
+            Object.fromEntries(url.searchParams),
+            account,
+          ),
         );
       if (id === "otp" && action === "request" && method === "POST")
         return response(await storefront.requestOtp(db, await body(req)));
       if (id === "otp" && action === "verify" && method === "POST")
         return response(await storefront.verifyOtp(db, await body(req)));
-      if (id === "checkout" && method === "POST")
-        return response(await storefront.checkout(db, await body(req)));
+      if (id === "checkout" && method === "POST") {
+        const data = await body(req);
+        z.string().length(64).parse(data.quoteHash);
+        return response(await storefront.checkout(db, data, account));
+      }
       if (id === "payment-return" && method === "GET")
         return response(
           await storefront.confirmMoyasarPayment(
@@ -146,6 +207,34 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
     if (root === "storefront-admin") {
+      if (id === "management" && method === "GET")
+        return response(
+          await storefront.management(
+            db,
+            actor,
+            url.searchParams.get("q") || "",
+          ),
+        );
+      if (id === "products" && action && method === "PUT")
+        return response(
+          await storefront.publishProduct(
+            db,
+            actor,
+            uuid(action),
+            await body(req),
+          ),
+        );
+      if (id === "zones" && method === "PUT")
+        return response(await storefront.saveZone(db, actor, await body(req)));
+      if (id === "accounts" && action && method === "PUT")
+        return response(
+          await storefront.updateAccount(
+            db,
+            actor,
+            uuid(action),
+            await body(req),
+          ),
+        );
       if (method === "GET")
         return response(await storefront.configuration(db, actor));
       if (method === "PUT")

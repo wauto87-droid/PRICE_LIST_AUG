@@ -1,404 +1,860 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-
+import { appPath } from "../shared/paths";
+import StorefrontCheckout, {
+  StoreDialog,
+  StoreAccount,
+} from "./StorefrontCheckout";
+import "./storefront.css";
+export type StoreProduct = {
+  id: string;
+  part_number: string;
+  description: string;
+  unit: string;
+  quantityPrecision: number;
+  priceIncl: string;
+  priceExcl: string;
+  brand: string;
+  category: string;
+  availability: string;
+  images: { id: string; caption: string; url: string }[];
+  content?: Record<string, unknown>;
+};
+export type StoreCart = Record<string, StoreProduct & { quantity: string }>;
+const storageKey = "amt-store-cart-v1";
+function StoreIcon({ kind }: { kind: "search" | "user" | "cart" }) {
+  return (
+    <svg
+      width="23"
+      height="23"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {kind === "search" ? (
+        <>
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="m16 16 5 5" />
+        </>
+      ) : kind === "user" ? (
+        <>
+          <circle cx="12" cy="7" r="4" />
+          <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+        </>
+      ) : (
+        <>
+          <path d="M2 3h3l3 12h11l3-9H6" />
+          <circle cx="9" cy="20" r="1" />
+          <circle cx="18" cy="20" r="1" />
+        </>
+      )}
+    </svg>
+  );
+}
 export default function Storefront() {
   const [lang, setLang] = useState<"en" | "ar">("en"),
     [config, setConfig] = useState<any>(),
     [catalog, setCatalog] = useState<any>(),
+    [cart, setCart] = useState<StoreCart>({}),
+    [ready, setReady] = useState(false),
+    [account, setAccount] = useState<any>(null),
+    [panel, setPanel] = useState(""),
+    [detail, setDetail] = useState<StoreProduct>(),
+    [photo, setPhoto] = useState(0),
     [q, setQ] = useState(""),
-    [cart, setCart] = useState<Record<string, any>>({}),
-    [checkout, setCheckout] = useState(false),
-    [otp, setOtp] = useState<any>(),
-    [verified, setVerified] = useState(""),
-    [message, setMessage] = useState(""),
-    [error, setError] = useState("");
+    [query, setQuery] = useState(""),
+    [category, setCategory] = useState(""),
+    [brand, setBrand] = useState(""),
+    [availability, setAvailability] = useState(""),
+    [sort, setSort] = useState("part"),
+    [page, setPage] = useState(1),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [loading, setLoading] = useState(false),
+    [revision, setRevision] = useState(0),
+    [payment, setPayment] = useState<any>();
+  const search = useRef<HTMLInputElement>(null),
+    request = useRef(0);
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
-  async function load() {
+  async function initialize() {
+    setError("");
     try {
-      setConfig(await api("storefront/configuration"));
-      setCatalog(await api(`storefront/catalog?q=${encodeURIComponent(q)}`));
+      const c = await api("storefront/configuration");
+      setConfig(c);
+      const a = await api("storefront/account/me");
+      setAccount(a.account);
     } catch (e) {
       setError((e as Error).message);
     }
   }
   useEffect(() => {
-    load();
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        const clean: StoreCart = {};
+        for (const [id, item] of Object.entries(stored)) {
+          const p = item as any;
+          if (
+            p?.id === id &&
+            /^[0-9a-f-]{36}$/i.test(id) &&
+            typeof p.part_number === "string" &&
+            Number(p.quantity) > 0 &&
+            Number(p.quantity) <= 1000000
+          )
+            clean[id] = { ...p, quantity: String(p.quantity) };
+        }
+        setCart(clean);
+      }
+      setLang(
+        localStorage.getItem("amt-store-language") === "ar" ? "ar" : "en",
+      );
+    } catch {}
+    setReady(true);
+    initialize();
   }, []);
   useEffect(() => {
+    if (ready) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(cart));
+        localStorage.setItem("amt-store-language", lang);
+      } catch {}
+    }
+  }, [cart, ready, lang]);
+  useEffect(() => {
+    const oldDir = document.documentElement.dir,
+      oldLang = document.documentElement.lang;
     document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
+    document.documentElement.lang = lang;
+    return () => {
+      document.documentElement.dir = oldDir;
+      document.documentElement.lang = oldLang;
+    };
   }, [lang]);
-  const lines = Object.values(cart) as any[],
-    total = useMemo(
-      () => lines.reduce((s, l) => s + Number(l.priceIncl) * l.quantity, 0),
-      [lines],
-    );
-  function add(item: any) {
-    setCart({
-      ...cart,
-      [item.id]: { ...item, quantity: (cart[item.id]?.quantity ?? 0) + 1 },
-    });
-  }
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  useEffect(() => {
+    if (!config?.enabled) return;
+    let active = true;
+    const id = ++request.current;
+    setLoading(true);
     setError("");
-    const f = new FormData(e.currentTarget),
-      method = String(f.get("paymentMethod"));
-    try {
-      let token: string | undefined;
-      if (method === "MOYASAR") {
-        const key = config.moyasarPublishableKey;
-        const tokenRes = await fetch("https://api.moyasar.com/v1/tokens", {
-          method: "POST",
-          headers: {
-            authorization: `Basic ${btoa(`${key}:`)}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            name: f.get("cardName"),
-            number: String(f.get("cardNumber")).replace(/\s/g, ""),
-            month: Number(f.get("month")),
-            year: Number(f.get("year")),
-            cvc: f.get("cvc"),
-            save_only: true,
-          }),
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenRes.ok)
-          throw new Error(
-            tokenData.message ||
-              t("Payment details were rejected", "تم رفض بيانات الدفع"),
-          );
-        token = tokenData.id;
-      }
-      const result = await api("storefront/checkout", "POST", {
-        verificationId: otp.id,
-        verificationToken: verified,
-        contact: {
-          name: f.get("name"),
-          mobile: f.get("mobile"),
-          ...(f.get("email") ? { email: f.get("email") } : {}),
-        },
-        lines: lines.map((l) => ({
-          productId: l.id,
-          quantity: String(l.quantity),
-        })),
-        fulfillmentMethod: f.get("fulfillmentMethod"),
-        ...(f.get("warehouseId") ? { warehouseId: f.get("warehouseId") } : {}),
-        ...(f.get("zoneId") ? { zoneId: f.get("zoneId") } : {}),
-        address: { text: f.get("address") },
-        paymentMethod: method,
-        moyasarToken: token,
-        idempotencyKey: crypto.randomUUID(),
+    const params = new URLSearchParams({
+      q: query,
+      category,
+      brand,
+      availability,
+      sort,
+      page: String(page),
+    });
+    api(`storefront/catalog?${params}`)
+      .then((c) => {
+        if (active && id === request.current) setCatalog(c);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
-      if (result.redirectUrl) location.href = result.redirectUrl;
-      else {
-        setMessage(
-          `${t("Order received", "تم استلام الطلب")}: ${result.orderNumber}`,
-        );
-        setCart({});
-        setCheckout(false);
+    return () => {
+      active = false;
+    };
+  }, [
+    config?.enabled,
+    query,
+    category,
+    brand,
+    availability,
+    sort,
+    page,
+    account,
+    revision,
+  ]);
+  async function checkPayment() {
+    const params = new URLSearchParams(location.search);
+    const id = params.get("id");
+    if (!id) return;
+    try {
+      const r = await api(
+        `storefront/payment-return?id=${encodeURIComponent(id)}`,
+      );
+      setPayment(r);
+      if (r.status === "CONFIRMED") {
+        try {
+          const saved = JSON.parse(
+            sessionStorage.getItem("amt-store-checkout") || "null",
+          );
+          if (saved) {
+            const check = await api(`storefront/orders/${r.orderId}`, "POST", {
+              verificationToken: saved.verificationToken,
+            });
+            if (check.orderId === r.orderId) {
+              setCart((c) => {
+                const next = { ...c };
+                for (const l of saved.lines) {
+                  if (next[l.productId]?.quantity === l.quantity)
+                    delete next[l.productId];
+                }
+                return next;
+              });
+              sessionStorage.removeItem("amt-store-checkout");
+            }
+          }
+        } catch {}
       }
+    } catch (e) {
+      setPayment({ error: (e as Error).message });
+    }
+  }
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("payment") === "return") {
+      setPanel("payment");
+      checkPayment();
+    }
+  }, []);
+  function add(item: StoreProduct) {
+    setCart((c) => ({
+      ...c,
+      [item.id]: {
+        ...item,
+        quantity: String(Number(c[item.id]?.quantity || 0) + 1),
+      },
+    }));
+    setNotice(t("Added to your cart", "تمت الإضافة إلى السلة"));
+  }
+  function filter(fn: () => void) {
+    fn();
+    setPage(1);
+  }
+  async function openProduct(item: StoreProduct) {
+    setPhoto(0);
+    setDetail(item);
+    setPanel("product");
+    try {
+      setDetail(await api(`storefront/products/${item.id}`));
     } catch (e) {
       setError((e as Error).message);
     }
   }
-  if (!config && !error)
-    return (
-      <main className="store-page">
-        <div className="store-loading">AMT Electric</div>
-      </main>
-    );
+  const count = Object.values(cart).reduce(
+    (n, p) => n + Number(p.quantity || 0),
+    0,
+  );
+  const availabilityText = (value: string) =>
+    value === "IN_STOCK"
+      ? t("In stock", "متوفر")
+      : value === "LIMITED"
+        ? t("Limited stock", "كمية محدودة")
+        : t("Available on backorder", "متاح بالطلب المسبق");
   return (
-    <main className="store-page">
-      <header className="store-header">
-        <div>
-          <strong>{config?.companyName || "AMT Electric"}</strong>
-          <small>{t("Online catalog", "الكتالوج الإلكتروني")}</small>
-        </div>
-        <nav>
-          <button onClick={() => setLang(lang === "en" ? "ar" : "en")}>
+    <main className="sf" dir={lang === "ar" ? "rtl" : "ltr"}>
+      <div className="sf-top">
+        <span>
+          {t(
+            "AMT ELECTRIC · Electrical supplies for every project",
+            "AMT ELECTRIC · مستلزمات كهربائية لكل مشروع",
+          )}
+        </span>
+        <span>{t("Retail & business customers", "للأفراد والشركات")}</span>
+      </div>
+      <header className="sf-header">
+        <a
+          className="sf-logo"
+          href={appPath("/store")}
+          aria-label="AMT Electric"
+        >
+          <img src={appPath("/logo.svg")} alt="AMT Electric" />
+          <span>
+            AMT <b>ELECTRIC</b>
+            <small>
+              {t("Your electrical supply store", "متجرك للمستلزمات الكهربائية")}
+            </small>
+          </span>
+        </a>
+        <form
+          className="sf-search"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            filter(() => setQuery(q));
+          }}
+        >
+          <input
+            ref={search}
+            value={q}
+            maxLength={100}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label={t("Search products", "بحث المنتجات")}
+            placeholder={t(
+              "Search products, part numbers and more…",
+              "ابحث عن المنتجات وأرقام الأصناف…",
+            )}
+          />
+          <button type="submit" aria-label={t("Search", "بحث")}>
+            <StoreIcon kind="search" />
+          </button>
+        </form>
+        <nav className="sf-header-actions">
+          <button onClick={() => setLang((l) => (l === "en" ? "ar" : "en"))}>
             {lang === "en" ? "العربية" : "English"}
           </button>
-          <button
-            className="store-cart-button"
-            onClick={() => setCheckout(true)}
-          >
-            {t("Cart", "السلة")} <b>{lines.length}</b>
+          <button onClick={() => setPanel("account")}>
+            <StoreIcon kind="user" />
+            <span>
+              {account
+                ? t("My account", "حسابي")
+                : t("Sign in", "تسجيل الدخول")}
+            </span>
+          </button>
+          <button onClick={() => setPanel("cart")}>
+            <StoreIcon kind="cart" />
+            {t("Cart", "السلة")}
+            <b className="sf-count">{count}</b>
           </button>
         </nav>
       </header>
-      <section className="store-hero">
-        <div>
-          <span>AMT ELECTRIC</span>
+      <nav className="sf-categories" aria-label={t("Categories", "الفئات")}>
+        <button
+          className={!category ? "selected" : ""}
+          onClick={() => filter(() => setCategory(""))}
+        >
+          {t("All products", "كل المنتجات")}
+        </button>
+        {catalog?.categories?.map((c: string) => (
+          <button
+            key={c}
+            className={category === c ? "selected" : ""}
+            onClick={() => filter(() => setCategory(c))}
+          >
+            {c}
+          </button>
+        ))}
+        <span className="sf-business-note">
+          {t(
+            "Business pricing available with approved accounts",
+            "أسعار الشركات للحسابات المعتمدة",
+          )}
+        </span>
+      </nav>
+      {error && (
+        <div className="sf-alert" role="alert">
+          {error}
+          <button
+            onClick={() => {
+              initialize();
+              setRevision((r) => r + 1);
+            }}
+          >
+            {t("Retry", "إعادة المحاولة")}
+          </button>
+        </div>
+      )}
+      {!config ? (
+        <div className="sf-state" aria-busy={!error}>
+          <img src={appPath("/logo.svg")} alt="AMT Electric" />
+          <h1>{t("Welcome to AMT Electric", "مرحباً بك في AMT Electric")}</h1>
+          <p>
+            {error
+              ? t(
+                  "The store could not load. Please retry.",
+                  "تعذر تحميل المتجر. حاول مرة أخرى.",
+                )
+              : t("Loading your store…", "جارٍ تحميل المتجر…")}
+          </p>
+        </div>
+      ) : !config.enabled ? (
+        <div className="sf-state">
+          <img src={appPath("/logo.svg")} alt="AMT Electric" />
           <h1>
             {t(
-              config?.hero || "Electrical products, priced clearly.",
-              config?.heroAr || "منتجات كهربائية بأسعار واضحة.",
+              "Our online store is currently closed",
+              "متجرنا الإلكتروني مغلق حالياً",
             )}
           </h1>
           <p>
             {t(
-              "Search by part number or description and order online.",
-              "ابحث برقم الصنف أو الوصف واطلب عبر الإنترنت.",
+              "Please check back soon or contact our team for assistance.",
+              "يرجى العودة لاحقاً أو التواصل مع فريقنا للمساعدة.",
+            )}
+          </p>
+          {config.supportMobile && (
+            <a href={`tel:${config.supportMobile}`}>{config.supportMobile}</a>
+          )}
+        </div>
+      ) : (
+        <>
+          <section className="sf-hero">
+            <div>
+              <span className="sf-eyebrow">
+                {t("BUILT FOR YOUR NEXT PROJECT", "لمشروعك القادم")}
+              </span>
+              <h1>
+                {t(
+                  config.hero || "Power your projects.\nFind the right parts.",
+                  config.heroAr || "جهّز مشاريعك.\nواعثر على القطع المناسبة.",
+                )}
+              </h1>
+              <p>
+                {t(
+                  "Explore electrical products with clear prices, detailed part numbers and convenient ordering.",
+                  "تسوّق المنتجات الكهربائية بأسعار واضحة وأرقام أصناف دقيقة وطلب سهل.",
+                )}
+              </p>
+              <button
+                onClick={() => {
+                  search.current?.focus();
+                  document
+                    .getElementById("sf-catalog")
+                    ?.scrollIntoView({ behavior: "smooth" });
+                }}
+              >
+                {t("Explore the catalog", "تصفح المنتجات")}{" "}
+                <span aria-hidden="true">→</span>
+              </button>
+            </div>
+            <div className="sf-hero-brand">
+              <img src={appPath("/logo.svg")} alt="" />
+              <span>{t("ELECTRICAL SUPPLIES", "مستلزمات كهربائية")}</span>
+              <p>
+                {t(
+                  "From a single part to your next big project.",
+                  "من قطعة واحدة إلى مشروعك الكبير القادم.",
+                )}
+              </p>
+            </div>
+          </section>
+          <section className="sf-benefits">
+            <div>
+              <b>01</b>
+              <span>
+                <strong>{t("Clear pricing", "أسعار واضحة")}</strong>
+                <small>
+                  {t(
+                    "SAR prices including VAT",
+                    "الأسعار بالريال شاملة الضريبة",
+                  )}
+                </small>
+              </span>
+            </div>
+            <div>
+              <b>02</b>
+              <span>
+                <strong>{t("Order your way", "اطلب بطريقتك")}</strong>
+                <small>
+                  {t(
+                    "Available delivery & pickup options",
+                    "خيارات التوصيل والاستلام المتاحة",
+                  )}
+                </small>
+              </span>
+            </div>
+            <div>
+              <b>03</b>
+              <span>
+                <strong>{t("Built for business", "مصمم للشركات")}</strong>
+                <small>
+                  {t("Approved account pricing", "أسعار الحسابات المعتمدة")}
+                </small>
+              </span>
+            </div>
+          </section>
+          <section id="sf-catalog" className="sf-catalog">
+            <div className="sf-catalog-heading">
+              <div>
+                <span className="sf-eyebrow">
+                  {t("THE AMT CATALOG", "كتالوج AMT")}
+                </span>
+                <h2>
+                  {category ||
+                    t(
+                      "Shop electrical essentials",
+                      "تسوّق المستلزمات الكهربائية",
+                    )}
+                </h2>
+                <p>
+                  {loading
+                    ? t("Updating products…", "جارٍ تحديث المنتجات…")
+                    : `${catalog?.total || 0} ${t("products", "منتج")}${query ? ` · “${query}”` : ""}`}
+                </p>
+              </div>
+              <label className="sf-sort">
+                {t("Sort by", "ترتيب حسب")}
+                <select
+                  value={sort}
+                  onChange={(e) => filter(() => setSort(e.target.value))}
+                >
+                  <option value="part">{t("Part number", "رقم الصنف")}</option>
+                  <option value="price-asc">
+                    {t("Price: low to high", "السعر: من الأقل للأعلى")}
+                  </option>
+                  <option value="price-desc">
+                    {t("Price: high to low", "السعر: من الأعلى للأقل")}
+                  </option>
+                </select>
+              </label>
+            </div>
+            <div className="sf-shop-layout">
+              <aside className="sf-filters">
+                <h3>{t("Filter products", "تصفية المنتجات")}</h3>
+                <label>
+                  {t("Category", "الفئة")}
+                  <select
+                    value={category}
+                    onChange={(e) => filter(() => setCategory(e.target.value))}
+                  >
+                    <option value="">{t("All categories", "كل الفئات")}</option>
+                    {catalog?.categories?.map((c: string) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("Brand", "العلامة التجارية")}
+                  <select
+                    value={brand}
+                    onChange={(e) => filter(() => setBrand(e.target.value))}
+                  >
+                    <option value="">{t("All brands", "كل العلامات")}</option>
+                    {catalog?.brands?.map((b: string) => (
+                      <option key={b}>{b}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("Availability", "التوفر")}
+                  <select
+                    value={availability}
+                    onChange={(e) =>
+                      filter(() => setAvailability(e.target.value))
+                    }
+                  >
+                    <option value="">
+                      {t("All availability", "كل الحالات")}
+                    </option>
+                    {["IN_STOCK", "LIMITED", "BACKORDER"].map((v) => (
+                      <option key={v} value={v}>
+                        {availabilityText(v)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="sf-text-button"
+                  onClick={() => {
+                    setCategory("");
+                    setBrand("");
+                    setAvailability("");
+                    setQ("");
+                    setQuery("");
+                    setPage(1);
+                  }}
+                >
+                  {t("Clear filters", "مسح التصفية")}
+                </button>
+                <div className="sf-help">
+                  <strong>
+                    {t("Ordering for a business?", "تطلب لشركة؟")}
+                  </strong>
+                  <p>
+                    {t(
+                      "Apply for an account to access your approved prices and terms.",
+                      "اطلب حساباً للوصول لأسعارك وشروطك المعتمدة.",
+                    )}
+                  </p>
+                  <button onClick={() => setPanel("account")}>
+                    {t("Business accounts", "حسابات الشركات")} →
+                  </button>
+                </div>
+              </aside>
+              <div>
+                <div className="sf-grid" aria-busy={loading}>
+                  {loading && !catalog
+                    ? Array.from({ length: 6 }, (_, i) => (
+                        <div key={i} className="sf-skeleton" />
+                      ))
+                    : catalog?.items?.map((item: StoreProduct) => (
+                        <article className="sf-product" key={item.id}>
+                          <button
+                            className="sf-product-image"
+                            onClick={() => openProduct(item)}
+                            aria-label={item.description}
+                          >
+                            {item.images[0] ? (
+                              <img
+                                src={item.images[0].url}
+                                alt={item.description}
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.style.visibility = "hidden";
+                                }}
+                              />
+                            ) : (
+                              <span className="sf-no-image">
+                                <span aria-hidden="true">◇</span>
+                                <small>
+                                  {t("Image unavailable", "الصورة غير متوفرة")}
+                                </small>
+                              </span>
+                            )}
+                            <span
+                              className={`sf-stock ${item.availability.toLowerCase()}`}
+                            >
+                              {availabilityText(item.availability)}
+                            </span>
+                          </button>
+                          <div className="sf-product-body">
+                            <small>{item.brand || "AMT ELECTRIC"}</small>
+                            <button
+                              className="sf-product-title"
+                              onClick={() => openProduct(item)}
+                            >
+                              {item.description}
+                            </button>
+                            <code>{item.part_number}</code>
+                            <div className="sf-price">
+                              <small>SAR</small>{" "}
+                              <strong>{item.priceIncl}</strong>
+                              <span>/ {item.unit}</span>
+                            </div>
+                            <p className="sf-vat">
+                              {t("Including VAT", "شامل الضريبة")}
+                            </p>
+                            <button
+                              className="sf-add"
+                              onClick={() => add(item)}
+                            >
+                              + {t("Add to cart", "أضف للسلة")}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                </div>
+                {!loading && catalog?.total === 0 && (
+                  <div className="sf-state">
+                    <h3>
+                      {t("No products found", "لم يتم العثور على منتجات")}
+                    </h3>
+                    <p>
+                      {t(
+                        "Try another part number or clear your filters.",
+                        "جرّب رقم صنف آخر أو امسح التصفية.",
+                      )}
+                    </p>
+                  </div>
+                )}
+                <nav
+                  className="sf-pagination"
+                  aria-label={t("Product pages", "صفحات المنتجات")}
+                >
+                  <button
+                    disabled={loading || (catalog?.page || 1) <= 1}
+                    onClick={() => setPage((catalog?.page || 1) - 1)}
+                  >
+                    {t("Previous", "السابق")}
+                  </button>
+                  <span>
+                    {catalog?.page || 1} / {catalog?.totalPages || 1}
+                  </span>
+                  <button
+                    disabled={
+                      loading ||
+                      (catalog?.page || 1) >= (catalog?.totalPages || 1)
+                    }
+                    onClick={() => setPage((catalog?.page || 1) + 1)}
+                  >
+                    {t("Next", "التالي")}
+                  </button>
+                </nav>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+      <footer className="sf-footer">
+        <div>
+          <strong>AMT ELECTRIC</strong>
+          <p>
+            {t(
+              "Electrical supplies. Clear prices. Easy ordering.",
+              "مستلزمات كهربائية. أسعار واضحة. طلب سهل.",
             )}
           </p>
         </div>
-        <div className="store-search">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
-            placeholder={t("Part number or description", "رقم الصنف أو الوصف")}
-          />
-          <button className="primary" onClick={load}>
-            {t("Search", "بحث")}
+        <div>
+          <strong>{t("Customer support", "خدمة العملاء")}</strong>
+          {config?.supportMobile ? (
+            <a href={`tel:${config.supportMobile}`}>{config.supportMobile}</a>
+          ) : (
+            <p>
+              {t(
+                "Contact your AMT sales representative",
+                "تواصل مع مندوب مبيعات AMT",
+              )}
+            </p>
+          )}
+        </div>
+        <div>
+          <strong>{t("Shop with AMT", "تسوّق مع AMT")}</strong>
+          <button onClick={() => setPanel("account")}>
+            {t("Business account", "حساب شركات")}
+          </button>
+          <small>
+            {t(
+              "All prices in SAR, including VAT.",
+              "جميع الأسعار بالريال شاملة الضريبة.",
+            )}
+          </small>
+        </div>
+      </footer>
+      {notice && (
+        <div className="sf-toast" role="status">
+          {notice}
+          <button
+            onClick={() => {
+              setPanel("cart");
+              setNotice("");
+            }}
+          >
+            {t("View cart", "عرض السلة")}
+          </button>
+          <button
+            onClick={() => setNotice("")}
+            aria-label={t("Dismiss", "إغلاق")}
+          >
+            ×
           </button>
         </div>
-      </section>
-      {error && <div className="notice error">{error}</div>}
-      {message && <div className="notice">{message}</div>}
-      <section className="store-products">
-        {catalog?.items?.map((item: any) => (
-          <article key={item.id} className="store-product">
-            <div className="store-product-copy">
-              <small>{item.part_number}</small>
-              <h2>{item.description}</h2>
-              <span
-                className={`availability ${item.availability.toLowerCase()}`}
-              >
-                {item.availability === "IN_STOCK"
-                  ? t("In stock", "متوفر")
-                  : item.availability === "LIMITED"
-                    ? t("Limited stock", "كمية محدودة")
-                    : t("Available on backorder", "متاح بالطلب")}
-              </span>
+      )}
+      {panel === "product" && detail && (
+        <StoreDialog title={detail.part_number} close={() => setPanel("")}>
+          <div className="sf-detail">
+            <div className="sf-gallery">
+              {detail.images[photo] ? (
+                <img
+                  src={detail.images[photo].url}
+                  alt={detail.images[photo].caption || detail.description}
+                />
+              ) : (
+                <div className="sf-no-image">
+                  ◇
+                  <small>
+                    {t("No product image available", "لا توجد صورة للمنتج")}
+                  </small>
+                </div>
+              )}
+              <div className="sf-thumbs">
+                {detail.images.map((im, i) => (
+                  <button
+                    key={im.id}
+                    aria-label={`${t("Image", "صورة")} ${i + 1}`}
+                    onClick={() => setPhoto(i)}
+                  >
+                    <img src={im.url} alt="" />
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="store-product-buy">
-              <strong>SAR {item.priceIncl}</strong>
-              <small>{t("Including VAT", "شامل الضريبة")}</small>
-              <button className="primary" onClick={() => add(item)}>
+            <div>
+              <small>
+                {detail.brand} · {detail.category}
+              </small>
+              <h2>{detail.description}</h2>
+              <p>{availabilityText(detail.availability)}</p>
+              <div className="sf-price">
+                SAR <strong>{detail.priceIncl}</strong> / {detail.unit}
+              </div>
+              <p>{t("Including VAT", "شامل الضريبة")}</p>
+              <button className="sf-primary" onClick={() => add(detail)}>
                 {t("Add to cart", "أضف للسلة")}
               </button>
-            </div>
-          </article>
-        ))}
-      </section>
-      {checkout && (
-        <div className="modal-backdrop">
-          <section className="modal-card store-checkout">
-            <button className="modal-close" onClick={() => setCheckout(false)}>
-              ×
-            </button>
-            <h2>{t("Checkout", "إتمام الطلب")}</h2>
-            <div className="store-cart-lines">
-              {lines.map((l) => (
-                <div key={l.id}>
-                  <span>
-                    {l.part_number}
-                    <small>{l.description}</small>
-                  </span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={l.quantity}
-                    onChange={(e) =>
-                      setCart({
-                        ...cart,
-                        [l.id]: { ...l, quantity: Number(e.target.value) },
-                      })
-                    }
-                  />
-                  <strong>
-                    SAR {(Number(l.priceIncl) * l.quantity).toFixed(2)}
-                  </strong>
-                </div>
-              ))}
-            </div>
-            <div className="store-total">
-              <span>{t("Total including VAT", "الإجمالي شامل الضريبة")}</span>
-              <strong>SAR {total.toFixed(2)}</strong>
-            </div>
-            {!verified ? (
-              <div className="otp-panel">
-                <label>
-                  {t("Mobile number", "رقم الجوال")}
-                  <input id="otp-mobile" />
-                </label>
-                {!otp ? (
-                  <button
-                    className="primary"
-                    onClick={async () => {
-                      const destination = (
-                        document.getElementById(
-                          "otp-mobile",
-                        ) as HTMLInputElement
-                      ).value;
-                      try {
-                        setOtp(
-                          await api("storefront/otp/request", "POST", {
-                            destination,
-                            channel: "SMS",
-                          }),
-                        );
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    {t("Send verification code", "إرسال رمز التحقق")}
-                  </button>
-                ) : (
-                  <>
-                    <label>
-                      {t("Verification code", "رمز التحقق")}
-                      <input id="otp-code" inputMode="numeric" />
-                    </label>
-                    <button
-                      className="primary"
-                      onClick={async () => {
-                        try {
-                          const r = await api("storefront/otp/verify", "POST", {
-                            id: otp.id,
-                            code: (
-                              document.getElementById(
-                                "otp-code",
-                              ) as HTMLInputElement
-                            ).value,
-                          });
-                          setVerified(r.verificationToken);
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
-                      }}
-                    >
-                      {t("Verify", "تحقق")}
-                    </button>
-                  </>
+              {typeof detail.content?.description === "string" && (
+                <p>{detail.content.description}</p>
+              )}
+              <dl>
+                <dt>{t("Part number", "رقم الصنف")}</dt>
+                <dd>{detail.part_number}</dd>
+                <dt>{t("Unit", "الوحدة")}</dt>
+                <dd>{detail.unit}</dd>
+                {["manufacturer", "productName", "productType", "series"].map(
+                  (k) =>
+                    typeof detail.content?.[k] === "string" &&
+                    detail.content[k] ? (
+                      <div key={k}>
+                        <dt>{k}</dt>
+                        <dd>{String(detail.content[k])}</dd>
+                      </div>
+                    ) : null,
                 )}
-              </div>
-            ) : (
-              <form onSubmit={submit} className="store-checkout-form">
-                <div className="form-grid">
-                  <label>
-                    {t("Customer name", "اسم العميل")}
-                    <input name="name" required />
-                  </label>
-                  <label>
-                    {t("Mobile", "الجوال")}
-                    <input name="mobile" required />
-                  </label>
-                </div>
-                <label>
-                  {t("Email (optional)", "البريد الإلكتروني (اختياري)")}
-                  <input name="email" type="email" />
-                </label>
-                <div className="form-grid">
-                  <label>
-                    {t("Fulfillment", "طريقة الاستلام")}
-                    <select name="fulfillmentMethod">
-                      <option value="DELIVERY">{t("Delivery", "توصيل")}</option>
-                      <option value="PICKUP">
-                        {t("Branch pickup", "استلام من الفرع")}
-                      </option>
-                    </select>
-                  </label>
-                  <label>
-                    {t("Payment", "الدفع")}
-                    <select name="paymentMethod">
-                      <option value="BANK_TRANSFER">
-                        {t("Bank transfer", "تحويل بنكي")}
-                      </option>
-                      <option value="CASH">
-                        {t("Cash on confirmation", "نقداً عند التأكيد")}
-                      </option>
-                      {config.onlinePaymentEnabled && (
-                        <option value="MOYASAR">
-                          {t("Card / mada", "بطاقة / مدى")}
-                        </option>
-                      )}
-                    </select>
-                  </label>
-                </div>
-                {config.pickupLocations?.length > 0 && (
-                  <label>
-                    {t(
-                      "Pickup branch (required for pickup)",
-                      "فرع الاستلام (مطلوب للاستلام من الفرع)",
-                    )}
-                    <select name="warehouseId">
-                      <option value="">—</option>
-                      {config.pickupLocations.map((w: any) => (
-                        <option key={w.id} value={w.id}>
-                          {lang === "ar" && w.name_ar ? w.name_ar : w.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {config.deliveryZones?.length > 0 && (
-                  <label>
-                    {t("Delivery zone", "منطقة التوصيل")}
-                    <select name="zoneId">
-                      <option value="">—</option>
-                      {config.deliveryZones.map((z: any) => (
-                        <option key={z.id} value={z.id}>
-                          {z.name} · SAR {z.fee}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <label>
-                  {t(
-                    "Delivery address or pickup instructions",
-                    "عنوان التوصيل أو تعليمات الاستلام",
-                  )}
-                  <textarea name="address" />
-                </label>
-                {config.onlinePaymentEnabled && (
-                  <details className="payment-card-fields">
-                    <summary>
-                      {t(
-                        "Card details (only for Card / mada)",
-                        "بيانات البطاقة (للدفع الإلكتروني فقط)",
-                      )}
-                    </summary>
-                    <label>
-                      {t("Name on card", "الاسم على البطاقة")}
-                      <input name="cardName" />
-                    </label>
-                    <label>
-                      {t("Card number", "رقم البطاقة")}
-                      <input
-                        name="cardNumber"
-                        inputMode="numeric"
-                        autoComplete="cc-number"
-                      />
-                    </label>
-                    <div className="form-grid">
-                      <input
-                        name="month"
-                        placeholder="MM"
-                        inputMode="numeric"
-                      />
-                      <input name="year" placeholder="YY" inputMode="numeric" />
-                      <input
-                        name="cvc"
-                        placeholder="CVC"
-                        inputMode="numeric"
-                        autoComplete="cc-csc"
-                      />
+                {Array.isArray(detail.content?.specifications) &&
+                  detail.content.specifications.map((s: any, i: number) => (
+                    <div key={i}>
+                      <dt>{s.label}</dt>
+                      <dd>{s.value}</dd>
                     </div>
-                  </details>
-                )}
-                <button className="primary store-place-order">
-                  {t("Place order", "تأكيد الطلب")}
-                </button>
-              </form>
+                  ))}
+              </dl>
+            </div>
+          </div>
+        </StoreDialog>
+      )}
+      {panel === "cart" && (
+        <StorefrontCheckout
+          cart={cart}
+          setCart={setCart}
+          account={account}
+          config={config}
+          t={t}
+          close={() => setPanel("")}
+        />
+      )}
+      {panel === "account" && (
+        <StoreAccount
+          account={account}
+          changed={(a) => {
+            setAccount(a);
+            setRevision((r) => r + 1);
+          }}
+          t={t}
+          close={() => setPanel("")}
+        />
+      )}
+      {panel === "payment" && (
+        <StoreDialog
+          title={t("Payment status", "حالة الدفع")}
+          close={() => {
+            setPanel("");
+            history.replaceState({}, "", appPath("/store"));
+          }}
+        >
+          <div className="sf-state">
+            <h2>
+              {payment?.status === "CONFIRMED"
+                ? t("Payment confirmed", "تم تأكيد الدفع")
+                : payment?.status === "FAILED"
+                  ? t("Payment was not completed", "لم تكتمل عملية الدفع")
+                  : t("Checking your payment", "التحقق من الدفع")}
+            </h2>
+            <p>{payment?.orderNumber}</p>
+            {payment?.error && <p role="alert">{payment.error}</p>}
+            <p>
+              {t(
+                "Your order status is checked securely with the payment provider.",
+                "يتم التحقق من حالة الطلب لدى مزود الدفع.",
+              )}
+            </p>
+            <button onClick={checkPayment}>
+              {t("Refresh status", "تحديث الحالة")}
+            </button>
+            {payment?.status === "PENDING_PAYMENT" && payment.redirectUrl && (
+              <a href={payment.redirectUrl}>
+                {t("Continue payment", "متابعة الدفع")}
+              </a>
             )}
-          </section>
-        </div>
+          </div>
+        </StoreDialog>
       )}
     </main>
   );
