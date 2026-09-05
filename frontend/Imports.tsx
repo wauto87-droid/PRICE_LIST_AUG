@@ -5,6 +5,7 @@ import { showConfirm } from "./confirm";
 import type { AdminActionRunner } from "./admin-actions";
 import { appPath } from "../shared/paths";
 import ProductEditor, { blankProduct } from "./ProductEditor";
+import BasicImportRepairRow from "./BasicImportRepairRow";
 import { tierColumns } from "@/backend/pricing/transfer";
 import BulkRules from "./BulkRules";
 const IMPORT_PAGE_SIZE = 50;
@@ -68,7 +69,7 @@ type ImportProfile =
   | "PUBLIC_PRICE_DISCOUNT"
   | "SUPPLIER_SIMPLE"
   | "SUPPLIER_QUOTE";
-type ReviewSection = "summary" | "all" | "repair";
+type ReviewSection = "summary" | "all" | "repair" | "ready" | "skipped" | "imported";
 type DiscountPreset = {
   finalDiscount: string;
   wholesaleDiscount: string;
@@ -262,7 +263,7 @@ export default function Imports({
   const [jobs, setJobs] = useState<any[]>([]),
     [mode, setMode] = useState("UPDATE_ONLY"),
     [page, setPage] = useState(0),
-    [rowView, setRowView] = useState<"all" | "repair">("all"),
+    [rowView, setRowView] = useState<"all" | "repair" | "ready" | "skipped" | "imported">("repair"),
     [reviewSection, setReviewSection] = useState<ReviewSection>("summary"),
     [confirmation, setConfirmation] = useState<any>(null),
     [job, setJob] = useState<any>(null),
@@ -297,9 +298,11 @@ export default function Imports({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [linkDiscounts, setLinkDiscounts] = useState(true),
-    [quickImportMode, setQuickImportMode] = useState(false),
+    [quickImportMode, setQuickImportMode] = useState(true),
     [showAdvancedDiscounts, setShowAdvancedDiscounts] = useState(false),
-    [quickActionMessage, setQuickActionMessage] = useState("");
+    [quickActionMessage, setQuickActionMessage] = useState(""),
+    [repairBulkValue, setRepairBulkValue] = useState(""),
+    [repairClearField, setRepairClearField] = useState("brand");
   const [supplierQuotePriceRole, setSupplierQuotePriceRole] = useState("");
 
   const updateDefaultPreset = (field: keyof DiscountPreset, value: string) => {
@@ -502,7 +505,7 @@ export default function Imports({
       nextJob.id,
       0,
       guidedGroupColumn,
-      nextSection === "repair" ? "repair" : "all",
+      nextSection,
     );
   }
   async function open(id: string) {
@@ -510,7 +513,9 @@ export default function Imports({
       string,
       { decision?: string; verified?: boolean }
     > = {};
-    const j = await fetchJobPage(id, 0, undefined, emptyDrafts, "all");
+    let j = await fetchJobPage(id, 0, undefined, emptyDrafts, "all");
+    if (j.status === "IMPORTED")
+      j = await fetchJobPage(id, 0, undefined, emptyDrafts, "imported");
     const savedDefaults = j.defaults || {};
     const guided = savedDefaults.guidedImport;
     const {
@@ -525,11 +530,11 @@ export default function Imports({
     setJob(j);
     setConfirmation(null);
     setPage(j.page || 0);
-    setRowView("all");
+    setRowView(j.status === "IMPORTED" ? "imported" : "all");
     // Completed imports cannot be edited, but their staged rows remain useful
     // for auditing, including after a rollback.
     setReviewSection(
-      ["IMPORTED", "ROLLED_BACK"].includes(j.status) ? "all" : "summary",
+      ["IMPORTED", "ROLLED_BACK"].includes(j.status) ? "imported" : "summary",
     );
     setQuickActionMessage("");
     setGroupValues(j.groupValues || []);
@@ -808,7 +813,13 @@ export default function Imports({
   const visibleRowHeading =
     reviewSection === "repair"
       ? t("Repair items", "عناصر الإصلاح")
-      : t("All rows", "كل الصفوف");
+      : reviewSection === "ready"
+        ? t("Ready rows", "الصفوف الجاهزة")
+        : reviewSection === "skipped"
+          ? t("Skipped rows", "الصفوف المتخطاة")
+          : reviewSection === "imported"
+            ? t("Imported rows", "الصفوف المستوردة")
+            : t("All rows", "كل الصفوف");
   const showRowList = !!job && reviewSection !== "summary";
   const reviewEditable = job?.status === "AWAITING_REVIEW";
   const visibleRowIds: string[] = (job?.rows ?? []).map((row: any) => row.id);
@@ -841,32 +852,27 @@ export default function Imports({
   return (
     <>
       <div className="actions wrap">
-        <a href={appPath("/api/v1/templates/simple")}>
+        <a className="button primary" href={appPath("/api/v1/templates/public-discount")}>
           {t(
-            "Download Simple Price Update (Excel)",
-            "تنزيل نموذج تحديث الأسعار",
+            "Public Price + Discount Template",
+            "نموذج السعر العام + الخصم",
           )}
         </a>
-        <a href={appPath("/api/v1/templates/supplier-simple")}>
+        <a className="button primary" href={appPath("/api/v1/templates/supplier-markup")}>
           {t(
-            "Download Simple Supplier Pricelist (Excel)",
-            "تنزيل نموذج قائمة المورد البسيطة",
+            "Supplier Cost + Markup Template",
+            "نموذج تكلفة المورد + الزيادة",
           )}
         </a>
-        <a href={appPath("/api/v1/templates/advanced")}>
-          {t(
-            "Download Advanced Catalog (Excel)",
-            "تنزيل نموذج الكتالوج المتقدم",
-          )}
-        </a>
+        <details className="import-template-advanced"><summary>{t("Advanced template", "النموذج المتقدم")}</summary><a href={appPath("/api/v1/templates/advanced")}>{t("Download Advanced Catalog", "تنزيل الكتالوج المتقدم")}</a></details>
       </div>
       <div className="section-title">
         <div>
-          <h2>{t("Safe supplier imports", "استيراد آمن من الموردين")}</h2>
+          <h2>{t("Simple Product Import", "استيراد المنتجات المبسط")}</h2>
           <p className="muted">
             {t(
               quickImportMode
-                ? "Upload → map → summary → import. Valid rows import together, and skipped rows stay available for repair."
+                ? "Upload → map Part Number, Description and Price → choose Discount or Markup → validate → import valid rows."
                 : "Upload → map → review → verify → confirm. Nothing publishes automatically.",
               quickImportMode
                 ? "رفع ← ربط ← ملخص ← استيراد. يتم استيراد الصفوف الصالحة معاً وتبقى الصفوف المتخطاة متاحة للإصلاح."
@@ -1018,6 +1024,17 @@ export default function Imports({
                     "١. ربط الأعمدة والقيم الافتراضية",
                   )}
                 </h3>
+                <details className="basic-import-advanced-switch">
+                  <summary>{t("Advanced Import", "الاستيراد المتقدم")}</summary>
+                  <p className="muted">{t("Open only for supplier-specific formulas and additional catalog fields.", "افتحه فقط لصيغ المورد والحقول الإضافية للكتالوج.")}</p>
+                  <select value={importProfile} onChange={(e) => setImportProfile(e.target.value as ImportProfile)}>
+                    <option value="BASIC">{t("Basic Import", "الاستيراد الأساسي")}</option>
+                    <option value="STANDARD">{t("Advanced field mapping", "ربط الحقول المتقدم")}</option>
+                    <option value="PUBLIC_PRICE_DISCOUNT">{t("Public pricelist presets", "إعدادات قائمة السعر العام")}</option>
+                    <option value="SUPPLIER_SIMPLE">{t("Supplier activity presets", "إعدادات نشاط المورد")}</option>
+                    <option value="SUPPLIER_QUOTE">{t("Supplier quotation PDF", "عرض سعر المورد PDF")}</option>
+                  </select>
+                </details>
                 <div className="form-grid three">
                   <label>
                     {t("Import mode", "وضع الاستيراد")}
@@ -1037,7 +1054,7 @@ export default function Imports({
                       </option>
                     </select>
                   </label>
-                  <label>
+                  <label className="legacy-import-complexity">
                     {t("Import pricing flow", "مسار تسعير الاستيراد")}
                     <select
                       value={importProfile}
@@ -1069,7 +1086,7 @@ export default function Imports({
                       </option>
                     </select>
                   </label>
-                  <label>
+                  <label className="legacy-import-complexity">
                     {t("Admin workflow", "مسار المدير")}
                     <select
                       value={quickImportMode ? "QUICK" : "STRICT"}
@@ -1783,6 +1800,15 @@ export default function Imports({
                         {t("Repair items", "عناصر الإصلاح")} (
                         {job.rowViewCounts?.repairRows ?? 0})
                       </button>
+                      <button type="button" className={reviewSection === "ready" ? "primary" : ""} disabled={busy || actionBusy || !(job.rowViewCounts?.readyRows ?? 0)} onClick={() => void run(async () => await openReviewSection("ready"))}>
+                        {t("Ready", "جاهز")} ({job.rowViewCounts?.readyRows ?? 0})
+                      </button>
+                      <button type="button" className={reviewSection === "skipped" ? "primary" : ""} disabled={busy || actionBusy || !(job.rowViewCounts?.skippedRows ?? 0)} onClick={() => void run(async () => await openReviewSection("skipped"))}>
+                        {t("Skipped", "متخطى")} ({job.rowViewCounts?.skippedRows ?? 0})
+                      </button>
+                      {job.status === "IMPORTED" && <button type="button" className={reviewSection === "imported" ? "primary" : ""} disabled={busy || actionBusy || !(job.rowViewCounts?.importedRows ?? 0)} onClick={() => void run(async () => await openReviewSection("imported"))}>
+                        {t("Imported", "مستورد")} ({job.rowViewCounts?.importedRows ?? 0})
+                      </button>}
                     </div>
                   </div>
                   <div className="import-summary-grid">
@@ -1887,7 +1913,7 @@ export default function Imports({
                             }
                           }}
                         >
-                          {t("Import ready rows", "استيراد الصفوف الجاهزة")}
+                          {t("Import all valid rows", "استيراد كل الصفوف الصالحة")}
                         </button>
                         <button
                           type="button"
@@ -2016,6 +2042,14 @@ export default function Imports({
                   <div className="notice warning">{quickActionMessage}</div>
                 )}
                 {reviewSection !== "summary" && (
+                  <div className="stack import-repair-actions">
+                  {basicMode && reviewEditable && <div className="actions wrap">
+                    <strong>{t("Bulk repair for this filtered view", "إصلاح جماعي للعرض المفلتر")}</strong>
+                    <input className="compact" inputMode="decimal" placeholder={basicPriceType === "COST_MARKUP" ? t("Markup %", "الزيادة %") : t("Discount %", "الخصم %")} value={repairBulkValue} onChange={(e) => setRepairBulkValue(e.target.value)} />
+                    <button type="button" disabled={busy || actionBusy || !repairBulkValue.trim()} onClick={() => onAction({ saving:t("Updating filtered rows…","جارٍ تحديث الصفوف…"), success:t("Rows updated","تم تحديث الصفوف"), error:t("Bulk repair failed","فشل الإصلاح الجماعي") }, async()=>{await api("imports/"+job.id+"/bulk-review","POST",{version:job.version,action:"SET_ADJUSTMENT",rowView,pricingType:basicPriceType,value:repairBulkValue});await loadJobPage(job.id,0,guidedGroupColumn,rowView);await load();})}>{t("Set for all filtered rows", "تعيين لكل الصفوف المفلترة")}</button>
+                    <select value={repairClearField} onChange={(e)=>setRepairClearField(e.target.value)}><option value="brand">{t("Brand", "العلامة")}</option><option value="category">{t("Category", "الفئة")}</option><option value="keywords">{t("Keywords", "الكلمات المفتاحية")}</option><option value="aliases">{t("Aliases", "الأسماء البديلة")}</option></select>
+                    <button type="button" disabled={busy || actionBusy} onClick={() => onAction({ saving:t("Clearing optional field…","جارٍ مسح الحقل…"), success:t("Optional field cleared","تم مسح الحقل"), error:t("Field could not be cleared","تعذر مسح الحقل") }, async()=>{await api("imports/"+job.id+"/bulk-review","POST",{version:job.version,action:"CLEAR_OPTIONAL",rowView,field:repairClearField});await loadJobPage(job.id,0,guidedGroupColumn,rowView);await load();})}>{t("Clear from filtered rows", "مسح من الصفوف المفلترة")}</button>
+                  </div>}
                   <div className="actions wrap">
                     {quickImportMode ? (
                       <>
@@ -2176,7 +2210,7 @@ export default function Imports({
                         </button>
                       </>
                     )}
-                  </div>
+                  </div></div>
                 )}
                 <details className="import-advanced-tools">
                   <summary>
@@ -2335,7 +2369,7 @@ export default function Imports({
                     </tr>
                   </thead>
                   <tbody>
-                    {job.rows.map((r: any) => (
+                    {job.rows.map((r: any, rowIndex: number) => (
                       <tr
                         key={r.id}
                         className={selectedRows[r.id] ? "selected-row" : ""}
@@ -2356,6 +2390,34 @@ export default function Imports({
                         </td>
                         <td data-label="#">{r.row_number}</td>
                         <td data-label={t("Incoming row", "الصف الوارد")}>
+                          {basicMode && (
+                            <BasicImportRepairRow
+                              row={r}
+                              source={{ partNumber: r.raw?.[mapping.partNumber], description: r.raw?.[mapping.description], price: r.raw?.[basicPriceColumn], adjustment: basicAdjustmentSource === "COLUMN" ? r.raw?.[basicAdjustmentColumn] : basicAdjustment }}
+                              index={rowIndex}
+                              priceType={basicPriceType}
+                              editable={reviewEditable}
+                              t={t}
+                              onSave={async (values) => {
+                                const proposed = structuredClone(r.proposed ?? defaults);
+                                proposed.partNumber = values.partNumber.trim();
+                                proposed.description = values.description.trim();
+                                proposed.defaultLevel = "END_CUSTOMER";
+                                proposed.method = basicPriceType;
+                                const levels = Array.isArray(proposed.levels) ? proposed.levels : [];
+                                let end = levels.find((level: any) => level.code === "END_CUSTOMER");
+                                if (!end) { end = { code: "END_CUSTOMER", active: true, method: basicPriceType, fixedPrice: "0", markup: "0", listPrice: "0", baseDiscount: "0" }; levels.push(end); }
+                                end.active = true; end.method = basicPriceType;
+                                if (basicPriceType === "COST_MARKUP") { proposed.cost = values.price; proposed.markup = values.adjustment || "0"; end.markup = values.adjustment || "0"; }
+                                else { proposed.listPrice = values.price; proposed.baseDiscount = values.adjustment || "0"; end.listPrice = values.price; end.baseDiscount = values.adjustment || "0"; }
+                                proposed.levels = levels;
+                                await api("imports/" + job.id + "/review", "POST", { rows: [{ id: r.id, decision: "REVIEW", verified: false, proposed }] });
+                                await loadJobPage(job.id, page, guidedGroupColumn, rowView);
+                                await load();
+                              }}
+                            />
+                          )}
+                          {!basicMode && <>
                           <strong>
                             {r.proposed?.partNumber ||
                               t("Not mapped", "غير مربوط")}
@@ -2430,6 +2492,7 @@ export default function Imports({
                               {t("Correct row", "تصحيح الصف")}
                             </button>
                           )}
+                          </>}
                         </td>
                         <td
                           data-label={t("Status / problem", "الحالة / المشكلة")}
@@ -2686,8 +2749,8 @@ export default function Imports({
                   }}
                 >
                   {quickImportMode
-                    ? t("Import ready rows", "استيراد الصفوف الجاهزة")
-                    : t("Import ready rows", "استيراد الصفوف الجاهزة")}
+                    ? t("Import all valid rows", "استيراد كل الصفوف الصالحة")
+                    : t("Import all valid rows", "استيراد كل الصفوف الصالحة")}
                 </button>
                 <button
                   className="primary"

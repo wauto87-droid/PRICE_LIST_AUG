@@ -96,7 +96,11 @@ const importMappingRequestSchema = z
 const bulkReviewRequestSchema = z
   .object({
     version: importVersionSchema,
-    action: z.enum(["SELECT_ALL", "SKIP_INVALID"]),
+    action: z.enum(["SELECT_ALL", "SKIP_INVALID", "SET_ADJUSTMENT", "CLEAR_OPTIONAL"]),
+    rowView: z.enum(["all", "repair", "ready", "skipped", "imported"]).default("all"),
+    value: z.string().optional(),
+    pricingType: z.enum(["LIST_DISCOUNT", "COST_MARKUP"]).optional(),
+    field: z.enum(["brand", "category", "keywords", "aliases"]).optional(),
   })
   .strict();
 
@@ -416,7 +420,7 @@ export async function getImportPage(
   page = 0,
   pageSize = IMPORT_PAGE_SIZE_DEFAULT,
   groupColumn?: string | null,
-  rowView: "all" | "repair" = "all",
+  rowView: "all" | "repair" | "ready" | "skipped" | "imported" = "all",
 ) {
   requirePermission(actor, "COST_VIEW");
   const job = await one(
@@ -442,16 +446,25 @@ export async function getImportPage(
     [id],
   );
   const totalRows = totals?.total_rows ?? 0;
-  const filteredRows =
-    rowView === "repair" ? (totals?.problem_rows ?? 0) : totalRows;
+  const viewCount = {
+    all: totalRows,
+    repair: totals?.problem_rows ?? 0,
+    ready: totals?.ready_rows ?? 0,
+    skipped: totals?.skipped_rows ?? 0,
+    imported: job.status === "IMPORTED" ? totals?.selected_rows ?? 0 : 0,
+  };
+  const filteredRows = viewCount[rowView];
   const safePageSize = Math.min(Math.max(pageSize, 1), IMPORT_PAGE_SIZE_MAX);
   const totalPages = Math.max(1, Math.ceil(filteredRows / safePageSize));
   const safePage = Math.min(Math.max(page, 0), totalPages - 1);
   const offset = safePage * safePageSize;
-  const filterClause =
-    rowView === "repair"
-      ? " AND coalesce(jsonb_array_length(errors), 0) > 0"
-      : "";
+  const filterClause = {
+    all: "",
+    repair: " AND coalesce(jsonb_array_length(errors), 0) > 0",
+    ready: " AND verified AND decision='UPDATE' AND coalesce(jsonb_array_length(errors), 0)=0",
+    skipped: " AND decision='SKIP'",
+    imported: job.status === "IMPORTED" ? " AND decision='UPDATE' AND coalesce(jsonb_array_length(errors), 0)=0" : " AND false",
+  }[rowView];
   const rows = (
     await db.query(
       `SELECT * FROM import_rows
@@ -511,6 +524,9 @@ export async function getImportPage(
     rowViewCounts: {
       allRows: totalRows,
       repairRows: totals?.problem_rows ?? 0,
+      readyRows: totals?.ready_rows ?? 0,
+      skippedRows: totals?.skipped_rows ?? 0,
+      importedRows: job.status === "IMPORTED" ? totals?.selected_rows ?? 0 : 0,
     },
     reviewStats: {
       unverifiedRows: totals?.unverified_rows ?? 0,
@@ -899,11 +915,47 @@ export async function bulkReview(
          WHERE job_id = $1 AND coalesce(jsonb_array_length(errors), 0) > 0`,
         [id],
       );
+    } else {
+      if (data.action === "SET_ADJUSTMENT") {
+        assert(data.pricingType && data.value !== undefined, 400, "Choose Discount or Markup and enter a percentage");
+        let parsed = new Decimal(0);
+        try { parsed = new Decimal(data.value); }
+        catch { assert(false, 400, "Percentage must be a valid decimal"); }
+        assert(parsed.isFinite() && parsed.gte(0), 400, "Percentage must be zero or positive");
+        if (data.pricingType === "LIST_DISCOUNT") assert(parsed.lte(100), 400, "Discount cannot exceed 100%");
+      } else assert(data.field, 400, "Choose an optional field to clear");
+      const viewClause = {
+        all: "",
+        repair: " AND coalesce(jsonb_array_length(errors),0)>0",
+        ready: " AND verified AND decision='UPDATE' AND coalesce(jsonb_array_length(errors),0)=0",
+        skipped: " AND decision='SKIP'",
+        imported: " AND false",
+      }[data.rowView];
+      let cursor = 0;
+      while (true) {
+        const rows = (await tx.query(`SELECT id,row_number,proposed FROM import_rows WHERE job_id=$1 AND row_number>$2${viewClause} ORDER BY row_number LIMIT 500`, [id, cursor])).rows;
+        if (!rows.length) break;
+        for (const row of rows) {
+          const proposed = structuredClone(row.proposed);
+          if (data.action === "CLEAR_OPTIONAL") proposed[data.field!] = data.field === "aliases" ? [] : "";
+          else {
+            const field = data.pricingType === "COST_MARKUP" ? "markup" : "baseDiscount";
+            proposed[field] = data.value!;
+            proposed.method = data.pricingType;
+            proposed.levels = (proposed.levels ?? []).map((level: any) => level.code === "END_CUSTOMER" ? { ...level, method: data.pricingType, [field]: data.value! } : level);
+          }
+          let errors: string[] = [];
+          try { validateProduct(productInput.parse(proposed)); } catch (error) { errors = [error instanceof z.ZodError ? importValidationMessage(error, proposed) : (error as Error).message]; }
+          await tx.query("UPDATE import_rows SET proposed=$2,errors=$3,verified=false,decision='REVIEW' WHERE id=$1", [row.id, json(proposed), json(errors)]);
+        }
+        cursor = rows[rows.length - 1]!.row_number;
+      }
     }
     await tx.query(
       "UPDATE import_jobs SET version=version+1,updated_at=now() WHERE id=$1",
       [id],
     );
+    await audit(tx, actor.id, "IMPORT_BULK_REPAIR", "import_jobs", id, null, { action: data.action, rowView: data.rowView, pricingType: data.pricingType, field: data.field });
     return { ok: true };
   });
 }

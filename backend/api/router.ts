@@ -14,6 +14,7 @@ import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
 import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
+import { basicImportTemplate } from "../imports/basic-templates";
 import * as salesChecks from "../sales-checks/service";
 import * as quantityFinder from "../quantity-finder/service";
 import * as reusableCustom from "../reusable-custom/service";
@@ -153,17 +154,18 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       return response(await handover.reusableCustomerPrices(db, actor, await body(req)));
     if (root === "templates" && method === "GET") {
       auth.requirePermission(actor, "IMPORT_CONFIRM");
-      const kind = z.enum(["simple", "supplier-simple", "advanced"]).parse(id);
+      const kind = z.enum(["simple", "supplier-simple", "advanced", "public-discount", "supplier-markup"]).parse(id);
       if (kind === "advanced") auth.requirePermission(actor, "COST_VIEW");
+      const generated = kind === "public-discount" || kind === "supplier-markup";
       return new Response(
-        await fs.readFile(
-          path.join(process.cwd(), "assets", "templates", kind + ".xlsx"),
-        ),
+        generated
+          ? await basicImportTemplate(kind)
+          : await fs.readFile(path.join(process.cwd(), "assets", "templates", kind + ".xlsx")),
         {
           headers: {
             "Content-Type":
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "Content-Disposition": `attachment; filename="AMT-${kind}-price-template.xlsx"`,
+            "Content-Disposition": `attachment; filename="AMT-${kind}-template.xlsx"`,
             "Cache-Control": "no-store",
           },
         },
@@ -857,7 +859,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 .parse(url.searchParams.get("pageSize") ?? 50),
               url.searchParams.get("groupColumn"),
               z
-                .enum(["all", "repair"])
+                .enum(["all", "repair", "ready", "skipped", "imported"])
                 .parse(url.searchParams.get("rowView") ?? "all"),
             ),
           );
