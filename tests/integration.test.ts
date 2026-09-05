@@ -839,6 +839,10 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
         await request("search?q=" + encodeURIComponent("LEGACY_MC120"))
       ).data;
       assert.equal(aliasMatch[0].partNumber, "MC-9b-AC120V");
+      const normalizedPrefix = (await request("search?q=MC9bAC1")).data;
+      assert.equal(normalizedPrefix[0].partNumber, "MC-9b-AC120V");
+      const normalizedContains = (await request("search?q=9bAC12")).data;
+      assert.equal(normalizedContains[0].partNumber, "MC-9b-AC120V");
       const wrongVoltage = (
         await request("search?q=" + encodeURIComponent("MC9b-AC220V"))
       ).data;

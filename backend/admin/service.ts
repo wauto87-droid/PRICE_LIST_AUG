@@ -454,6 +454,9 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
       sellingLevel: z
         .union([levelCode, z.literal("ALL"), z.literal("DEFAULT")])
         .default("DEFAULT"),
+      adjustmentMode: z
+        .enum(["SET", "INCREASE_PERCENT", "DECREASE_PERCENT"])
+        .default("SET"),
       confirm: z.boolean().default(false),
     })
     .strict()
@@ -474,7 +477,10 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
   if (data.operation === "DELETE") requirePermission(actor, "PRODUCT_DELETE");
   if (["ARCHIVE", "REACTIVATE", "DELETE"].includes(data.operation))
     assert(data.confirm, 400, "This bulk action requires confirmation");
-  if (["BASE_DISCOUNT", "VAT", "COST_DECREASE"].includes(data.operation))
+  if (
+    ["BASE_DISCOUNT", "VAT", "COST_DECREASE"].includes(data.operation) &&
+    data.adjustmentMode === "SET"
+  )
     assert(
       new Decimal(data.value!).lte(100),
       400,
@@ -553,8 +559,28 @@ export async function bulkPrice(db: DB, actor: Actor, input: unknown) {
             400,
             `Operation requires ${method} for ${before.partNumber} / ${l.code}`,
           );
-          if (data.operation === "MARKUP") l.markup = data.value!;
-          if (data.operation === "BASE_DISCOUNT") l.baseDiscount = data.value!;
+          const adjusted = (current: string) =>
+            data.adjustmentMode === "SET"
+              ? new Decimal(data.value!)
+              : new Decimal(current)
+                  .mul(
+                    new Decimal(1).add(
+                      new Decimal(data.value!)
+                        .div(100)
+                        .mul(data.adjustmentMode === "DECREASE_PERCENT" ? -1 : 1),
+                    ),
+                  )
+                  .toDecimalPlaces(6);
+          if (data.operation === "MARKUP") l.markup = adjusted(l.markup).toString();
+          if (data.operation === "BASE_DISCOUNT") {
+            const next = adjusted(l.baseDiscount);
+            assert(
+              next.gte(0) && next.lte(100),
+              400,
+              `Discount must remain between 0 and 100 for ${before.partNumber} / ${l.code}`,
+            );
+            l.baseDiscount = next.toString();
+          }
           if (data.operation === "FIXED_PRICE") l.fixedPrice = data.value!;
         }
       }

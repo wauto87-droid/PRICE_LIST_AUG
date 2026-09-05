@@ -7,6 +7,7 @@ import { AppError, assert } from "../core/errors";
 import { audit, json } from "../core/audit";
 import * as auth from "../auth/service";
 import * as products from "../products/service";
+import * as productImages from "../products/images";
 import * as quotes from "../quotations/service";
 import * as quoteSettings from "../quotations/settings";
 import * as bulkRules from "../bulk/service";
@@ -110,6 +111,17 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
+    if (root === "product-images" && id && method === "GET") {
+      const image = await productImages.file(db, actor, uuid(id), action === "thumbnail");
+      const download = url.searchParams.get("download") === "1";
+      return new Response(image.data, {
+        headers: {
+          "Content-Type": image.mime,
+          "Cache-Control": "private, max-age=3600",
+          ...(download ? { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(image.name)}` } : {}),
+        },
+      });
+    }
     if (root === "learned-delivery-matches") {
       if (!id && method === "GET")
         return response(await handover.learnedMatches(db, actor, Object.fromEntries(url.searchParams)));
@@ -467,6 +479,29 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
       if (id === "bulk" && method === "POST")
         return response(await admin.bulkPrice(db, actor, await body(req)));
+      if (id && action === "images") {
+        const productId = uuid(id);
+        if (method === "GET") return response(await productImages.list(db, actor, productId));
+        if (method === "POST") {
+          const bytes = await readLimited(req, 6 * 1024 * 1024);
+          const form = await new Response(new Uint8Array(bytes), {
+            headers: { "Content-Type": req.headers.get("content-type") ?? "" },
+          }).formData();
+          const file = form.get("file");
+          assert(file instanceof File, 400, "Choose an image to upload");
+          return response(
+            await db.transaction((tx) =>
+              productImages.upload(tx, actor, productId, file, String(form.get("caption") ?? "")),
+            ),
+            201,
+          );
+        }
+        if (method === "PUT") return response(await productImages.update(db, actor, productId, await body(req)));
+        if (method === "DELETE") {
+          const input = z.object({ imageId: z.string().uuid(), version: z.number().int().positive() }).strict().parse(await body(req));
+          return response(await productImages.remove(db, actor, productId, input.imageId, input.version));
+        }
+      }
       if (id && action === "aliases" && method === "POST") {
         const input = await body(req);
         return response(

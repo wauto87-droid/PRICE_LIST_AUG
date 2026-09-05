@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
+import { salesCheckMatchLabel, salesCheckReasonLabel, salesCheckStatusLabel } from "../shared/sales-check-labels";
 
 const autoMap = (columns: string[], names: string[]) =>
   columns.find((c) =>
@@ -651,12 +652,12 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                           >
                             {row.product_id
                               ? t("Checked", "تم الفحص")
-                              : t("No match", "بلا مطابقة")}
+                              : t("Not matched item", "صنف غير مطابق")}
                           </span>
                         </td>
                         <td data-label="Match">
                           <span className="sales-check-match-chip">
-                            {row.match_type}
+                            {salesCheckMatchLabel(row.match_type)}
                           </span>
                         </td>
                         <td data-label="Status / reason" className="status-cell">
@@ -664,14 +665,15 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                             <span
                               className={`pill ${row.status === "MATCHED" ? "" : "warning"}`}
                             >
-                              {row.status}
+                              {salesCheckStatusLabel(row.status)}
                             </span>
                             {row.error && (
-                              <small className="sales-check-error">{row.error}</small>
+                              <small className="sales-check-error">{salesCheckReasonLabel(row.error)}</small>
                             )}
                             <details className="sales-check-raw">
-                              <summary>{t("Source row", "صف المصدر")}</summary>
-                              <pre>{JSON.stringify(row.raw, null, 2)}</pre>
+                              <summary>{t("Details", "التفاصيل")}</summary>
+                              <dl className="sales-check-source-fields">{Object.entries(row.raw ?? {}).map(([field,value]) => <div key={field}><dt>{field}</dt><dd>{String(value ?? "—")}</dd></div>)}</dl>
+                              <details><summary>{t("Technical details", "التفاصيل التقنية")}</summary><p>{row.match_type || "—"} · {row.status}</p><pre>{JSON.stringify(row.raw, null, 2)}</pre></details>
                             </details>
                           </div>
                         </td>

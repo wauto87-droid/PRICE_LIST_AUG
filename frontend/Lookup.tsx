@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ProductImageGallery } from "./ProductImages";
 import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
 import { buildLookupLineRequest, previewLookupPrice } from "./lookup-pricing";
@@ -66,12 +67,15 @@ export default function Lookup({
     [attentionTick, setAttentionTick] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
+    finalPriceRef = useRef<HTMLDivElement>(null),
+    revealFinalPriceAfterValidation = useRef(false),
     comboboxId = useRef(
       `lookup-combobox-${Math.random().toString(36).slice(2)}`,
     ),
     pricingGeneration = useRef(0),
     searchGeneration = useRef(0),
     watcherEventId = useRef("");
+
   const selectedLevel = selected
     ? visibleLevels(selected).find((level) => level.code === sellingLevel)
     : undefined;
@@ -581,6 +585,16 @@ export default function Lookup({
         .toDecimalPlaces(2)
         .toFixed(2)
     : "";
+  useEffect(() => {
+    if (!revealFinalPriceAfterValidation.current || pricingBusy || !displayPrice)
+      return;
+    revealFinalPriceAfterValidation.current = false;
+    const node = finalPriceRef.current;
+    if (!node) return;
+    const bounds = node.getBoundingClientRect();
+    if (bounds.top < 0 || bounds.bottom > window.innerHeight)
+      node.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [pricingBusy, displayPrice]);
   return (
     <div className="lookup-layout lookup-compact">
       <section
@@ -1003,6 +1017,7 @@ export default function Lookup({
                     </select>
                   </label>
                 </section>
+                {selected.imageCount > 0 && <ProductImageGallery productId={selected.id} t={t} />}
               </div>
               <div className="lookup-selected-side">
                 <div className="field-pair lookup-compact-fields">
@@ -1025,6 +1040,24 @@ export default function Lookup({
                           ? setMarkup(e.target.value)
                           : setDiscount(e.target.value)
                       }
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        revealFinalPriceAfterValidation.current = true;
+                        if (!pricingBusy && displayPrice) {
+                          const node = finalPriceRef.current;
+                          const bounds = node?.getBoundingClientRect();
+                          if (
+                            node &&
+                            bounds &&
+                            (bounds.top < 0 || bounds.bottom > window.innerHeight)
+                          )
+                            node.scrollIntoView({
+                              behavior: "smooth",
+                              block: "nearest",
+                            });
+                          revealFinalPriceAfterValidation.current = false;
+                        }
+                      }}
                     />
                   </label>
                   <label>
@@ -1047,7 +1080,10 @@ export default function Lookup({
                     />
                   </label>
                 </div>
-                <div className="final-price lookup-final-price-compact">
+                <div
+                  ref={finalPriceRef}
+                  className="final-price lookup-final-price-compact"
+                >
                   <div className="eyebrow">
                     {online
                       ? t(

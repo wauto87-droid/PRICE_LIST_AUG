@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
@@ -23,7 +24,7 @@ import {
   levelPrice,
 } from "../pricing/engine";
 import Decimal from "decimal.js";
-export const productSelect = `SELECT p.*,pp.*,b.name AS brand,c.name AS category,COALESCE((SELECT json_agg(a.label) FROM product_aliases a WHERE a.product_id=p.id AND a.kind<>'DELIVERY_NOTE'),'[]') AS aliases,
+export const productSelect = `SELECT p.*,pp.*,b.name AS brand,c.name AS category,(SELECT count(*)::int FROM product_images i WHERE i.product_id=p.id) AS image_count,COALESCE((SELECT json_agg(a.label) FROM product_aliases a WHERE a.product_id=p.id AND a.kind<>'DELIVERY_NOTE'),'[]') AS aliases,
 (SELECT json_agg(json_build_object('code',l.code,'active',l.active,'method',l.method,'fixedPrice',l.fixed_price::text,'markup',l.markup::text,'listPrice',l.list_price::text,'baseDiscount',l.base_discount::text) ORDER BY CASE l.code WHEN 'WHOLESALE' THEN 0 WHEN 'RETAIL' THEN 1 ELSE 2 END) FROM product_selling_levels l WHERE l.product_id=p.id) AS levels
 FROM products p JOIN product_pricing pp ON pp.product_id=p.id LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id`;
 export function toInput(row: Record<string, any>): ProductInput {
@@ -81,6 +82,7 @@ export function staffProduct(
     ),
     vat: p.vat,
     updatedAt: row.updated_at,
+    imageCount: Number(row.image_count ?? 0),
     defaultLevel: p.defaultLevel ?? "END_CUSTOMER",
     sellingLevels: sellingLevels(p)
       .filter((l) => l.active)
@@ -376,6 +378,8 @@ export async function deleteProduct(
     `Cannot delete ${before.partNumber}: it is referenced by import ${importUse?.filename ?? ""}`.trim(),
   );
   await db.query("DELETE FROM price_history WHERE product_id=$1", [id]);
+  const imageFiles = (await db.query("SELECT original_path,thumbnail_path FROM product_images WHERE product_id=$1", [id])).rows;
+  await db.query("DELETE FROM product_images WHERE product_id=$1", [id]);
   await db.query("DELETE FROM product_aliases WHERE product_id=$1", [id]);
   await db.query("DELETE FROM product_selling_levels WHERE product_id=$1", [
     id,
@@ -391,6 +395,12 @@ export async function deleteProduct(
     before,
     null,
     source,
+  );
+  await Promise.allSettled(
+    imageFiles.flatMap((image: any) => [
+      fs.unlink(image.original_path),
+      fs.unlink(image.thumbnail_path),
+    ]),
   );
   return { id, partNumber: before.partNumber };
 }
@@ -516,21 +526,21 @@ function lookupPartRankedCte(activeClause: string) {
       UNION ALL
       SELECT p.id, 2 AS rank
       FROM products p
-      WHERE ${activeClause} AND p.normalized_part LIKE $3 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[[:space:]./_-]+','','g') LIKE $3 ESCAPE '\\'
       UNION ALL
       SELECT p.id, 2 AS rank
       FROM product_aliases a
       JOIN products p ON p.id=a.product_id
-      WHERE ${activeClause} AND a.normalized LIKE $3 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[[:space:]./_-]+','','g') LIKE $3 ESCAPE '\\'
       UNION ALL
       SELECT p.id, 3 AS rank
       FROM products p
-      WHERE ${activeClause} AND p.normalized_part LIKE $4 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[[:space:]./_-]+','','g') LIKE $4 ESCAPE '\\'
       UNION ALL
       SELECT p.id, 3 AS rank
       FROM product_aliases a
       JOIN products p ON p.id=a.product_id
-      WHERE ${activeClause} AND a.normalized LIKE $4 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[[:space:]./_-]+','','g') LIKE $4 ESCAPE '\\'
     ) AS match
     GROUP BY match.id
   )`;
@@ -599,8 +609,8 @@ async function getLookupPartMatches(
       [
         q,
         normalizeLookupPart(q),
-        escaped + "%",
-        "%" + escaped + "%",
+        normalizeLookupPart(q) + "%",
+        "%" + normalizeLookupPart(q) + "%",
         limit,
       ],
     )
@@ -720,6 +730,7 @@ async function hydrateLookupProductsByIds(db: DB, ids: string[]) {
         pp.minimum_enabled,
         pp.minimum,
         pp.default_level,
+        (SELECT count(*)::int FROM product_images i WHERE i.product_id=p.id) AS image_count,
         b.name AS brand,
         c.name AS category,
         (
@@ -789,6 +800,7 @@ function lookupProduct(
     defaultLevel: row.default_level ?? "END_CUSTOMER",
     sellingLevels: Array.isArray(row.selling_levels) ? row.selling_levels : [],
     details: row.details ?? {},
+    imageCount: Number(row.image_count ?? 0),
   };
   if (has(actor, "MIN_PRICE_VIEW") || settings.minimumVisible) {
     result.minimumEnabled = row.minimum_enabled;

@@ -52,8 +52,7 @@ const sections = [
     "SETTINGS_MANAGE",
   ],
   ["dashboard", "Dashboard", "لوحة التحكم", "ADMIN_VIEW"],
-  ["products", "Products", "الأصناف", "PRODUCT_EDIT"],
-  ["imports", "Imports / PDF", "الاستيراد / PDF", "IMPORT_CONFIRM"],
+  ["products", "Catalog Management", "إدارة الكتالوج", "PRODUCT_EDIT"],
   [
     "discount-requests",
     "Discount Requests",
@@ -138,6 +137,7 @@ function formatImportActionError(rawMessage: string, t: Translate) {
 }
 export default function Admin({ t, user }: { t: Translate; user: any }) {
   const [section, setSection] = useState("dashboard"),
+    [catalogTab, setCatalogTab] = useState<"PRODUCTS" | "IMPORT" | "BULK" | "REPAIR" | "EXPORT">("PRODUCTS"),
     [result, setResult] = useState<AdminResult>(null),
     [error, setError] = useState(""),
     [menuOpen, setMenuOpen] = useState(false),
@@ -169,7 +169,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
       phase: "idle",
     }),
     [selected, setSelected] = useState<Record<string, number>>({}),
-    [bulk, setBulk] = useState<any>({ operation: "MARKUP", value: "25" }),
+    [bulk, setBulk] = useState<any>({
+      operation: "MARKUP",
+      value: "25",
+      adjustmentMode: "SET",
+    }),
     [searchFocused, setSearchFocused] = useState(false),
     [activeSuggestion, setActiveSuggestion] = useState(-1),
     [loadedProductQuery, setLoadedProductQuery] = useState(""),
@@ -676,7 +680,18 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
             {error}
           </div>
         )}
-        {section === "imports" ? (
+        {section === "products" && (
+          <nav className="catalog-tabs" aria-label={t("Catalog tools", "أدوات الكتالوج")}>
+            {([[
+              "PRODUCTS", "Products", "الأصناف"
+            ], ["IMPORT", "Add / Import", "إضافة / استيراد"], ["BULK", "Bulk Pricing", "تسعير جماعي"], ["REPAIR", "Import Repair", "إصلاح الاستيراد"], ["EXPORT", "Export", "تصدير"]] as const).map(([key,en,ar]) => (
+              <button type="button" className={catalogTab === key ? "active" : ""} key={key} onClick={() => setCatalogTab(key)}>{t(en,ar)}</button>
+            ))}
+          </nav>
+        )}
+        {section === "products" && ["IMPORT", "REPAIR"].includes(catalogTab) ? (
+          <Imports t={t} actionBusy={busy} onAction={runAction} />
+        ) : section === "imports" ? (
           <Imports t={t} actionBusy={busy} onAction={runAction} />
         ) : section === "rules" ? (
           <BulkRules t={t} actionBusy={busy} onAction={runAction} />
@@ -1361,14 +1376,40 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       )}
                       {bulk.operation !== "REMOVE_MINIMUM" &&
                         priceBulkOperations.has(bulk.operation) && (
-                          <input
-                            className="compact"
-                            value={bulk.value}
-                            onChange={(e) => {
-                              setBulk({ ...bulk, value: e.target.value });
-                              setPreview(null);
-                            }}
-                          />
+                          <>
+                            {["MARKUP", "BASE_DISCOUNT"].includes(
+                              bulk.operation,
+                            ) && (
+                              <select
+                                value={bulk.adjustmentMode ?? "SET"}
+                                onChange={(e) => {
+                                  setBulk({
+                                    ...bulk,
+                                    adjustmentMode: e.target.value,
+                                  });
+                                  setPreview(null);
+                                }}
+                              >
+                                <option value="SET">
+                                  {t("Set exact percentage", "تعيين النسبة بدقة")}
+                                </option>
+                                <option value="INCREASE_PERCENT">
+                                  {t("Increase existing percentage", "زيادة النسبة الحالية")}
+                                </option>
+                                <option value="DECREASE_PERCENT">
+                                  {t("Decrease existing percentage", "خفض النسبة الحالية")}
+                                </option>
+                              </select>
+                            )}
+                            <input
+                              className="compact"
+                              value={bulk.value}
+                              onChange={(e) => {
+                                setBulk({ ...bulk, value: e.target.value });
+                                setPreview(null);
+                              }}
+                            />
+                          </>
                         )}
                       {bulk.operation === "REMOVE_MINIMUM" && (
                         <span className="muted">

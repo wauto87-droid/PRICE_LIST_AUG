@@ -13,6 +13,7 @@ import Decimal from "decimal.js";
 import { api, type Translate } from "./api";
 import { levelCodes, levelLabel } from "./levels";
 import { wheelSafeNumberInputProps } from "./number-input";
+import { ProductImageManager } from "./ProductImages";
 
 export const blankProduct = {
   partNumber: "",
@@ -608,6 +609,7 @@ export default function ProductEditor({
           })}
         </details>
 
+        {initial.id && <ProductImageManager productId={initial.id} t={t} />}
         {preview && (
           <div className="notice">
             {t(
