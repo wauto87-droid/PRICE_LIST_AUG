@@ -285,5 +285,30 @@ test("quotation approval, issue, customer view and acceptance form one guarded l
     idempotencyKey: randomUUID(),
   });
   assert.equal(webOrder.status, "PENDING_REVIEW");
+  const regOtp = await storefront.requestOtp(db, {
+    destination: "buyer@example.com",
+    channel: "EMAIL",
+  });
+  const regVerif = await storefront.verifyOtp(db, {
+    id: regOtp.id,
+    code: regOtp.testCode!,
+  });
+  const registered = await storefront.registerAccount(db, {
+    name: "Business Buyer",
+    customerCode: "C-002",
+    email: "buyer@example.com",
+    mobile: "0500000001",
+    password: "Password123!",
+    verificationId: regOtp.id,
+    verificationToken: regVerif.verificationToken,
+  });
+  assert.equal(registered.status, "PENDING");
+  await db.query("UPDATE customer_accounts SET status='ACTIVE' WHERE id=$1", [registered.id]);
+  const loggedIn = await storefront.loginAccount(db, {
+    login: "buyer@example.com",
+    password: "Password123!",
+  });
+  assert.ok(loggedIn.token);
+  assert.equal(loggedIn.account.id, registered.id);
   await db.close?.();
 });

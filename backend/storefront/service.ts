@@ -515,12 +515,44 @@ export async function registerAccount(db: DB, raw: unknown) {
 }
 
 export async function loginAccount(db: DB, raw: unknown) {
-  const data=z.object({login:z.string().trim().min(3).max(200),password:z.string().max(128)}).parse(raw);
-  const account=await one(db,"SELECT * FROM customer_accounts WHERE lower(email)=lower($1) OR mobile=$1",[data.login]);
-  const valid=account?await verifyPassword(account.password_hash,data.password):Boolean(await hashPassword(data.password))&&false;
-  assert(valid&&account.status==='ACTIVE',401,account?.status==='PENDING'?"Business account is awaiting approval":"Invalid account or password");
-  const token=randomBytes(32).toString("hex");await db.query("INSERT INTO customer_account_sessions(token_hash,account_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[sha(token),account.id]);
-  return {token,account:{id:account.id,email:account.email,mobile:account.mobile,priceLevel:account.price_level,creditEnabled:account.credit_enabled}};
+  const data = z
+    .object({
+      login: z.string().trim().min(3).max(200),
+      password: z.string().max(128),
+    })
+    .parse(raw);
+  const account = await one(
+    db,
+    "SELECT * FROM customer_accounts WHERE lower(email)=lower($1) OR mobile=$1",
+    [data.login],
+  );
+  const valid = account
+    ? await verifyPassword(account.password_hash, data.password)
+    : false;
+  assert(Boolean(account && valid), 401, "Invalid account or password");
+  const activeAccount = account!;
+  assert(
+    activeAccount.status === "ACTIVE",
+    401,
+    activeAccount.status === "PENDING"
+      ? "Business account is awaiting approval"
+      : "Invalid account or password",
+  );
+  const token = randomBytes(32).toString("hex");
+  await db.query(
+    "INSERT INTO customer_account_sessions(token_hash,account_id,expires_at) VALUES($1,$2,now()+interval '30 days')",
+    [sha(token), activeAccount.id],
+  );
+  return {
+    token,
+    account: {
+      id: activeAccount.id,
+      email: activeAccount.email,
+      mobile: activeAccount.mobile,
+      priceLevel: activeAccount.price_level,
+      creditEnabled: activeAccount.credit_enabled,
+    },
+  };
 }
 
 export async function listAccounts(db: DB, actor: Actor) {
