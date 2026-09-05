@@ -328,7 +328,7 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
     403,
     "This quotation belongs to another user",
   );
-  if (q.status === "DRAFT") {
+  if (["DRAFT", "REJECTED"].includes(q.status)) {
     const productIds = [
       ...new Set(
         q.lines
@@ -436,7 +436,7 @@ export async function saveDraft(
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const old = await getQuote(tx, actor, id, true);
       oldLines = old.lines;
-      assert(old.status === "DRAFT", 409, "Issued quotations cannot be edited");
+      assert(["DRAFT", "REJECTED"].includes(old.status), 409, "Only draft or rejected quotations can be edited");
       assert(
         old.version === version,
         409,
@@ -462,7 +462,7 @@ export async function saveDraft(
     const quoteId = id ?? randomUUID();
     if (id)
       await tx.query(
-        "UPDATE quotations SET customer=$2,lines=$3,totals=$4,version=version+1,updated_at=now() WHERE id=$1",
+        "UPDATE quotations SET customer=$2,lines=$3,totals=$4,status='DRAFT',version=version+1,updated_at=now() WHERE id=$1",
         [id, json(data.customer), json(lines), json(sum)],
       );
     else
@@ -541,7 +541,8 @@ export async function reviewIssue(
       "SELECT data FROM settings WHERE id=1 FOR SHARE",
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
-    assert(q.status === "DRAFT", 409, "Only drafts can be issued");
+    const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
+    assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
       tx,
       actor,
@@ -573,7 +574,8 @@ export async function issue(
     ))!.data;
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
-    assert(q.status === "DRAFT", 409, "Only drafts can be issued");
+    const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
+    assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
       tx,
       actor,

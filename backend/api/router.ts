@@ -10,6 +10,7 @@ import * as products from "../products/service";
 import * as productImages from "../products/images";
 import * as quotes from "../quotations/service";
 import * as quoteSettings from "../quotations/settings";
+import * as quoteLifecycle from "../quotations/lifecycle";
 import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
 import * as discountRequests from "../discount-requests/service";
@@ -22,6 +23,8 @@ import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import * as priceWatcher from "../price-watcher/service";
 import * as productEnrichment from "../product-enrichment/service";
 import * as handover from "../handover/service";
+import * as commercial from "../commercial/service";
+import * as storefront from "../storefront/service";
 import {
   calculate,
   calculateTargetPrice,
@@ -109,39 +112,352 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         "Set-Cookie": auth.sessionCookie(token),
       });
     }
+    if (root === "storefront") {
+      if (id === "configuration" && method === "GET")
+        return response(await storefront.configuration(db));
+      if (id === "catalog" && method === "GET")
+        return response(
+          await storefront.catalog(db, Object.fromEntries(url.searchParams)),
+        );
+      if (id === "otp" && action === "request" && method === "POST")
+        return response(await storefront.requestOtp(db, await body(req)));
+      if (id === "otp" && action === "verify" && method === "POST")
+        return response(await storefront.verifyOtp(db, await body(req)));
+      if (id === "checkout" && method === "POST")
+        return response(await storefront.checkout(db, await body(req)));
+      if (id === "payment-return" && method === "GET")
+        return response(
+          await storefront.confirmMoyasarPayment(
+            db,
+            z.string().min(5).parse(url.searchParams.get("id")),
+          ),
+        );
+    }
+    if (root === "customer-quotation" && id) {
+      await auth.throttle(db, `customer-quotation:${id}`, 120);
+      if (!action && method === "GET")
+        return response(await quoteLifecycle.customerView(db, id));
+      if (action === "respond" && method === "POST")
+        return response(
+          await quoteLifecycle.customerRespond(db, id, await body(req)),
+        );
+    }
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
+    if (root === "storefront-admin") {
+      if (method === "GET")
+        return response(await storefront.configuration(db, actor));
+      if (method === "PUT")
+        return response(
+          await storefront.saveConfiguration(db, actor, await body(req)),
+        );
+    }
+    if (root === "approval-rules") {
+      if (!id && method === "GET")
+        return response(await quoteLifecycle.listRules(db, actor));
+      if (!id && method === "POST")
+        return response(
+          await quoteLifecycle.saveRule(db, actor, undefined, await body(req)),
+        );
+      if (id && method === "PUT")
+        return response(
+          await quoteLifecycle.saveRule(db, actor, uuid(id), await body(req)),
+        );
+    }
+    if (root === "quotation-approvals") {
+      if (!id && method === "GET")
+        return response(await quoteLifecycle.approvalQueue(db, actor));
+      if (id && action === "approve" && method === "POST") {
+        const input = z
+          .object({ comment: z.string().max(1000).default("") })
+          .parse(await body(req));
+        return response(
+          await quoteLifecycle.decide(
+            db,
+            actor,
+            uuid(id),
+            "APPROVED",
+            input.comment,
+          ),
+        );
+      }
+      if (id && action === "reject" && method === "POST") {
+        const input = z
+          .object({ comment: z.string().trim().min(1).max(1000) })
+          .parse(await body(req));
+        return response(
+          await quoteLifecycle.decide(
+            db,
+            actor,
+            uuid(id),
+            "REJECTED",
+            input.comment,
+          ),
+        );
+      }
+    }
+    if (root === "commercial" && id === "dashboard" && method === "GET")
+      return response(await commercial.dashboard(db, actor));
+    if (root === "sales-orders") {
+      if (!id && method === "GET")
+        return response(
+          await commercial.listSalesOrders(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      if (id === "from-quotation" && action && method === "POST")
+        return response(
+          await commercial.convertAcceptedQuotation(
+            db,
+            actor,
+            uuid(action),
+            await body(req),
+          ),
+        );
+      if (id && action === "reserve" && method === "POST")
+        return response(
+          await commercial.reserveSalesOrder(db, actor, uuid(id)),
+        );
+      if (id && action === "deliver" && method === "POST")
+        return response(
+          await commercial.deliverSalesOrder(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
+        );
+      if (id && action === "proforma" && method === "POST")
+        return response(
+          await commercial.issueProforma(db, actor, uuid(id), await body(req)),
+        );
+      if (id && !action && method === "GET")
+        return response(await commercial.getSalesOrder(db, actor, uuid(id)));
+    }
+    if (root === "online-orders") {
+      if (!id && method === "GET")
+        return response(
+          await commercial.listOnlineOrders(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      if (id && action === "approve" && method === "POST")
+        return response(
+          await commercial.approveOnlineOrder(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
+        );
+    }
+    if (root === "inventory" && id === "adjustments" && method === "POST")
+      return response(
+        await commercial.stockAdjustment(db, actor, await body(req)),
+      );
+    if (root === "inventory" && id === "transfers" && method === "POST")
+      return response(
+        await commercial.transferStock(db, actor, await body(req)),
+      );
+    if (root === "stock-counts") {
+      if (!id && method === "POST") {
+        const input = z
+          .object({ warehouseId: z.string().uuid() })
+          .parse(await body(req));
+        return response(
+          await commercial.createStockCount(db, actor, input.warehouseId),
+        );
+      }
+      if (id && !action && method === "PUT")
+        return response(
+          await commercial.updateStockCount(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
+        );
+      if (id && action === "post" && method === "POST") {
+        const input = z
+          .object({ version: z.number().int().positive() })
+          .parse(await body(req));
+        return response(
+          await commercial.postStockCount(db, actor, uuid(id), input.version),
+        );
+      }
+    }
+    if (root === "warehouses") {
+      if (!id && method === "GET")
+        return response(
+          await commercial.warehouses(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      if (!id && method === "POST")
+        return response(
+          await commercial.saveWarehouse(db, actor, undefined, await body(req)),
+        );
+      if (id && method === "PUT")
+        return response(
+          await commercial.saveWarehouse(db, actor, uuid(id), await body(req)),
+        );
+    }
+    if (root === "inventory" && id === "balances" && method === "GET")
+      return response(
+        await commercial.stockBalances(
+          db,
+          actor,
+          Object.fromEntries(url.searchParams),
+        ),
+      );
+    if (root === "suppliers") {
+      if (!id && method === "GET")
+        return response(
+          await commercial.suppliers(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      if (!id && method === "POST")
+        return response(
+          await commercial.saveSupplier(db, actor, undefined, await body(req)),
+        );
+      if (id && method === "PUT")
+        return response(
+          await commercial.saveSupplier(db, actor, uuid(id), await body(req)),
+        );
+    }
+    if (root === "purchase-orders") {
+      if (!id && method === "GET")
+        return response(
+          await commercial.listPurchaseOrders(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      if (!id && method === "POST")
+        return response(
+          await commercial.createPurchaseOrder(db, actor, await body(req)),
+        );
+      if (id && action === "approve" && method === "POST") {
+        const input = z
+          .object({ version: z.number().int().positive() })
+          .parse(await body(req));
+        return response(
+          await commercial.approvePurchaseOrder(
+            db,
+            actor,
+            uuid(id),
+            input.version,
+          ),
+        );
+      }
+      if (id && action === "receipts" && method === "POST")
+        return response(
+          await commercial.createGoodsReceipt(
+            db,
+            actor,
+            uuid(id),
+            await body(req),
+          ),
+        );
+    }
+    if (
+      root === "goods-receipts" &&
+      id === "for-po" &&
+      action &&
+      method === "GET"
+    )
+      return response(
+        await commercial.listGoodsReceipts(db, actor, uuid(action)),
+      );
+    if (
+      root === "goods-receipts" &&
+      id &&
+      action === "post" &&
+      method === "POST"
+    ) {
+      const input = z
+        .object({ version: z.number().int().positive() })
+        .parse(await body(req));
+      return response(
+        await commercial.postGoodsReceipt(db, actor, uuid(id), input.version),
+      );
+    }
     if (root === "product-images" && id && method === "GET") {
-      const image = await productImages.file(db, actor, uuid(id), action === "thumbnail");
+      const image = await productImages.file(
+        db,
+        actor,
+        uuid(id),
+        action === "thumbnail",
+      );
       const download = url.searchParams.get("download") === "1";
       return new Response(image.data, {
         headers: {
           "Content-Type": image.mime,
           "Cache-Control": "private, max-age=3600",
-          ...(download ? { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(image.name)}` } : {}),
+          ...(download
+            ? {
+                "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(image.name)}`,
+              }
+            : {}),
         },
       });
     }
     if (root === "learned-delivery-matches") {
       if (!id && method === "GET")
-        return response(await handover.learnedMatches(db, actor, Object.fromEntries(url.searchParams)));
+        return response(
+          await handover.learnedMatches(
+            db,
+            actor,
+            Object.fromEntries(url.searchParams),
+          ),
+        );
       if (id && method === "PUT")
-        return response(await handover.updateLearnedMatch(db, actor, decodeURIComponent(id), await body(req)));
+        return response(
+          await handover.updateLearnedMatch(
+            db,
+            actor,
+            decodeURIComponent(id),
+            await body(req),
+          ),
+        );
       if (id && method === "DELETE")
-        return response(await handover.deleteLearnedMatch(db, actor, decodeURIComponent(id), await body(req)));
+        return response(
+          await handover.deleteLearnedMatch(
+            db,
+            actor,
+            decodeURIComponent(id),
+            await body(req),
+          ),
+        );
     }
     if (root === "quotation-templates") {
       if (!id && method === "GET")
         return response(await handover.listTemplates(db, actor));
       if (!id && method === "POST")
-        return response(await handover.saveTemplate(db, actor, undefined, await body(req)));
+        return response(
+          await handover.saveTemplate(db, actor, undefined, await body(req)),
+        );
       if (id) {
         uuid(id);
         if (!action && method === "PUT")
-          return response(await handover.saveTemplate(db, actor, id, await body(req)));
+          return response(
+            await handover.saveTemplate(db, actor, id, await body(req)),
+          );
         if (!action && method === "DELETE")
-          return response(await handover.deleteTemplate(db, actor, id, await body(req)));
+          return response(
+            await handover.deleteTemplate(db, actor, id, await body(req)),
+          );
         if (action === "duplicate" && method === "POST")
           return response(await handover.duplicateTemplate(db, actor, id));
         if (action === "instantiate" && method === "POST")
@@ -149,18 +465,37 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
     }
     if (root === "quotation-price-history" && method === "GET")
-      return response(await handover.recentPrices(db, actor, Object.fromEntries(url.searchParams)));
+      return response(
+        await handover.recentPrices(
+          db,
+          actor,
+          Object.fromEntries(url.searchParams),
+        ),
+      );
     if (root === "quotation-previous-prices" && method === "POST")
-      return response(await handover.reusableCustomerPrices(db, actor, await body(req)));
+      return response(
+        await handover.reusableCustomerPrices(db, actor, await body(req)),
+      );
     if (root === "templates" && method === "GET") {
       auth.requirePermission(actor, "IMPORT_CONFIRM");
-      const kind = z.enum(["simple", "supplier-simple", "advanced", "public-discount", "supplier-markup"]).parse(id);
+      const kind = z
+        .enum([
+          "simple",
+          "supplier-simple",
+          "advanced",
+          "public-discount",
+          "supplier-markup",
+        ])
+        .parse(id);
       if (kind === "advanced") auth.requirePermission(actor, "COST_VIEW");
-      const generated = kind === "public-discount" || kind === "supplier-markup";
+      const generated =
+        kind === "public-discount" || kind === "supplier-markup";
       return new Response(
         generated
           ? await basicImportTemplate(kind)
-          : await fs.readFile(path.join(process.cwd(), "assets", "templates", kind + ".xlsx")),
+          : await fs.readFile(
+              path.join(process.cwd(), "assets", "templates", kind + ".xlsx"),
+            ),
         {
           headers: {
             "Content-Type":
@@ -483,7 +818,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(await admin.bulkPrice(db, actor, await body(req)));
       if (id && action === "images") {
         const productId = uuid(id);
-        if (method === "GET") return response(await productImages.list(db, actor, productId));
+        if (method === "GET")
+          return response(await productImages.list(db, actor, productId));
         if (method === "POST") {
           const bytes = await readLimited(req, 6 * 1024 * 1024);
           const form = await new Response(new Uint8Array(bytes), {
@@ -493,15 +829,38 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           assert(file instanceof File, 400, "Choose an image to upload");
           return response(
             await db.transaction((tx) =>
-              productImages.upload(tx, actor, productId, file, String(form.get("caption") ?? "")),
+              productImages.upload(
+                tx,
+                actor,
+                productId,
+                file,
+                String(form.get("caption") ?? ""),
+              ),
             ),
             201,
           );
         }
-        if (method === "PUT") return response(await productImages.update(db, actor, productId, await body(req)));
+        if (method === "PUT")
+          return response(
+            await productImages.update(db, actor, productId, await body(req)),
+          );
         if (method === "DELETE") {
-          const input = z.object({ imageId: z.string().uuid(), version: z.number().int().positive() }).strict().parse(await body(req));
-          return response(await productImages.remove(db, actor, productId, input.imageId, input.version));
+          const input = z
+            .object({
+              imageId: z.string().uuid(),
+              version: z.number().int().positive(),
+            })
+            .strict()
+            .parse(await body(req));
+          return response(
+            await productImages.remove(
+              db,
+              actor,
+              productId,
+              input.imageId,
+              input.version,
+            ),
+          );
         }
       }
       if (id && action === "aliases" && method === "POST") {
@@ -551,7 +910,19 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         const scope = url.searchParams.get("scope") ?? "mine";
         if (scope === "all") auth.requirePermission(actor, "QUOTE_VIEW_ALL");
         const status = z
-          .enum(["", "DRAFT", "ISSUED"])
+          .enum([
+            "",
+            "DRAFT",
+            "PENDING_APPROVAL",
+            "APPROVED",
+            "REJECTED",
+            "ISSUED",
+            "SENT",
+            "VIEWED",
+            "ACCEPTED",
+            "DECLINED",
+            "EXPIRED",
+          ])
           .parse(url.searchParams.get("status") ?? "");
         const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
         const from = url.searchParams.get("from"),
@@ -644,6 +1015,22 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         }
         if (action === "review" && method === "POST")
           return response(await quotes.reviewIssue(db, actor, id, settings));
+        if (action === "submit-approval" && method === "POST")
+          return response(
+            await quoteLifecycle.submitForApproval(db, actor, id, settings),
+          );
+        if (action === "revision" && method === "POST")
+          return response(
+            await quoteLifecycle.createRevision(db, actor, id, settings),
+          );
+        if (action === "customer-link" && method === "POST") {
+          const input = z
+            .object({ days: z.number().int().min(1).max(90).default(30) })
+            .parse(await body(req));
+          return response(
+            await quoteLifecycle.createCustomerLink(db, actor, id, input.days),
+          );
+        }
         if (action === "issue" && method === "POST") {
           const { token } = z
             .object({ token: z.string().length(64) })
@@ -669,9 +1056,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (action === "pdf" && method === "POST") {
           return response(
             await db.transaction(async (tx) => {
-              await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [
-                id,
-              ]);
+              await tx.query(
+                "SELECT id FROM quotations WHERE id=$1 FOR UPDATE",
+                [id],
+              );
               const q = await quotes.getQuote(tx, actor, id);
               quotes.assertQuoteReadyForOutput(q);
               const snapshot = {
@@ -785,7 +1173,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           (
             await db.query(
               "SELECT * FROM customers WHERE name ILIKE $1 OR number ILIKE $1 ORDER BY CASE WHEN btrim(number)=$2 THEN 0 ELSE 1 END,name LIMIT 50",
-              ["%" + (url.searchParams.get("q") ?? "").slice(0, 100) + "%", (url.searchParams.get("q") ?? "").slice(0, 100).trim()],
+              [
+                "%" + (url.searchParams.get("q") ?? "").slice(0, 100) + "%",
+                (url.searchParams.get("q") ?? "").slice(0, 100).trim(),
+              ],
             )
           ).rows,
         );
@@ -868,9 +1259,18 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             await imports.mapRows(db, actor, id, await body(req)),
           );
         if (action === "header" && method === "POST")
-          return response(await deliveryQuoteImports.updateHeader(db, actor, id, await body(req)));
+          return response(
+            await deliveryQuoteImports.updateHeader(
+              db,
+              actor,
+              id,
+              await body(req),
+            ),
+          );
         if (action === "correction" && method === "POST")
-          return response(await handover.correctCatalogImport(db, actor, id, await body(req)));
+          return response(
+            await handover.correctCatalogImport(db, actor, id, await body(req)),
+          );
         if (action === "review" && method === "POST")
           return response(
             await imports.reviewRows(db, actor, id, await body(req)),
@@ -1202,7 +1602,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             await deliveryQuoteImports.reopen(db, actor, id, await body(req)),
           );
         if (action === "correction" && method === "POST")
-          return response(await handover.correctDeliveryImport(db, actor, id, await body(req)));
+          return response(
+            await handover.correctDeliveryImport(
+              db,
+              actor,
+              id,
+              await body(req),
+            ),
+          );
         if (!action && method === "DELETE")
           return response(await deliveryQuoteImports.remove(db, actor, id));
       }
@@ -1420,11 +1827,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                  AND ($3='ALL' OR h.source=$3)
                ORDER BY h.created_at ${direction},h.id ${direction}
                LIMIT 300`,
-              [
-                filters.productId ?? null,
-                filters.q,
-                filters.source,
-              ],
+              [filters.productId ?? null, filters.q, filters.source],
             )
           ).rows,
         );

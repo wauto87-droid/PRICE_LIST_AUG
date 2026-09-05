@@ -23,7 +23,8 @@ export default function Quotations({
     [review, setReview] = useState<any>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [pdf, setPdf] = useState<any>(null);
+    [pdf, setPdf] = useState<any>(null),
+    [shareLink, setShareLink] = useState("");
   const [filters, setFilters] = useState({
     q: "",
     status: "",
@@ -112,7 +113,14 @@ export default function Quotations({
           >
             <option value="">All / الكل</option>
             <option>DRAFT</option>
+            <option>PENDING_APPROVAL</option>
+            <option>APPROVED</option>
+            <option>REJECTED</option>
             <option>ISSUED</option>
+            <option>SENT</option>
+            <option>VIEWED</option>
+            <option>ACCEPTED</option>
+            <option>DECLINED</option>
           </select>
         </label>
         <label>
@@ -181,9 +189,11 @@ export default function Quotations({
                       "pill " + (q.status === "ISSUED" ? "success" : "")
                     }
                   >
-                    {q.status === "ISSUED"
-                      ? t("Issued", "صادر")
-                      : t("Draft", "مسودة")}
+                    {!["DRAFT", "ISSUED"].includes(q.status)
+                      ? q.status.replaceAll("_", " ")
+                      : q.status === "ISSUED"
+                        ? t("Issued", "صادر")
+                        : t("Draft", "مسودة")}
                   </span>
                 </td>
                 <td>SAR {q.totals.total}</td>
@@ -239,7 +249,9 @@ export default function Quotations({
             {selected.lines.map((l: any, i: number) => (
               <div className="quote-line" key={i}>
                 <span>
-                  <strong>{i + 1}. {l.partNumber}</strong>
+                  <strong>
+                    {i + 1}. {l.partNumber}
+                  </strong>
                   <small>
                     {l.source === "CUSTOM" || l.input?.type === "CUSTOM"
                       ? t("Custom item", "صنف مخصص")
@@ -254,7 +266,8 @@ export default function Quotations({
               </div>
             ))}
             <p className="text-end">
-              {t("Total Quantity", "إجمالي الكمية")}: {formatQuantity(totalQuantity)}
+              {t("Total Quantity", "إجمالي الكمية")}:{" "}
+              {formatQuantity(totalQuantity)}
             </p>
             <h3 className="text-end">SAR {selected.totals.total}</h3>
             {review && (
@@ -314,35 +327,104 @@ export default function Quotations({
               </div>
             )}
             <small className="muted">
-              {t("Internal reference", "المرجع الداخلي")}: {selected.internalReference}
+              {t("Internal reference", "المرجع الداخلي")}:{" "}
+              {selected.internalReference}
             </small>
             <div className="actions wrap">
-              {selected.status === "DRAFT" && (
+              {["DRAFT", "REJECTED", "APPROVED"].includes(selected.status) && (
                 <>
-                  <button disabled={busy} onClick={() => onOpen(selected)}>
+                  <button
+                    disabled={busy || selected.status === "APPROVED"}
+                    onClick={() => onOpen(selected)}
+                  >
                     {t("Edit quotation", "تعديل عرض السعر")}
                   </button>
-                  {user.permissions.includes("QUOTE_ISSUE") && (
-                    <button
-                      className="primary"
-                      disabled={busy}
-                      onClick={() =>
-                        action(async () =>
-                          setReview(
-                            await api(
-                              "quotations/" + selected.id + "/review",
+                  {user.permissions.includes("QUOTE_ISSUE") &&
+                    selected.status === "APPROVED" && (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          action(async () =>
+                            setReview(
+                              await api(
+                                "quotations/" + selected.id + "/review",
+                                "POST",
+                                {},
+                              ),
+                            ),
+                          )
+                        }
+                      >
+                        {t("Review & issue", "مراجعة وإصدار")}
+                      </button>
+                    )}
+                  {user.permissions.includes("QUOTE_ISSUE") &&
+                    selected.status !== "APPROVED" && (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          action(async () => {
+                            const result = await api(
+                              "quotations/" + selected.id + "/submit-approval",
                               "POST",
                               {},
-                            ),
-                          ),
-                        )
-                      }
-                    >
-                      {t("Review & issue", "مراجعة وإصدار")}
-                    </button>
-                  )}
+                            );
+                            setSelected({ ...selected, status: result.status });
+                          })
+                        }
+                      >
+                        {t("Submit for approval", "إرسال للموافقة")}
+                      </button>
+                    )}
                 </>
               )}
+              {[
+                "ISSUED",
+                "SENT",
+                "VIEWED",
+                "ACCEPTED",
+                "DECLINED",
+                "EXPIRED",
+              ].includes(selected.status) && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    action(async () =>
+                      onOpen(
+                        await api(
+                          "quotations/" + selected.id + "/revision",
+                          "POST",
+                          {},
+                        ),
+                      ),
+                    )
+                  }
+                >
+                  {t("Create revision", "إنشاء مراجعة")}
+                </button>
+              )}
+              {["ISSUED", "SENT", "VIEWED"].includes(selected.status) &&
+                user.permissions.includes("QUOTE_ISSUE") && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      action(async () => {
+                        const result = await api(
+                          "quotations/" + selected.id + "/customer-link",
+                          "POST",
+                          { days: 30 },
+                        );
+                        const link = `${location.origin}${appPath("/customer-quotation/" + result.token)}`;
+                        setShareLink(link);
+                        await navigator.clipboard?.writeText(link);
+                      })
+                    }
+                  >
+                    {t("Copy customer link", "نسخ رابط العميل")}
+                  </button>
+                )}
               <button
                 disabled={busy}
                 onClick={() =>
@@ -403,6 +485,14 @@ export default function Quotations({
                   </button>
                 )}
             </div>
+            {shareLink && (
+              <div className="notice">
+                <strong>
+                  {t("Customer link copied", "تم نسخ رابط العميل")}
+                </strong>
+                <small className="break-all">{shareLink}</small>
+              </div>
+            )}
             {pdf &&
               (pdf.status === "DONE" ? (
                 <a

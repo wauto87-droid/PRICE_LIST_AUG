@@ -8,6 +8,7 @@ import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
 import Admin from "@/frontend/Admin";
 import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
+import Commercial from "@/frontend/Commercial";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
@@ -417,6 +418,9 @@ export default function App() {
               ["draft", "Quotation", "عرض السعر"],
               ["delivery", "Delivery note to quotation", "إذن التسليم إلى عرض سعر"],
               ["quotations", "Quotations", "العروض"],
+              ...(session.user.permissions.includes("COMMERCIAL_VIEW")
+                ? [["commercial", "Commercial", "التجاري"]]
+                : []),
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [["admin", "Admin", "الإدارة"]]
                 : []),
@@ -457,6 +461,8 @@ export default function App() {
                             "Delivery note to quotation",
                             "إذن التسليم إلى عرض سعر",
                           )
+                      : tab === "commercial"
+                        ? t("Commercial operations", "العمليات التجارية")
                       : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
@@ -590,6 +596,14 @@ export default function App() {
                     "Administration requires an active connection.",
                     "الإدارة تتطلب اتصالاً نشطاً.",
                   )}
+                </div>
+              ))}
+            {tab === "commercial" &&
+              (online ? (
+                <Commercial t={t} user={session.user} />
+              ) : (
+                <div className="card notice">
+                  {t("Commercial operations require an active connection.", "العمليات التجارية تتطلب اتصالاً نشطاً.")}
                 </div>
               ))}
           </main>
