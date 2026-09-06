@@ -1,3 +1,5 @@
+import {event as commerceEvent} from '../storefront/commerce';
+import { available as storefrontAvailable, allocation as storefrontAllocation } from '../storefront/operations';
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DB } from "../core/db";
@@ -223,7 +225,7 @@ export async function stockBalances(db: DB, actor: Actor, raw: unknown) {
   const base = `FROM warehouses w CROSS JOIN products p
     LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM inventory_movements WHERE kind NOT IN ('RESERVE','RELEASE') GROUP BY warehouse_id,product_id) m
       ON m.warehouse_id=w.id AND m.product_id=p.id
-    LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM stock_reservations WHERE status='ACTIVE' GROUP BY warehouse_id,product_id) r
+    LEFT JOIN (SELECT warehouse_id,product_id,sum(quantity) quantity FROM (SELECT warehouse_id,product_id,quantity FROM stock_reservations WHERE status='ACTIVE' UNION ALL SELECT warehouse_id,product_id,quantity FROM commerce_holds WHERE status='ACTIVE') all_reservations GROUP BY warehouse_id,product_id) r
       ON r.warehouse_id=w.id AND r.product_id=p.id
     WHERE w.active AND p.active AND ${where.join(" AND ")}`;
   const count = Number(
@@ -434,6 +436,8 @@ export async function convertAcceptedQuotation(
       409,
       "Only an accepted quotation can become a Sales Order",
     );
+    const converted=await one(tx,'SELECT * FROM sales_orders WHERE quotation_id=$1',[quotationId]);if(converted)return converted;
+    assert(!(await one(tx,'SELECT id FROM ecommerce_orders WHERE quotation_id=$1',[quotationId])),409,'This quotation already has a storefront order; fulfill that order instead');
     const warehouse: any = await one(
       tx,
       "SELECT * FROM warehouses WHERE id=$1 AND active FOR UPDATE",
@@ -479,7 +483,7 @@ async function availableForUpdate(
     db,
     `SELECT
     COALESCE((SELECT sum(quantity) FROM inventory_movements WHERE warehouse_id=$1 AND product_id=$2 AND kind NOT IN ('RESERVE','RELEASE')),0)
-    -COALESCE((SELECT sum(quantity) FROM stock_reservations WHERE warehouse_id=$1 AND product_id=$2 AND status='ACTIVE'),0) available`,
+    -COALESCE((SELECT sum(quantity) FROM stock_reservations WHERE warehouse_id=$1 AND product_id=$2 AND status='ACTIVE'),0)-COALESCE((SELECT sum(quantity) FROM commerce_holds WHERE warehouse_id=$1 AND product_id=$2 AND status='ACTIVE'),0) available`,
     [warehouseId, productId],
   );
   return new Decimal(String(row!.available));
@@ -682,7 +686,7 @@ export async function deliverSalesOrder(
           line.productId,
         );
         assert(
-          warehouse.allow_negative_stock || available.gte(qty),
+          warehouse.allow_negative_stock || available.add(d(line.reservedQuantity)).gte(qty),
           409,
           `Insufficient available stock for ${line.partNumber}`,
         );
@@ -760,6 +764,7 @@ export async function deliverSalesOrder(
       "INSERT INTO commercial_documents(id,kind,number,sales_order_id,status,snapshot,created_by,issued_at) VALUES($1,'DELIVERY_NOTE',$2,$3,'ISSUED',$4,$5,now())",
       [documentId, number, orderId, json(snapshot), actor.id],
     );
+    const web=await one(tx,'SELECT id,company_id,customer_account_id FROM ecommerce_orders WHERE sales_order_id=$1',[orderId]);if(web)await commerceEvent(tx,{orderId:web.id,companyId:web.company_id,accountId:web.customer_account_id,kind:'DELIVERY',message:complete?'Your order has been delivered.':'Part of your order has been delivered.'});
     await audit(
       tx,
       actor.id,
@@ -779,6 +784,7 @@ export async function stockAdjustment(db: DB, actor: Actor, raw: unknown) {
   requirePermission(actor, "INVENTORY_MANAGE");
   const data = z
     .object({
+      kind:z.enum(['OPENING','RECEIPT','ADJUSTMENT']).default('ADJUSTMENT'),
       warehouseId: z.string().uuid(),
       productId: z.string().uuid(),
       quantity: z.union([z.string(), z.number()]),
@@ -789,6 +795,7 @@ export async function stockAdjustment(db: DB, actor: Actor, raw: unknown) {
     .parse(raw);
   const qty = d(data.quantity),
     cost = d(data.unitCost);
+  assert(data.kind==='ADJUSTMENT'||qty.gt(0),400,'Opening stock and receipts require a positive quantity');
   assert(
     qty.isFinite() && !qty.isZero() && qty.decimalPlaces() <= 6,
     400,
@@ -836,7 +843,7 @@ export async function stockAdjustment(db: DB, actor: Actor, raw: unknown) {
     const id = randomUUID();
     await tx.query(
       `INSERT INTO inventory_movements(id,product_id,warehouse_id,kind,quantity,unit_cost,idempotency_key,reason,actor_id)
-      VALUES($1,$2,$3,'ADJUSTMENT',$4,$5,$6,$7,$8)`,
+      VALUES($1,$2,$3,$9,$4,$5,$6,$7,$8)`,
       [
         id,
         data.productId,
@@ -846,6 +853,7 @@ export async function stockAdjustment(db: DB, actor: Actor, raw: unknown) {
         data.idempotencyKey,
         data.reason,
         actor.id,
+        data.kind,
       ],
     );
     if (qty.gt(0))
@@ -1810,6 +1818,11 @@ export async function approveOnlineOrder(
       400,
       "Choose an active warehouse",
     );
+    if(web.payment_method==='BANK_TRANSFER')assert(new Decimal(web.paid_amount).gte(web.totals.total),409,'Verify full bank payment before fulfillment');
+    if(web.payment_method==='MOYASAR')assert(new Decimal(web.paid_amount).gte(web.totals.total),409,'Online payment is not confirmed');
+    const holds=(await tx.query("SELECT * FROM commerce_holds WHERE order_id=$1 AND status='ACTIVE'",[id])).rows;
+    if(holds.length)assert(holds.every(h=>h.warehouse_id===data.warehouseId),409,'Choose the warehouse holding this order');
+    if(!holds.length)await storefrontAllocation(tx,web.lines,data.warehouseId);
     const salesId = randomUUID(),
       number = await documentNumber(tx, "SALES_ORDER", "SO");
     const lines = web.lines.map((line: any, index: number) => ({
@@ -1820,7 +1833,7 @@ export async function approveOnlineOrder(
       description: line.description,
       unit: line.unit,
       quantity: String(line.quantity),
-      reservedQuantity: "0",
+      reservedQuantity: String(line.quantity),
       deliveredQuantity: "0",
       price: {
         quantity: line.quantity,
@@ -1831,7 +1844,7 @@ export async function approveOnlineOrder(
       },
     }));
     await tx.query(
-      "INSERT INTO sales_orders(id,number,customer,status,lines,totals,warehouse_id,source,created_by) VALUES($1,$2,$3,'CONFIRMED',$4,$5,$6,'ECOMMERCE',$7)",
+      "INSERT INTO sales_orders(id,number,customer,status,lines,totals,warehouse_id,source,created_by) VALUES($1,$2,$3,'RESERVED',$4,$5,$6,'ECOMMERCE',$7)",
       [
         salesId,
         number,
@@ -1846,6 +1859,8 @@ export async function approveOnlineOrder(
       "UPDATE ecommerce_orders SET status='CONFIRMED',warehouse_id=$2,sales_order_id=$3,updated_at=now() WHERE id=$1",
       [id, data.warehouseId, salesId],
     );
+    for(const line of lines)await tx.query("INSERT INTO stock_reservations(id,sales_order_id,line_key,product_id,warehouse_id,quantity,status) VALUES($1,$2,$3,$4,$5,$6,'ACTIVE')",[randomUUID(),salesId,line.key,line.productId,data.warehouseId,line.quantity]);
+    await tx.query("UPDATE commerce_holds SET status='CONVERTED' WHERE order_id=$1 AND status='ACTIVE'",[id]);
     await audit(
       tx,
       actor.id,
@@ -1858,5 +1873,5 @@ export async function approveOnlineOrder(
     return one(tx, "SELECT * FROM sales_orders WHERE id=$1", [salesId]);
   });
   assert(order, 500, "Unable to create Sales Order");
-  return reserveSalesOrder(db, actor, order.id);
+  return order;
 }

@@ -2,10 +2,24 @@
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
+import CommerceConsole from "./CommerceConsole";
+import ProductEditor, { blankProduct } from "./ProductEditor";
+import StoreInventory from "./StoreInventory";
 
-export default function StorefrontAdmin({ t }: { t: Translate }) {
+export default function StorefrontAdmin({
+  t,
+  user,
+  navigate,
+}: {
+  t: Translate;
+  user: any;
+  navigate: (section: any) => void;
+}) {
+  const [edit, setEdit] = useState<any>();
+  const [selected, setSelected] = useState<string[]>([]);
+  const can = (p: string) => user?.permissions?.includes(p);
   const [data, setData] = useState<any>(),
-    [tab, setTab] = useState("settings"),
+    [tab, setTab] = useState("overview"),
     [q, setQ] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -58,6 +72,14 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
       </div>
       <div className="actions">
         {[
+          ["overview", "Overview", "نظرة عامة"],
+          ["homepage", "Homepage", "الصفحة الرئيسية"],
+          ["customers", "Companies", "الشركات"],
+          ["pricing", "Company prices", "أسعار الشركات"],
+          ["quotes", "Requirements & quotes", "المتطلبات والعروض"],
+          ["orders", "Orders & payments", "الطلبات والمدفوعات"],
+          ["returns", "Returns & refunds", "المرتجعات والمبالغ المستردة"],
+          ["promotions", "Promotions", "العروض"],
           ["settings", "Store settings", "إعدادات المتجر"],
           ["products", "Products", "المنتجات"],
           ["zones", "Delivery zones", "مناطق التوصيل"],
@@ -72,6 +94,23 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
           </button>
         ))}
       </div>
+      <div className="actions">
+        {can("INVENTORY_VIEW") && (
+          <button onClick={() => setTab("inventory")}>
+            {t("Inventory & stock", "المخزون والأرصدة")}
+          </button>
+        )}
+        {can("INVENTORY_MANAGE") && (
+          <button onClick={() => navigate("warehouses")}>
+            {t("Warehouses", "المستودعات")}
+          </button>
+        )}
+        {can("SALES_ORDER_MANAGE") && (
+          <button onClick={() => navigate("orders")}>
+            {t("Fulfillment & deliveries", "التنفيذ والتسليم")}
+          </button>
+        )}
+      </div>
       {error && (
         <p className="notice error" role="alert">
           {error}
@@ -82,6 +121,26 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
         <button onClick={load}>{t("Load management", "تحميل الإدارة")}</button>
       ) : (
         <>
+          {[
+            "overview",
+            "homepage",
+            "customers",
+            "pricing",
+            "quotes",
+            "orders",
+            "returns",
+            "promotions",
+          ].includes(tab) && (
+            <CommerceConsole
+              tab={tab}
+              t={t}
+              products={data.products}
+              user={user}
+            />
+          )}
+          {tab === "inventory" && (
+            <StoreInventory t={t} products={data.products} user={user} />
+          )}
           {tab === "settings" && (
             <form
               key={data.settings.version}
@@ -98,6 +157,11 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
                   supportMobile: f.get("supportMobile"),
                   deliveryEnabled: f.has("deliveryEnabled"),
                   pickupEnabled: f.has("pickupEnabled"),
+                  businessEnabled: f.has("businessEnabled"),
+                  operationsEnabled: f.has("operationsEnabled"),
+                  bankTransferEnabled:f.has('bankTransferEnabled'),bankInstructions:String(f.get('bankInstructions')||''),
+                  onlineHoldMinutes: Number(f.get("onlineHoldMinutes")),
+                  bankHoldMinutes: Number(f.get("bankHoldMinutes")),
                 });
               }}
             >
@@ -121,6 +185,7 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
                 {t("Store is open", "المتجر مفتوح")}
               </label>
               <div className="form-grid">
+                <label><input type="checkbox" name="bankTransferEnabled" defaultChecked={data.settings.data.bankTransferEnabled!==false}/>{t('Enable reviewed bank transfers','تفعيل التحويل البنكي بعد المراجعة')}</label><label>{t('Bank payment instructions (beneficiary, bank, IBAN)','تعليمات التحويل (المستفيد، البنك، الآيبان)')}<textarea name="bankInstructions" defaultValue={data.settings.data.bankInstructions||''}/></label>
                 {[
                   ["companyName", "Company name", "اسم الشركة"],
                   [
@@ -173,6 +238,56 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
                   "الدفع بالبطاقة والتحقق يتطلبان إعداد المزود على الخادم.",
                 )}
               </p>
+              <div className="form-grid">
+                <label>
+                  <input
+                    name="businessEnabled"
+                    type="checkbox"
+                    defaultChecked={data.settings.data.businessEnabled}
+                  />
+                  {t(
+                    "Enable company portal and requests",
+                    "تفعيل بوابة الشركات والطلبات",
+                  )}
+                </label>
+                <label>
+                  <input
+                    name="operationsEnabled"
+                    type="checkbox"
+                    defaultChecked={data.settings.data.operationsEnabled}
+                  />
+                  {t(
+                    "Enable payment operations and returns",
+                    "تفعيل عمليات الدفع والمرتجعات",
+                  )}
+                </label>
+                <label>
+                  {t(
+                    "Online payment hold (minutes)",
+                    "حجز الدفع الإلكتروني (دقائق)",
+                  )}
+                  <input
+                    type="number"
+                    min="5"
+                    max="120"
+                    name="onlineHoldMinutes"
+                    defaultValue={data.settings.data.onlineHoldMinutes || 15}
+                  />
+                </label>
+                <label>
+                  {t(
+                    "Bank review hold (minutes)",
+                    "حجز مراجعة التحويل (دقائق)",
+                  )}
+                  <input
+                    type="number"
+                    min="30"
+                    max="10080"
+                    name="bankHoldMinutes"
+                    defaultValue={data.settings.data.bankHoldMinutes || 1440}
+                  />
+                </label>
+              </div>
               <button className="primary" disabled={busy}>
                 {t("Save store settings", "حفظ إعدادات المتجر")}
               </button>
@@ -180,6 +295,48 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
           )}
           {tab === "products" && (
             <>
+              <div className="actions">
+                {can("PRODUCT_CREATE") && can("COST_VIEW") && (
+                  <button
+                    className="primary"
+                    onClick={() => setEdit({ ...blankProduct,vat:data.defaultVat })}
+                  >
+                    {t("Add product", "إضافة منتج")}
+                  </button>
+                )}
+                {can("IMPORT_EXCEL") && (
+                  <a href={appPath("/") + "?commerce=imports"}>
+                    {t("Bulk import workspace", "مساحة الاستيراد الجماعي")}
+                  </a>
+                )}
+                {selected.length > 0 && (
+                  <button
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api("storefront-admin/bulk-publish", "PUT", {
+                          items: data.products
+                            .filter((p: any) => selected.includes(p.id))
+                            .map((p: any) => ({
+                              id: p.id,
+                              version: p.version,
+                              published: true,
+                            })),
+                        });
+                        setSelected([]);
+                        await load();
+                      } catch (e) {
+                        setError((e as Error).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    {t("Publish selected", "نشر المحدد")} ({selected.length})
+                  </button>
+                )}
+              </div>
               <form
                 className="actions"
                 onSubmit={(e) => {
@@ -216,8 +373,112 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
                     {data.products.map((p: any) => (
                       <tr key={p.id}>
                         <td>
+                          <input
+                            type="checkbox"
+                            aria-label={
+                              t("Select product", "اختيار المنتج") +
+                              " " +
+                              p.part_number
+                            }
+                            checked={selected.includes(p.id)}
+                            onChange={(e) =>
+                              setSelected((v) =>
+                                e.target.checked
+                                  ? [...v, p.id]
+                                  : v.filter((id) => id !== p.id),
+                              )
+                            }
+                          />
                           <strong>{p.part_number}</strong>
                           <div>{p.description}</div>
+                          <details>
+                            <summary>
+                              {t(
+                                "Store description & SEO",
+                                "وصف المتجر وتحسين البحث",
+                              )}
+                            </summary>
+                            <form
+                              className="form-grid"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const f = new FormData(e.currentTarget);
+                                save("storefront-admin/products/" + p.id, {
+                                  published: p.storefront_published,
+                                  version: p.version,
+                                  slug: f.get("slug") || undefined,
+                                  content: {
+                                    description: f.get("description") || "",
+                                    seoTitle: f.get("seoTitle") || "",
+                                    seoDescription:
+                                      f.get("seoDescription") || "",
+                                  },
+                                });
+                              }}
+                            >
+                              <label>
+                                {t("Product URL slug", "عنوان رابط المنتج")}
+                                <input
+                                  name="slug"
+                                  defaultValue={p.storefront_slug || ""}
+                                  pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                                />
+                              </label>
+                              <label>
+                                {t("Store description", "وصف المتجر")}
+                                <textarea
+                                  name="description"
+                                  defaultValue={
+                                    p.storefront_content?.description || ""
+                                  }
+                                />
+                              </label>
+                              <label>
+                                {t("Search engine title", "عنوان محرك البحث")}
+                                <input
+                                  name="seoTitle"
+                                  defaultValue={
+                                    p.storefront_content?.seoTitle || ""
+                                  }
+                                />
+                              </label>
+                              <label>
+                                {t(
+                                  "Search engine description",
+                                  "وصف محرك البحث",
+                                )}
+                                <textarea
+                                  name="seoDescription"
+                                  defaultValue={
+                                    p.storefront_content?.seoDescription || ""
+                                  }
+                                />
+                              </label>
+                              <button disabled={busy}>
+                                {t("Save content", "حفظ المحتوى")}
+                              </button>
+                            </form>
+                          </details>
+                          {can("PRODUCT_EDIT") && can("COST_VIEW") && (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const r = await api("products/" + p.id);
+                                  setEdit({
+                                    ...r,
+                                    partNumber: r.part_number || r.partNumber,
+                                  });
+                                } catch (e) {
+                                  setError((e as Error).message);
+                                }
+                              }}
+                            >
+                              {t(
+                                "Edit product / images / price",
+                                "تعديل المنتج / الصور / السعر",
+                              )}
+                            </button>
+                          )}
                         </td>
                         <td>
                           <button
@@ -401,6 +662,31 @@ export default function StorefrontAdmin({ t }: { t: Translate }) {
             </>
           )}
         </>
+      )}
+      {edit && (
+        <ProductEditor
+          t={t}
+          initial={edit}
+          actionBusy={busy}
+          onClose={() => setEdit(undefined)}
+          onSave={async (p) => {
+            setBusy(true);
+            try {
+              await api(
+                "products" + (edit.id ? "/" + edit.id : ""),
+                edit.id ? "PUT" : "POST",
+                p,
+              );
+              setEdit(undefined);
+              await load();
+            } catch (e) {
+              setError((e as Error).message);
+              throw e;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
       )}
     </section>
   );

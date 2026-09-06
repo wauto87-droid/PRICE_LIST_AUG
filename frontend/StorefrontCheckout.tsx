@@ -180,11 +180,33 @@ export function StoreAccount({
         changed((await api("storefront/account/me")).account);
         close();
       } else {
+        const file = f.get("supportingDocument");
+        let supportingDocument;
+        if (file instanceof File && file.size) {
+          if (file.size > 1024 * 1024)
+            throw new Error(
+              t("Use a PDF up to 1 MB", "استخدم PDF بحجم أقصى 1 ميغابايت"),
+            );
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          supportingDocument = { name: file.name, base64 };
+        }
         await api("storefront/account/register", "POST", {
+          supportingDocument,
           name: f.get("name"),
           email,
           mobile: f.get("mobile"),
           customerCode: f.get("customerCode"),
+          registrationNumber: f.get("registrationNumber") || "",
+          taxNumber: f.get("taxNumber") || "",
+          contactPerson: f.get("contactPerson") || "",
+          address: f.get("companyAddress") || "",
+          invitationToken:
+            new URLSearchParams(location.search).get("invitation") || undefined,
           password: f.get("password"),
           ...verification,
         });
@@ -270,6 +292,41 @@ export function StoreAccount({
                     autoComplete="organization"
                   />
                 </label>
+                <div className="sf-form">
+                  {[
+                    [
+                      "registrationNumber",
+                      "Company registration number",
+                      "رقم السجل التجاري",
+                    ],
+                    ["taxNumber", "Tax number", "الرقم الضريبي"],
+                    ["contactPerson", "Contact person", "الشخص المسؤول"],
+                    ["companyAddress", "Company address", "عنوان الشركة"],
+                  ].map(([name, en, ar]) => (
+                    <label key={name}>
+                      {t(en, ar)}
+                      <input
+                        name={name}
+                        required={
+                          !new URLSearchParams(location.search).has(
+                            "invitation",
+                          ) && name !== "taxNumber"
+                        }
+                      />
+                    </label>
+                  ))}
+                  <label>
+                    {t(
+                      "Registration document (PDF, up to 1 MB)",
+                      "مستند التسجيل (PDF حتى 1 ميغابايت)",
+                    )}
+                    <input
+                      name="supportingDocument"
+                      type="file"
+                      accept="application/pdf"
+                    />
+                  </label>
+                </div>
                 <label>
                   {t("Customer code (optional)", "رمز العميل (اختياري)")}
                   <input name="customerCode" />
@@ -340,6 +397,7 @@ export default function StorefrontCheckout({
   config,
   t,
   close,
+  requestQuote,
 }: {
   cart: StoreCart;
   setCart: React.Dispatch<React.SetStateAction<StoreCart>>;
@@ -347,6 +405,7 @@ export default function StorefrontCheckout({
   config: any;
   t: Translate;
   close: () => void;
+  requestQuote?:()=>void;
 }) {
   const [step, setStep] = useState(0),
     [contact, setContact] = useState({ name: "", mobile: "", email: "" }),
@@ -359,7 +418,7 @@ export default function StorefrontCheckout({
     [zone, setZone] = useState(""),
     [warehouse, setWarehouse] = useState(""),
     [address, setAddress] = useState(""),
-    [method, setMethod] = useState("BANK_TRANSFER"),
+    [method, setMethod] = useState(config?.bankTransferEnabled!==false?'BANK_TRANSFER':config?.onlinePaymentEnabled?'MOYASAR':account?.credit_enabled?'CREDIT_TERMS':''),
     [quote, setQuote] = useState<any>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -378,7 +437,10 @@ export default function StorefrontCheckout({
       }
     } catch {}
   }, []);
+  const [coupon, setCoupon] = useState("");
   const payload = () => ({
+    requestId: new URLSearchParams(location.search).get("request") || undefined,
+    coupon: coupon || undefined,
     lines: lines.map((l) => ({
       productId: l.id,
       quantity: String(l.quantity),
@@ -454,6 +516,26 @@ export default function StorefrontCheckout({
       sessionStorage.setItem("amt-store-checkout", JSON.stringify(body));
       const r = await api("storefront/checkout", "POST", body);
       setResult(r);
+      if (!account && body.verificationToken) {
+        try {
+          const saved = JSON.parse(
+            localStorage.getItem("amt-store-receipts") || "[]",
+          );
+          localStorage.setItem(
+            "amt-store-receipts",
+            JSON.stringify(
+              [
+                {
+                  orderId: r.orderId,
+                  orderNumber: r.orderNumber,
+                  verificationToken: body.verificationToken,
+                },
+                ...saved.filter((o: any) => o.orderId !== r.orderId),
+              ].slice(0, 30),
+            ),
+          );
+        } catch {}
+      }
       if (r.status === "PENDING_REVIEW" || r.status === "CONFIRMED")
         complete(body);
       if (r.redirectUrl) {
@@ -519,6 +601,7 @@ export default function StorefrontCheckout({
       title={t("Your cart & checkout", "السلة وإتمام الطلب")}
       close={close}
     >
+      {config?.businessEnabled&&requestQuote&&!result&&<button className="sf-primary" onClick={requestQuote}>{t('Request best price / quote for this cart','اطلب أفضل سعر / عرض لهذه السلة')}</button>}
       {error && (
         <p className="sf-alert" role="alert">
           {error}
@@ -548,6 +631,7 @@ export default function StorefrontCheckout({
                   "احتفظ برقم الطلب للرجوع إليه.",
                 )}
           </p>
+          {method==='BANK_TRANSFER'&&<div className="card"><h3>{t('Bank transfer instructions','تعليمات التحويل البنكي')}</h3><p style={{whiteSpace:'pre-line'}}>{config.bankInstructions||t('Contact our sales team with your order number for bank details.','تواصل مع فريق المبيعات برقم طلبك للحصول على تفاصيل البنك.')}</p>{config.supportMobile&&<a href={'tel:'+config.supportMobile}>{config.supportMobile}</a>}</div>}
           {result.status === "PENDING_PAYMENT" && (
             <button disabled={busy} onClick={refresh}>
               {t("Check payment status", "التحقق من حالة الدفع")}
@@ -797,15 +881,12 @@ export default function StorefrontCheckout({
                   value={method}
                   onChange={(e) => setMethod(e.target.value)}
                 >
-                  <option value="BANK_TRANSFER">
+                  {config?.bankTransferEnabled!==false&&<option value="BANK_TRANSFER">
                     {t(
                       "Bank transfer — details on confirmation",
                       "تحويل بنكي — التفاصيل عند التأكيد",
                     )}
-                  </option>
-                  <option value="CASH">
-                    {t("Cash on confirmation", "نقداً عند التأكيد")}
-                  </option>
+                  </option>}
                   {config?.onlinePaymentEnabled && (
                     <option value="MOYASAR">
                       {t("Card / mada", "بطاقة / مدى")}
@@ -817,6 +898,13 @@ export default function StorefrontCheckout({
                     </option>
                   )}
                 </select>
+              </label>
+              <label>
+                {t("Coupon (optional)", "قسيمة (اختياري)")}
+                <input
+                  value={coupon}
+                  onChange={(e) => setCoupon(e.target.value)}
+                />
               </label>
               <button className="sf-primary" disabled={busy}>
                 {t("Review order & total", "مراجعة الطلب والإجمالي")}

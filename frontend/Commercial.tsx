@@ -637,7 +637,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
       )}
       {section === "storefront" &&
         user.permissions.includes("STOREFRONT_MANAGE") && (
-          <StorefrontAdmin t={t} />
+          <StorefrontAdmin t={t} user={user} navigate={setSection} />
         )}
       {!loading && ["orders", "purchasing", "storefront"].includes(section) && (
         <CommercialLists

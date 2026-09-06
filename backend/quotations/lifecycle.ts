@@ -494,7 +494,7 @@ export async function customerView(db: DB, token: string) {
     return {
       number: access.number,
       customer: access.customer,
-      lines: access.lines,
+      lines: access.lines.map((l:any)=>({source:l.source,productId:l.productId,partNumber:l.partNumber,description:l.description,unit:l.unit,price:l.price?{quantity:l.price.quantity,finalExcl:l.price.finalExcl,finalIncl:l.price.finalIncl,vatRate:l.price.vatRate,vatAmount:l.price.vatAmount,subtotal:l.price.subtotal,total:l.price.total}:null})),
       totals: access.totals,
       status: access.status,
       company: access.company_snapshot,
@@ -537,6 +537,7 @@ export async function customerRespond(db: DB, token: string, raw: unknown) {
       "UPDATE quotations SET status=$2,accepted_at=CASE WHEN $2='ACCEPTED' THEN now() ELSE accepted_at END,updated_at=now(),version=version+1 WHERE id=$1",
       [access.quotation_id, data.decision],
     );
+    await tx.query('UPDATE commerce_requests SET status=$2,version=version+1 WHERE quotation_id=$1',[access.quotation_id,data.decision]);
     await audit(
       tx,
       null,

@@ -15,6 +15,9 @@ import { appPath, APP_BASE_PATH } from "../../shared/paths";
 import { throttle } from "../auth/service";
 import fs from "node:fs/promises";
 import path from "node:path";
+import * as commerce from "./commerce";
+import * as operations from "./operations";
+import { checkoutQuote } from "./requirements";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const money = (v: unknown) => new Decimal(String(v ?? 0));
@@ -36,6 +39,10 @@ const publicSettings = (input: any) => {
     otpConfigured: Boolean(process.env.OTP_PROVIDER_URL),
     deliveryEnabled: row.data?.deliveryEnabled !== false,
     pickupEnabled: row.data?.pickupEnabled !== false,
+    businessEnabled: row.data?.businessEnabled === true,
+    operationsEnabled: row.data?.operationsEnabled === true,
+    bankTransferEnabled:row.data?.bankTransferEnabled!==false,
+    bankInstructions:row.data?.bankInstructions||'',
   };
 };
 
@@ -77,6 +84,11 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
       supportMobile: z.string().trim().max(40).default(""),
       deliveryEnabled: z.boolean().default(true),
       pickupEnabled: z.boolean().default(true),
+      businessEnabled: z.boolean().optional(),
+      operationsEnabled: z.boolean().optional(),
+      bankTransferEnabled:z.boolean().optional(),bankInstructions:z.string().max(2000).optional(),
+      onlineHoldMinutes: z.number().int().min(5).max(120).optional(),
+      bankHoldMinutes: z.number().int().min(30).max(10080).optional(),
     })
     .parse(raw);
   return db.transaction(async (tx) => {
@@ -92,7 +104,7 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
     const saved = (
       await tx.query(
         "UPDATE storefront_settings SET enabled=$1,data=$2,version=version+1,updated_at=now() WHERE id=1 RETURNING *",
-        [data.enabled, json(data)],
+        [data.enabled, json({ ...before!.data, ...data })],
       )
     ).rows[0];
     await audit(
@@ -117,21 +129,19 @@ const levelPrice = (row: any) => {
     .mul(money(100).sub(row.level_discount))
     .div(100);
 };
-const catalogBase = `SELECT p.id,p.part_number,p.description,p.unit,p.quantity_precision,p.storefront_slug,
-  p.storefront_content,p.details,p.keywords,b.name brand,c.name category,b.id brand_id,c.id category_id,
-  round(CASE WHEN l.method='FIXED' THEN l.fixed_price WHEN l.method='COST_MARKUP' THEN pp.cost*(100+l.markup)/100 ELSE l.list_price*(100-l.base_discount)/100 END,2) price_excl,
-  pp.vat,
-  COALESCE((SELECT sum(quantity) FROM inventory_movements m WHERE m.product_id=p.id AND m.kind NOT IN ('RESERVE','RELEASE')),0)-COALESCE((SELECT sum(quantity) FROM stock_reservations r WHERE r.product_id=p.id AND r.status='ACTIVE'),0) available
-  FROM products p JOIN product_pricing pp ON pp.product_id=p.id
-  JOIN LATERAL(SELECT * FROM product_selling_levels x WHERE x.product_id=p.id AND x.active ORDER BY CASE WHEN x.code=$1 THEN 0 WHEN x.code='RETAIL' THEN 1 WHEN x.code='END_CUSTOMER' THEN 2 ELSE 3 END,x.code LIMIT 1)l ON true
-  LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id
-  WHERE p.active AND p.storefront_published`;
+const catalogBase = `SELECT p.id,p.part_number,p.description,p.unit,p.quantity_precision,p.storefront_slug,p.storefront_content,p.details,p.keywords,b.name brand,c.name category,b.id brand_id,c.id category_id,resolved.price_excl,resolved.price_source,pp.vat,
+ COALESCE((SELECT sum(quantity) FROM inventory_movements m JOIN warehouses w ON w.id=m.warehouse_id WHERE m.product_id=p.id AND w.active AND m.kind NOT IN ('RESERVE','RELEASE')),0)-COALESCE((SELECT sum(quantity) FROM stock_reservations r WHERE r.product_id=p.id AND r.status='ACTIVE'),0)-COALESCE((SELECT sum(quantity) FROM commerce_holds h WHERE h.product_id=p.id AND h.status='ACTIVE'),0) available
+ FROM products p ${commerce.priceJoins("$1", "1")} LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id WHERE p.active AND p.storefront_published`;
 async function openStore(db: DB) {
   const store = await one(db, "SELECT * FROM storefront_settings WHERE id=1");
   assert(store?.enabled, 404, "Online store is not available");
   return store;
 }
-async function publicProduct(db: DB, r: any) {
+async function publicProduct(db: DB, r: any, account?: any) {
+  const resolved = {
+    price: r.price_excl == null ? null : String(r.price_excl),
+    source: r.price_source,
+  };
   const images = (
     await db.query(
       "SELECT id,caption FROM product_images WHERE product_id=$1 ORDER BY display_order,id",
@@ -164,11 +174,13 @@ async function publicProduct(db: DB, r: any) {
     brand: r.brand,
     category: r.category,
     images,
-    priceExcl: money(r.price_excl).toFixed(2),
-    priceIncl: money(r.price_excl)
-      .mul(money(r.vat).add(100))
-      .div(100)
-      .toFixed(2),
+    priceSource: resolved.source,
+    purchasable: resolved.price !== null && money(r.available).gt(0),
+    priceExcl: r.price_excl === null ? null : money(r.price_excl).toFixed(2),
+    priceIncl:
+      r.price_excl === null
+        ? null
+        : money(r.price_excl).mul(money(r.vat).add(100)).div(100).toFixed(2),
     availability: money(r.available).lte(0)
       ? "BACKORDER"
       : money(r.available).lte(5)
@@ -187,18 +199,20 @@ export async function catalog(db: DB, raw: unknown, account?: any) {
       availability: z
         .enum(["", "IN_STOCK", "LIMITED", "BACKORDER"])
         .default(""),
-      sort: z.enum(["part", "price-asc", "price-desc"]).default("part"),
+      sort: z
+        .enum(["part", "relevance", "price-asc", "price-desc"])
+        .default("relevance"),
     })
     .parse(raw);
   await openStore(db);
   const args: any[] = [
-    account?.price_level || "RETAIL",
+    account?.company_id || null,
     input.q.replace(/[\\%_]/g, "\\$&"),
     input.brand,
     input.category,
     input.availability,
   ];
-  const where = `($2='' OR part_number ILIKE '%'||$2||'%' OR description ILIKE '%'||$2||'%' OR keywords ILIKE '%'||$2||'%') AND ($3='' OR brand=$3) AND ($4='' OR category=$4) AND ($5='' OR CASE WHEN available<=0 THEN 'BACKORDER' WHEN available<=5 THEN 'LIMITED' ELSE 'IN_STOCK' END=$5)`;
+  const where = `($2='' OR part_number ILIKE '%'||$2||'%' OR description ILIKE '%'||$2||'%' OR keywords ILIKE '%'||$2||'%' OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=catalog.id AND a.normalized ILIKE '%'||regexp_replace(lower($2),'[^a-z0-9]','','g')||'%')) AND ($3='' OR brand=$3) AND ($4='' OR category=$4) AND ($5='' OR CASE WHEN available<=0 THEN 'BACKORDER' WHEN available<=5 THEN 'LIMITED' ELSE 'IN_STOCK' END=$5)`;
   const total = Number(
     (
       await one(
@@ -213,15 +227,20 @@ export async function catalog(db: DB, raw: unknown, account?: any) {
     Math.max(1, Math.ceil(total / input.pageSize)),
   );
   const order =
-    input.sort === "part"
-      ? "part_number,id"
-      : `round(price_excl*(100+vat)/100,2) ${input.sort === "price-desc" ? "DESC" : "ASC"},part_number,id`;
+    input.sort === "part" || input.sort === "relevance"
+      ? "CASE WHEN lower(part_number)=lower($2) THEN 0 WHEN regexp_replace(lower(part_number),'[^a-z0-9]','','g')=regexp_replace(lower($2),'[^a-z0-9]','','g') THEN 1 WHEN part_number ILIKE $2||'%' THEN 2 ELSE 3 END,part_number,id"
+      : `round(price_excl*(100+vat)/100,2) ${input.sort === "price-desc" ? "DESC" : "ASC"} NULLS LAST,part_number,id`;
   const rows = (
     await db.query(
       `WITH catalog AS (${catalogBase}) SELECT * FROM catalog WHERE ${where} ORDER BY ${order} LIMIT $6 OFFSET $7`,
       [...args, input.pageSize, (page - 1) * input.pageSize],
     )
   ).rows;
+  if (input.q)
+    await db.query(
+      "INSERT INTO commerce_searches(query,result_count) VALUES($1,$2) ON CONFLICT(query) DO UPDATE SET count=commerce_searches.count+1,result_count=$2,last_at=now()",
+      [input.q.toLowerCase(), total],
+    );
   const facets = (
     await db.query(
       `WITH catalog AS (${catalogBase}) SELECT DISTINCT brand,category FROM catalog`,
@@ -229,7 +248,7 @@ export async function catalog(db: DB, raw: unknown, account?: any) {
     )
   ).rows;
   return {
-    items: await Promise.all(rows.map((r) => publicProduct(db, r))),
+    items: await Promise.all(rows.map((r) => publicProduct(db, r, account))),
     page,
     pageSize: input.pageSize,
     total,
@@ -245,10 +264,10 @@ export async function productDetail(db: DB, id: string, account?: any) {
   const row = await one(
     db,
     `WITH catalog AS (${catalogBase}) SELECT * FROM catalog WHERE id=$2`,
-    [account?.price_level || "RETAIL", id],
+    [account?.company_id || null, id],
   );
   assert(row, 404, "Product is unavailable");
-  return publicProduct(db, row);
+  return publicProduct(db, row, account);
 }
 export async function publicImage(db: DB, id: string) {
   await openStore(db);
@@ -348,6 +367,7 @@ async function pricedLines(
   db: DB,
   requested: { productId: string; quantity: string }[],
   account?: any,
+  quotation?: any,
 ) {
   const ids = [...new Set(requested.map((x) => x.productId))];
   assert(
@@ -357,8 +377,8 @@ async function pricedLines(
   );
   const rows = (
     await db.query(
-      `SELECT p.id,p.part_number,p.description,p.unit,p.quantity_precision,l.method level_method,l.fixed_price::text,l.markup::text level_markup,l.list_price::text level_list_price,l.base_discount::text level_discount,pp.cost::text,pp.vat::text FROM products p JOIN product_pricing pp ON pp.product_id=p.id JOIN LATERAL(SELECT * FROM product_selling_levels x WHERE x.product_id=p.id AND x.active ORDER BY CASE WHEN x.code=$2 THEN 0 WHEN x.code='RETAIL'THEN 1 WHEN x.code='END_CUSTOMER'THEN 2 ELSE 3 END,x.code LIMIT 1)l ON true WHERE p.id=ANY($1::uuid[]) AND p.active AND p.storefront_published`,
-      [ids, account?.price_level || "RETAIL"],
+      `SELECT p.id,p.part_number,p.description,p.unit,p.quantity_precision FROM products p WHERE p.id=ANY($1::uuid[]) AND p.active AND p.storefront_published`,
+      [ids],
     )
   ).rows;
   assert(
@@ -367,33 +387,51 @@ async function pricedLines(
     "One or more cart products are no longer available",
   );
   const map = new Map(rows.map((r: any) => [r.id, r]));
-  return requested.map((item) => {
-    const row = map.get(item.productId)!,
-      qty = money(item.quantity);
-    assert(
-      qty.isFinite() &&
-        qty.gt(0) &&
-        qty.lte(1000000) &&
-        qty.decimalPlaces() <= (row.quantity_precision ?? 3),
-      400,
-      "Enter a valid cart quantity",
-    );
-    const excl = levelPrice(row).toDecimalPlaces(2),
-      lineExcl = excl.mul(qty).toDecimalPlaces(2),
-      vat = lineExcl.mul(row.vat).div(100).toDecimalPlaces(2);
-    return {
-      productId: row.id,
-      partNumber: row.part_number,
-      description: row.description,
-      unit: row.unit,
-      quantity: qty.toString(),
-      unitExcl: excl.toFixed(2),
-      vatRate: String(row.vat),
-      lineExcl: lineExcl.toFixed(2),
-      vat: vat.toFixed(2),
-      lineTotal: lineExcl.add(vat).toFixed(2),
-    };
-  });
+  return Promise.all(
+    requested.map(async (item) => {
+      const row = map.get(item.productId)!,
+        qty = money(item.quantity);
+      assert(
+        qty.isFinite() &&
+          qty.gt(0) &&
+          qty.lte(1000000) &&
+          qty.decimalPlaces() <= (row.quantity_precision ?? 3),
+        400,
+        "Enter a valid cart quantity",
+      );
+      const resolved = await commerce.resolvePrice(
+        db,
+        row.id,
+        item.quantity,
+        account,
+      );
+      const quoted = quotation?.lines.find((l: any) => l.productId === row.id);
+      assert(
+        resolved.price !== null || quoted,
+        409,
+        "This product needs a quotation before checkout",
+      );
+      row.vat = resolved.vat;
+      const excl = money(
+          quoted?.price?.finalExcl ?? resolved.price,
+        ).toDecimalPlaces(2),
+        lineExcl = excl.mul(qty).toDecimalPlaces(2),
+        vat = lineExcl.mul(row.vat).div(100).toDecimalPlaces(2);
+      return {
+        priceSource: resolved.source,
+        productId: row.id,
+        partNumber: row.part_number,
+        description: row.description,
+        unit: row.unit,
+        quantity: qty.toString(),
+        unitExcl: excl.toFixed(2),
+        vatRate: String(row.vat),
+        lineExcl: lineExcl.toFixed(2),
+        vat: vat.toFixed(2),
+        lineTotal: lineExcl.add(vat).toFixed(2),
+      };
+    }),
+  );
 }
 
 const normalizeContact = (value: string) =>
@@ -404,6 +442,8 @@ const normalizeContact = (value: string) =>
         .replace(/^00/, "+")
         .replace(/^0(?=5)/, "+966");
 const cartSchema = z.object({
+  requestId: z.string().uuid().optional(),
+  coupon: z.string().trim().max(40).optional(),
   lines: z
     .array(
       z.object({
@@ -430,7 +470,7 @@ const checkoutSchema = cartSchema.extend({
       email: z.string().email().optional(),
     })
     .optional(),
-  paymentMethod: z.enum(["MOYASAR", "BANK_TRANSFER", "CASH", "CREDIT_TERMS"]),
+  paymentMethod: z.enum(["MOYASAR", "BANK_TRANSFER", "CREDIT_TERMS"]),
   moyasarToken: z.string().max(200).optional(),
   idempotencyKey: z.string().uuid(),
   quoteHash: z.string().optional(),
@@ -459,7 +499,85 @@ export async function preview(db: DB, raw: unknown, account?: any) {
     assert(data.zoneId, 400, "Choose a delivery zone");
     assert(data.address?.text, 400, "Enter your delivery address");
   }
-  const lines = await pricedLines(db, data.lines, account);
+  const acceptedQuote = data.requestId
+    ? await checkoutQuote(db, account, data.requestId)
+    : undefined;
+  let lines = await pricedLines(db, data.lines, account, acceptedQuote);
+  let quotationId: string | undefined;
+  if (data.requestId) {
+    const q = acceptedQuote!;
+    quotationId = q.id;
+    assert(
+      q.lines.length === data.lines.length,
+      409,
+      "Purchase the exact quoted quantities",
+    );
+    lines = lines.map((l) => {
+      const quoted = q.lines.find((x: any) => x.productId === l.productId);
+      assert(
+        quoted && money(quoted.price.quantity).eq(l.quantity),
+        409,
+        "Purchase the exact quoted quantities",
+      );
+      return {
+        ...l,
+        priceSource: "QUOTE",
+        unitExcl: money(quoted.price.finalExcl).toFixed(2),
+        lineExcl: money(quoted.price.subtotal).toFixed(2),
+        vatRate: String(quoted.price.vatRate),
+        vat: money(quoted.price.vatAmount).toFixed(2),
+        lineTotal: money(quoted.price.total).toFixed(2),
+      };
+    });
+  }
+  let couponId: string | undefined;
+  if (data.coupon) {
+    const c = (await commerce.activeCampaigns(db, account)).find(
+      (c) =>
+        c.kind === "COUPON" &&
+        c.data.code.toUpperCase() === data.coupon!.toUpperCase(),
+    );
+    assert(c, 400, "Coupon is invalid or expired");
+    const used = await one(
+      db,
+      "SELECT count(*) n FROM commerce_redemptions r JOIN ecommerce_orders o ON o.id=r.order_id WHERE r.campaign_id=$1 AND o.status NOT IN ('CANCELLED','FAILED')",
+      [c.id],
+    );
+    assert(
+      !c.data.usageLimit || Number(used?.n) < c.data.usageLimit,
+      409,
+      "Coupon usage limit reached",
+    );
+    let eligible = false;
+    lines = lines.map((l) => {
+      if (
+        l.priceSource !== "PUBLIC" ||
+        (c.data.productIds.length && !c.data.productIds.includes(l.productId))
+      )
+        return l;
+      eligible = true;
+      const unit = money(l.unitExcl)
+          .mul(money(100).sub(c.data.discount))
+          .div(100)
+          .toDecimalPlaces(2),
+        excl = unit.mul(l.quantity).toDecimalPlaces(2),
+        vat = excl.mul(l.vatRate).div(100).toDecimalPlaces(2);
+      return {
+        ...l,
+        priceSource: "COUPON",
+        unitExcl: unit.toFixed(2),
+        lineExcl: excl.toFixed(2),
+        vat: vat.toFixed(2),
+        lineTotal: excl.add(vat).toFixed(2),
+      };
+    });
+    assert(
+      eligible,
+      400,
+      "Coupon does not apply to these items or negotiated prices",
+    );
+    couponId = c.id;
+  }
   const subtotal = lines.reduce((s, l) => s.add(l.lineExcl), money(0)),
     vat = lines.reduce((s, l) => s.add(l.vat), money(0));
   let deliveryFee = money(0);
@@ -481,7 +599,13 @@ export async function preview(db: DB, raw: unknown, account?: any) {
     deliveryFee: deliveryFee.toFixed(2),
     total: subtotal.add(vat).add(deliveryFee).toFixed(2),
   };
-  return { lines, totals, quoteHash: sha(JSON.stringify({ lines, totals })) };
+  return {
+    lines,
+    totals,
+    quotationId,
+    couponId,
+    quoteHash: sha(JSON.stringify({ lines, totals, quotationId, couponId })),
+  };
 }
 function verifiedContact(otp: any, token: string | undefined, contact: any) {
   return (
@@ -504,6 +628,7 @@ const orderResult = (order: any, payment?: any) => ({
   paymentReference: payment?.provider_reference || null,
 });
 export async function checkout(db: DB, raw: unknown, account?: any) {
+  await operations.expireHolds(db);
   const data = checkoutSchema.parse(raw);
   const fingerprint = sha(
     JSON.stringify({
@@ -586,7 +711,26 @@ export async function checkout(db: DB, raw: unknown, account?: any) {
         "Credit terms require an approved business account",
       );
     }
+    if (currentAccount?.company_id) {
+      const company = await commerce.companyFor(
+        tx,
+        currentAccount,
+        false,
+        true,
+      );
+      currentAccount = {
+        ...currentAccount,
+        credit_enabled: company.credit_enabled,
+        credit_limit: company.credit_limit,
+      };
+    }
+    if (data.coupon)
+      await tx.query(
+        "SELECT id FROM commerce_campaigns WHERE kind='COUPON' AND upper(data->>'code')=upper($1) FOR UPDATE",
+        [data.coupon],
+      );
     const quote = await preview(tx, data, currentAccount);
+    if(data.paymentMethod==='BANK_TRANSFER'){const config:any=await configuration(tx);assert(config.bankTransferEnabled,400,'Bank transfer is unavailable');}
     if (data.quoteHash)
       assert(
         data.quoteHash === quote.quoteHash,
@@ -618,8 +762,8 @@ export async function checkout(db: DB, raw: unknown, account?: any) {
         (
           await one(
             tx,
-            "SELECT COALESCE(sum((totals->>'total')::numeric),0)::text used FROM ecommerce_orders WHERE customer_account_id=$1 AND payment_method='CREDIT_TERMS' AND status IN ('PENDING_REVIEW','CONFIRMED')",
-            [account.id],
+            "SELECT COALESCE(sum(amount),0)::text used FROM commerce_credit_entries WHERE company_id=$1",
+            [currentAccount.company_id],
           )
         )?.used,
       );
@@ -650,6 +794,45 @@ export async function checkout(db: DB, raw: unknown, account?: any) {
         account ? null : data.verificationId,
       ],
     );
+    await tx.query("UPDATE ecommerce_orders SET company_id=$2 WHERE id=$1", [
+      id,
+      currentAccount?.company_id || null,
+    ]);
+    if (quote.quotationId)
+      await tx.query(
+        "UPDATE ecommerce_orders SET quotation_id=$2 WHERE id=$1",
+        [id, quote.quotationId],
+      );
+    if (quote.couponId)
+      await tx.query(
+        "INSERT INTO commerce_redemptions(campaign_id,order_id) VALUES($1,$2)",
+        [quote.couponId, id],
+      );
+    await operations.reserveCheckout(
+      tx,
+      id,
+      quote.lines,
+      data.fulfillmentMethod === "PICKUP" ? data.warehouseId : undefined,
+      data.paymentMethod,
+    );
+    if (data.paymentMethod === "CREDIT_TERMS")
+      await tx.query(
+        "INSERT INTO commerce_credit_entries(id,company_id,order_id,amount,kind,idempotency_key) VALUES($1,$2,$3,$4,'COMMIT',$5)",
+        [
+          randomUUID(),
+          currentAccount.company_id,
+          id,
+          quote.totals.total,
+          "COMMIT:" + id,
+        ],
+      );
+    await commerce.event(tx, {
+      orderId: id,
+      companyId: currentAccount?.company_id,
+      accountId: account?.id,
+      kind: "ORDER_SUBMITTED",
+      message: "Order " + number + " submitted.",
+    });
     if (!account)
       await tx.query(
         "UPDATE otp_challenges SET consumed_at=now() WHERE id=$1",
@@ -767,10 +950,7 @@ export async function confirmMoyasarPayment(db: DB, paymentId: string) {
       ],
     );
     if (paid || failed)
-      await tx.query(
-        "UPDATE ecommerce_orders SET status=$2,updated_at=now() WHERE id=$1 AND status IN ('PENDING_PAYMENT','FAILED')",
-        [payment.ecommerce_order_id, paid ? "CONFIRMED" : "FAILED"],
-      );
+      await operations.settlePayment(tx, payment.ecommerce_order_id, paid);
     if (paid && payment.status !== "PAID")
       await audit(
         tx,
@@ -803,8 +983,25 @@ export async function orderStatus(
     id,
   ]);
   assert(order, 404, "Order not found");
-  if (account && order.customer_account_id === account.id)
-    return orderResult(order);
+  const detail = async () => ({
+    ...orderResult(order),
+    lines: order.lines,
+    fulfillment: order.fulfillment_data,
+    fulfillmentStatus: order.sales_order_id
+      ? (
+          await one(db, "SELECT status FROM sales_orders WHERE id=$1", [
+            order.sales_order_id,
+          ])
+        )?.status
+      : null,
+    events: (
+      await db.query(
+        "SELECT message,created_at FROM commerce_events WHERE order_id=$1 ORDER BY created_at DESC",
+        [id],
+      )
+    ).rows,
+  });
+  if (account && order.customer_account_id === account.id) return detail();
   const otp = order.verification_id
     ? await one(db, "SELECT * FROM otp_challenges WHERE id=$1", [
         order.verification_id,
@@ -817,7 +1014,7 @@ export async function orderStatus(
     403,
     "Order access denied",
   );
-  return orderResult(order);
+  return detail();
 }
 
 const accountCookie = "amt_store_session";
@@ -838,11 +1035,12 @@ export async function management(db: DB, actor: Actor, q = "") {
   requirePermission(actor, "STOREFRONT_MANAGE");
   return {
     settings: await configuration(db, actor),
+    defaultVat:(await one(db,'SELECT data FROM settings WHERE id=1'))?.data.vat||'15',
     accounts: await listAccounts(db, actor),
     zones: (await db.query("SELECT * FROM delivery_zones ORDER BY name")).rows,
     products: (
       await db.query(
-        "SELECT id,part_number,description,active,storefront_published,version FROM products WHERE $1='' OR part_number ILIKE '%'||$1||'%' OR description ILIKE '%'||$1||'%' ORDER BY part_number LIMIT 100",
+        "SELECT id,part_number,description,active,storefront_published,storefront_slug,storefront_content,version FROM products WHERE $1='' OR part_number ILIKE '%'||$1||'%' OR description ILIKE '%'||$1||'%' ORDER BY part_number LIMIT 100",
         [q.slice(0, 100)],
       )
     ).rows,
@@ -856,7 +1054,22 @@ export async function publishProduct(
 ) {
   requirePermission(actor, "STOREFRONT_MANAGE");
   const data = z
-    .object({ published: z.boolean(), version: z.number().int() })
+    .object({
+      published: z.boolean(),
+      version: z.number().int(),
+      slug: z
+        .string()
+        .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+        .max(150)
+        .optional(),
+      content: z
+        .object({
+          description: z.string().max(10000),
+          seoTitle: z.string().max(150),
+          seoDescription: z.string().max(320),
+        })
+        .optional(),
+    })
     .parse(raw);
   return db.transaction(async (tx) => {
     const row = await one(tx, "SELECT * FROM products WHERE id=$1 FOR UPDATE", [
@@ -869,19 +1082,19 @@ export async function publishProduct(
       "Product changed. Reload before publishing",
     );
     if (data.published)
-      assert(
-        row.active &&
-          (await one(
-            tx,
-            "SELECT product_id FROM product_selling_levels WHERE product_id=$1 AND active LIMIT 1",
-            [id],
-          )),
-        400,
-        "Activate the product and add a selling level before publishing",
-      );
+      assert(row.active, 400, "Activate the product before publishing");
     await tx.query(
-      "UPDATE products SET storefront_published=$2,version=version+1 WHERE id=$1",
-      [id, data.published],
+      "UPDATE products SET storefront_published=$2,storefront_slug=$3,storefront_content=$4,version=version+1 WHERE id=$1",
+      [
+        id,
+        data.published,
+        data.slug || row.storefront_slug || id,
+        json(
+          data.content
+            ? { ...row.storefront_content, ...data.content }
+            : row.storefront_content,
+        ),
+      ],
     );
     await audit(
       tx,
@@ -935,9 +1148,9 @@ export async function authenticateAccount(db: DB, req: Request) {
   if (!raw) return undefined;
   return one(
     db,
-    `SELECT a.id,a.customer_id,a.email,a.mobile,a.status,a.price_level,a.credit_enabled,a.credit_limit,c.name,c.number
-    FROM customer_account_sessions s JOIN customer_accounts a ON a.id=s.account_id LEFT JOIN customers c ON c.id=a.customer_id
-    WHERE s.token_hash=$1 AND s.expires_at>now() AND a.status='ACTIVE'`,
+    `SELECT a.id,a.customer_id,a.email,a.mobile,a.status,COALESCE(co.price_level,a.price_level) price_level,COALESCE(co.credit_enabled,a.credit_enabled) credit_enabled,COALESCE(co.credit_limit,a.credit_limit) credit_limit,a.company_id,a.company_role,c.name,c.number
+    FROM customer_account_sessions s JOIN customer_accounts a ON a.id=s.account_id LEFT JOIN customers c ON c.id=a.customer_id LEFT JOIN commerce_companies co ON co.id=a.company_id
+    WHERE s.token_hash=$1 AND s.expires_at>now() AND a.status='ACTIVE' AND (a.company_id IS NULL OR EXISTS(SELECT 1 FROM commerce_companies co WHERE co.id=a.company_id AND co.status='ACTIVE'))`,
     [sha(decodeURIComponent(raw))],
   );
 }
@@ -954,6 +1167,14 @@ export async function registerAccount(db: DB, raw: unknown) {
       password: z.string().min(8).max(128),
       verificationId: z.string().uuid(),
       verificationToken: z.string().min(20),
+      registrationNumber: z.string().max(100).default(""),
+      taxNumber: z.string().max(100).default(""),
+      address: z.string().max(1000).default(""),
+      contactPerson: z.string().max(150).default(""),
+      invitationToken: z.string().max(200).optional(),
+      supportingDocument: z
+        .object({ name: z.string().max(180), base64: z.string().max(1400000) })
+        .optional(),
     })
     .parse(raw);
   return db.transaction(async (tx) => {
@@ -992,6 +1213,77 @@ export async function registerAccount(db: DB, raw: unknown) {
         await hashPassword(data.password),
       ],
     );
+    if (data.invitationToken) {
+      assert(
+        otp?.destination_hash === sha(normalizeContact(data.email)),
+        403,
+        "Verify the invited email address",
+      );
+      const invitation = await one(
+        tx,
+        "SELECT * FROM commerce_invitations WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at>now() FOR UPDATE",
+        [sha(data.invitationToken)],
+      );
+      assert(
+        invitation &&
+          invitation.email.toLowerCase() === data.email.toLowerCase(),
+        403,
+        "Invitation is invalid, expired, or for another email",
+      );
+      const company = await one(
+        tx,
+        "SELECT * FROM commerce_companies WHERE id=$1 AND status='ACTIVE'",
+        [invitation.company_id],
+      );
+      assert(company, 403, "Company is unavailable");
+      await tx.query(
+        "UPDATE customer_accounts SET company_id=$2,company_role='BUYER',customer_id=$3,status='ACTIVE' WHERE id=$1",
+        [accountId, company.id, company.customer_id],
+      );
+      await tx.query("DELETE FROM customers WHERE id=$1", [customerId]);
+      await tx.query(
+        "UPDATE commerce_invitations SET accepted_at=now() WHERE id=$1",
+        [invitation.id],
+      );
+    } else {
+      await tx.query(
+        "INSERT INTO commerce_companies(id,customer_id,name,profile) VALUES($1,$2,$3,$4)",
+        [
+          accountId,
+          customerId,
+          data.name,
+          json({
+            registrationNumber: data.registrationNumber,
+            taxNumber: data.taxNumber,
+            address: data.address,
+            contactPerson: data.contactPerson,
+            needsReview: !data.registrationNumber,
+          }),
+        ],
+      );
+      await tx.query("UPDATE customer_accounts SET company_id=$2 WHERE id=$1", [
+        accountId,
+        accountId,
+      ]);
+      if (data.supportingDocument) {
+        const file = Buffer.from(data.supportingDocument.base64, "base64");
+        assert(
+          file.length <= 1024 * 1024 &&
+            file.subarray(0, 5).toString() === "%PDF-",
+          400,
+          "Company registration document must be a PDF up to 1 MB",
+        );
+        await tx.query(
+          "INSERT INTO commerce_attachments(id,company_id,name,mime,content) VALUES($1,$2,$3,'application/pdf',$4)",
+          [
+            randomUUID(),
+            accountId,
+            data.supportingDocument.name.replace(/[^\p{L}\p{N}._ -]/gu, "_"),
+            file,
+          ],
+        );
+      }
+    }
     await tx.query("UPDATE otp_challenges SET consumed_at=now() WHERE id=$1", [
       data.verificationId,
     ]);
@@ -1004,7 +1296,10 @@ export async function registerAccount(db: DB, raw: unknown) {
       null,
       { customerCode: data.customerCode },
     );
-    return { id: accountId, status: "PENDING" };
+    return {
+      id: accountId,
+      status: data.invitationToken ? "ACTIVE" : "PENDING",
+    };
   });
 }
 
@@ -1032,6 +1327,16 @@ export async function loginAccount(db: DB, raw: unknown) {
       ? "Business account is awaiting approval"
       : "Invalid account or password",
   );
+  if (activeAccount.company_id)
+    assert(
+      (
+        await one(db, "SELECT status FROM commerce_companies WHERE id=$1", [
+          activeAccount.company_id,
+        ])
+      )?.status === "ACTIVE",
+      401,
+      "Company account is unavailable",
+    );
   const token = randomBytes(32).toString("hex");
   await db.query(
     "INSERT INTO customer_account_sessions(token_hash,account_id,expires_at) VALUES($1,$2,now()+interval '30 days')",
@@ -1088,6 +1393,17 @@ export async function updateAccount(
       [id],
     );
     assert(before, 404, "Customer account not found");
+    if (before.company_id)
+      await tx.query(
+        "UPDATE commerce_companies SET status=$2,price_level=$3,credit_enabled=$4,credit_limit=$5,version=version+1 WHERE id=$1",
+        [
+          before.company_id,
+          data.status === "BLOCKED" ? "SUSPENDED" : data.status,
+          data.priceLevel,
+          data.creditEnabled,
+          data.creditLimit || 0,
+        ],
+      );
     const saved = (
       await tx.query(
         "UPDATE customer_accounts SET status=$2,price_level=$3,credit_enabled=$4,credit_limit=$5 WHERE id=$1 RETURNING id,email,mobile,status,price_level,credit_enabled,credit_limit::text",

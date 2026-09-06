@@ -31,6 +31,7 @@ export default function App() {
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
   useEffect(() => {
     setLang(localStorage.getItem("amt-language") || "en");
+    if(new URLSearchParams(location.search).get('commerce')==='imports')setTab('admin');
     const update = () => setOnline(navigator.onLine);
     update();
     window.addEventListener("online", update);

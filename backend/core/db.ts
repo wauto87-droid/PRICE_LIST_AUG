@@ -79,7 +79,7 @@ export function getDB(): Promise<DB> {
       process.env.DEV_EMBEDDED_DB === "true" &&
       process.env.NODE_ENV !== "production"
     ) {
-      const db = await embedded(path.join(process.cwd(), ".data", "postgres"));
+      const db = await embedded(process.env.DEV_DATABASE_DIRECTORY || path.join(process.cwd(), ".data", "postgres"));
       await migrate(db);
       if (process.env.DEV_WORKER === "true") {
         const { runJob } = await import("../worker/process");

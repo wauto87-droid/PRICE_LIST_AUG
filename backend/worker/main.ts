@@ -1,9 +1,11 @@
+import { expireHolds, dispatchNotifications } from '../storefront/operations';
 import "dotenv/config";
 import { getDB } from "../core/db";
 import { runJob } from "./process";
 const db = await getDB();
 let running = true;
 let housekeepingAt = 0;
+let commerceAt = 0;
 process.on("SIGTERM", () => {
   running = false;
 });
@@ -24,8 +26,10 @@ while (running) {
       await db.query(
         "UPDATE import_jobs SET status='FAILED',error='Validation worker interrupted repeatedly; retry the mapping' WHERE status='VALIDATING' AND id IN (SELECT (payload->>'importId')::uuid FROM jobs WHERE kind='IMPORT_VALIDATE' AND status='FAILED')",
       );
+
       housekeepingAt = Date.now();
     }
+    if(Date.now()-commerceAt>60000){await expireHolds(db);await dispatchNotifications(db);commerceAt=Date.now();}
     if (!(await runJob(db))) await new Promise((r) => setTimeout(r, 1500));
   } catch (e) {
     console.error("Worker unavailable", (e as Error).message);

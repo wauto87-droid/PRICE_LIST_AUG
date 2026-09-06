@@ -6,6 +6,7 @@ import { setup, PERMISSIONS } from "../backend/auth/service";
 import { saveProduct } from "../backend/products/service";
 import {
   saveWarehouse,
+  stockAdjustment,
   stockBalances,
   listOnlineOrders,
   approveOnlineOrder,
@@ -75,6 +76,7 @@ test("storefront routing, publication, pricing, verification and reliable checko
     pickupEnabled: true,
     allowNegativeStock: true,
   });
+  await stockAdjustment(db,actor,{warehouseId:warehouse.id,productId:p.id,quantity:'100',unitCost:'10.005',reason:'Opening stock for checkout tests',idempotencyKey:randomUUID()});
   async function otp(destination = "0500000010") {
     const challenge = await store.requestOtp(db, {
       destination,
@@ -152,7 +154,8 @@ test("storefront routing, publication, pricing, verification and reliable checko
         "UPDATE product_selling_levels SET active=false WHERE product_id=$1",
         [p2.id],
       );
-      assert.equal((await store.catalog(db, {})).total, 1);
+      assert.equal((await store.catalog(db, {})).total, 2);
+      assert.equal((await store.productDetail(db,p2.id)).priceIncl,null);
       await db.query(
         "UPDATE product_selling_levels SET active=true WHERE product_id=$1",
         [p2.id],

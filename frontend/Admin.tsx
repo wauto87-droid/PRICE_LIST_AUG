@@ -602,6 +602,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     const full = await api("products/" + id);
     setEdit(full);
   };
+  useEffect(()=>{if(new URLSearchParams(location.search).get('commerce')==='imports')setSection('imports')},[]);
   return (
     <div
       className={`admin-layout ${menuOpen ? "menu-open" : "menu-collapsed"}`}

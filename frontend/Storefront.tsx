@@ -7,14 +7,18 @@ import StorefrontCheckout, {
   StoreAccount,
 } from "./StorefrontCheckout";
 import "./storefront.css";
+import BusinessPortal from "./BusinessPortal";
+import StoreMerchandising from "./StoreMerchandising";
+import StoreReceipts from "./StoreReceipts";
 export type StoreProduct = {
   id: string;
   part_number: string;
   description: string;
   unit: string;
   quantityPrecision: number;
-  priceIncl: string;
-  priceExcl: string;
+  purchasable?: boolean;
+  priceIncl: string|null;
+  priceExcl: string|null;
   brand: string;
   category: string;
   availability: string;
@@ -71,13 +75,31 @@ export default function Storefront() {
     [category, setCategory] = useState(""),
     [brand, setBrand] = useState(""),
     [availability, setAvailability] = useState(""),
-    [sort, setSort] = useState("part"),
+    [sort, setSort] = useState("relevance"),
     [page, setPage] = useState(1),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [loading, setLoading] = useState(false),
     [revision, setRevision] = useState(0),
     [payment, setPayment] = useState<any>();
+  const [customBanner, setCustomBanner] = useState(false);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(() => {
+      if (q.trim().length >= 2)
+        api("storefront/suggestions?q=" + encodeURIComponent(q))
+          .then((r) => {
+            if (active) setSuggestions(r.items);
+          })
+          .catch(() => {});
+      else setSuggestions([]);
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
   const search = useRef<HTMLInputElement>(null),
     request = useRef(0);
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
@@ -88,6 +110,12 @@ export default function Storefront() {
       setConfig(c);
       const a = await api("storefront/account/me");
       setAccount(a.account);
+      const requestId = new URLSearchParams(location.search).get("request");
+      if (requestId && a.account) {
+        const quoted = await api("storefront/quote-cart/" + requestId);
+        setCart(Object.fromEntries(quoted.items.map((p: any) => [p.id, p])));
+        setPanel("cart");
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -115,6 +143,12 @@ export default function Storefront() {
       );
     } catch {}
     setReady(true);
+    const params = new URLSearchParams(location.search);
+    setCategory(params.get("category") || "");
+    setBrand(params.get("brand") || "");
+    setQ(params.get("q") || "");
+    setQuery(params.get("q") || "");
+    if (params.has("invitation")) setPanel("account");
     initialize();
   }, []);
   useEffect(() => {
@@ -216,6 +250,14 @@ export default function Storefront() {
     }
   }, []);
   function add(item: StoreProduct) {
+    if (item.purchasable === false) {
+      setCart((c) => ({
+        ...c,
+        [item.id]: { ...item, quantity: c[item.id]?.quantity || "1" },
+      }));
+      setPanel(account ? "business" : "account");
+      return;
+    }
     setCart((c) => ({
       ...c,
       [item.id]: {
@@ -283,6 +325,7 @@ export default function Storefront() {
           }}
         >
           <input
+            list="store-search-suggestions"
             ref={search}
             value={q}
             maxLength={100}
@@ -316,6 +359,26 @@ export default function Storefront() {
           </button>
         </nav>
       </header>
+      <div className="sf-business-bar">
+        <button onClick={() => setPanel("receipts")}>
+          {t("Your orders", "طلباتك")}
+        </button>
+        {config?.businessEnabled && (
+          <button onClick={() => setPanel(account ? "business" : "account")}>
+            {t(
+              "Company portal · Request our best price",
+              "بوابة الشركات · اطلب أفضل أسعارنا",
+            )}
+          </button>
+        )}
+      </div>
+      <datalist id="store-search-suggestions">
+        {suggestions.map((p) => (
+          <option key={p.id} value={p.part_number}>
+            {p.description}
+          </option>
+        ))}
+      </datalist>
       <nav className="sf-categories" aria-label={t("Categories", "الفئات")}>
         <button
           className={!category ? "selected" : ""}
@@ -386,7 +449,12 @@ export default function Storefront() {
         </div>
       ) : (
         <>
-          <section className="sf-hero">
+          <StoreMerchandising
+            account={account}
+            t={t}
+            onBanners={setCustomBanner}
+          />
+          <section className="sf-hero" hidden={customBanner}>
             <div>
               <span className="sf-eyebrow">
                 {t("BUILT FOR YOUR NEXT PROJECT", "لمشروعك القادم")}
@@ -486,6 +554,9 @@ export default function Storefront() {
                   value={sort}
                   onChange={(e) => filter(() => setSort(e.target.value))}
                 >
+                  <option value="relevance">
+                    {t("Relevance", "الأكثر صلة")}
+                  </option>
                   <option value="part">{t("Part number", "رقم الصنف")}</option>
                   <option value="price-asc">
                     {t("Price: low to high", "السعر: من الأقل للأعلى")}
@@ -616,7 +687,11 @@ export default function Storefront() {
                             <code>{item.part_number}</code>
                             <div className="sf-price">
                               <small>SAR</small>{" "}
-                              <strong>{item.priceIncl}</strong>
+                              <strong>
+                                {item.priceIncl === null
+                                  ? t("Price on request", "السعر عند الطلب")
+                                  : item.priceIncl}
+                              </strong>
                               <span>/ {item.unit}</span>
                             </div>
                             <p className="sf-vat">
@@ -626,7 +701,9 @@ export default function Storefront() {
                               className="sf-add"
                               onClick={() => add(item)}
                             >
-                              + {t("Add to cart", "أضف للسلة")}
+                              {item.purchasable === false
+                                ? t("Request a quote", "طلب عرض سعر")
+                                : "+ " + t("Add to cart", "أضف للسلة")}
                             </button>
                           </div>
                         </article>
@@ -764,11 +841,11 @@ export default function Storefront() {
               <h2>{detail.description}</h2>
               <p>{availabilityText(detail.availability)}</p>
               <div className="sf-price">
-                SAR <strong>{detail.priceIncl}</strong> / {detail.unit}
+                {detail.priceIncl===null?t('Price on request','السعر عند الطلب'):<>SAR <strong>{detail.priceIncl}</strong> / {detail.unit}</>}
               </div>
               <p>{t("Including VAT", "شامل الضريبة")}</p>
               <button className="sf-primary" onClick={() => add(detail)}>
-                {t("Add to cart", "أضف للسلة")}
+                {detail.purchasable===false?t('Request a quote','طلب عرض سعر'):t("Add to cart", "أضف للسلة")}
               </button>
               {typeof detail.content?.description === "string" && (
                 <p>{detail.content.description}</p>
@@ -800,8 +877,15 @@ export default function Storefront() {
           </div>
         </StoreDialog>
       )}
+      {panel === "business" && account && (
+        <BusinessPortal t={t} cart={cart} close={() => setPanel("")} />
+      )}
+      {panel === "receipts" && (
+        <StoreReceipts t={t} close={() => setPanel("")} />
+      )}
       {panel === "cart" && (
         <StorefrontCheckout
+          requestQuote={()=>setPanel(account?'business':'account')}
           cart={cart}
           setCart={setCart}
           account={account}

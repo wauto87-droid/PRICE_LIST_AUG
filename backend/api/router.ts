@@ -25,6 +25,9 @@ import * as productEnrichment from "../product-enrichment/service";
 import * as handover from "../handover/service";
 import * as commercial from "../commercial/service";
 import * as storefront from "../storefront/service";
+import * as commerce from '../storefront/commerce';
+import * as requirements from '../storefront/requirements';
+import * as storeOperations from '../storefront/operations';
 import {
   calculate,
   calculateTargetPrice,
@@ -115,6 +118,33 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (root === "storefront") {
       const account = await storefront.authenticateAccount(db, req);
       if (!["GET", "HEAD"].includes(method)) auth.checkOrigin(req);
+      if(id==='homepage'&&method==='GET'){
+        const campaigns=await commerce.activeCampaigns(db,account);
+        const sections=[];
+        for(const c of campaigns.filter(c=>c.kind==='SECTION')){
+          let ids=c.data.productIds;
+          if(c.data.sectionType==='NEW')ids=(await db.query('SELECT id FROM products WHERE active AND storefront_published ORDER BY created_at DESC LIMIT 12')).rows.map(p=>p.id);
+          if(c.data.sectionType==='OFFERS'){const offers=campaigns.filter(x=>x.kind==='OFFER');ids=[...new Set(offers.flatMap(x=>x.data.productIds))];if(offers.some(x=>!x.data.productIds.length))ids=(await db.query('SELECT id FROM products WHERE active AND storefront_published ORDER BY part_number LIMIT 12')).rows.map(p=>p.id);}
+          if(c.data.sectionType==='BESTSELLERS')ids=(await db.query("SELECT (l->>'productId')::uuid id FROM ecommerce_orders o CROSS JOIN LATERAL jsonb_array_elements(o.lines) l JOIN products p ON p.id=(l->>'productId')::uuid WHERE o.status='CONFIRMED' AND p.active AND p.storefront_published GROUP BY l->>'productId' ORDER BY sum((l->>'quantity')::numeric) DESC LIMIT 12")).rows.map(p=>p.id);
+          const items=[];for(const productId of ids){try{items.push(await storefront.productDetail(db,productId,account));}catch(e){if(!(e instanceof AppError&&e.status===404))throw e;}}
+          sections.push({...c,items});
+        }
+        return response({banners:campaigns.filter(c=>c.kind==='BANNER'),sections});
+      }
+      if(id==='media'&&action&&method==='GET'){const media=await one(db,'SELECT content FROM commerce_media WHERE id=$1',[uuid(action)]);assert(media,404,'Image not found');return new Response(new Uint8Array(media.content),{headers:{'Content-Type':'image/webp','Cache-Control':'public, max-age=86400','X-Content-Type-Options':'nosniff'}});}
+      if(id==='business'&&method==='GET')return response(await requirements.portal(db,account));
+      if(id==='suggestions'&&method==='GET'){const q=z.string().trim().max(100).parse(url.searchParams.get('q')||'');if(q.length<2)return response({items:[]});return response({items:(await db.query("SELECT p.id,p.part_number,p.description FROM products p WHERE p.active AND p.storefront_published AND (p.part_number ILIKE '%'||$1||'%' OR p.description ILIKE '%'||$1||'%' OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.label ILIKE '%'||$1||'%')) ORDER BY CASE WHEN lower(p.part_number)=lower($1) THEN 0 WHEN p.part_number ILIKE $1||'%' THEN 1 ELSE 2 END,p.part_number LIMIT 8",[q])).rows});}
+      if(id==='quote-cart'&&action&&method==='GET'){const q=await requirements.checkoutQuote(db,account,uuid(action));const items=[];for(const l of q.lines){const p=await storefront.productDetail(db,l.productId,account);items.push({...p,quantity:String(l.price.quantity)})}return response({items});}
+      if(id==='invitations'&&method==='POST')return response(await commerce.invite(db,account,await body(req)));
+      if(id==='members'&&action&&method==='DELETE')return response(await commerce.removeMember(db,account,uuid(action)));
+      if(id==='requirements'&&!action&&method==='POST')return response(await requirements.submit(db,account,await body(req)));
+      if(id==='requirements'&&action&&parts[3]==='discount'&&method==='POST')return response(await requirements.requestDiscount(db,account,uuid(action),await body(req)));
+      if(id==='attachments'&&method==='POST'){
+        const bytes=await readLimited(req,11*1024*1024);const form=await new Request(req.url,{method:'POST',headers:{'content-type':req.headers.get('content-type')||''},body:new Uint8Array(bytes)}).formData();
+        const file=form.get('file');assert(file instanceof File,400,'Choose a file');return response(await requirements.upload(db,account,form.get('requestId')?uuid(String(form.get('requestId'))):null,file.name,Buffer.from(await file.arrayBuffer())));
+      }
+      if(id==='attachments'&&action&&method==='GET'){const a=await requirements.attachment(db,uuid(action),account);return new Response(new Uint8Array(a.content),{headers:{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(a.name)}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
+      if(id==='returns'&&method==='POST')return response(await storeOperations.requestReturn(db,account,await body(req)));
       if (id === "account") {
         if (action === "me" && method === "GET")
           return response({ account: account || null });
@@ -207,6 +237,20 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
     if (root === "storefront-admin") {
+      if(id==='replenishment'&&method==='PUT'){auth.requirePermission(actor,'INVENTORY_MANAGE');const d=z.object({productId:z.string().uuid(),warehouseId:z.string().uuid(),minimum:z.string().regex(/^\d+(?:\.\d{1,6})?$/)}).parse(await body(req));await db.transaction(async tx=>{await tx.query('INSERT INTO replenishment_settings(product_id,warehouse_id,minimum) VALUES($1,$2,$3) ON CONFLICT(product_id,warehouse_id) DO UPDATE SET minimum=$3',[d.productId,d.warehouseId,d.minimum]);await audit(tx,actor.id,'REPLENISHMENT_UPDATE','products',d.productId,null,d)});return response({ok:true});}
+      if(id==='bulk-publish'&&method==='PUT'){const d=z.object({items:z.array(z.object({id:z.string().uuid(),version:z.number().int(),published:z.boolean()})).min(1).max(100)}).parse(await body(req));await db.transaction(async tx=>{for(const p of [...d.items].sort((a,b)=>a.id.localeCompare(b.id)))await storefront.publishProduct(tx,actor,p.id,p)});return response({ok:true});}
+      if(id==='commerce'&&method==='GET')return response(await commerce.dashboard(db,actor));
+      if(id==='campaigns'&&method==='PUT')return response(await commerce.saveCampaign(db,actor,await body(req)));
+      if(id==='company'&&action&&method==='PUT')return response(await commerce.saveCompany(db,actor,uuid(action),await body(req)));
+      if(id==='prices'&&method==='PUT')return response(await commerce.savePrice(db,actor,await body(req)));
+      if(id==='price-lists'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({name:z.string().trim().min(1).max(150)}).parse(await body(req));return response(await one(db,'INSERT INTO commerce_price_lists(id,name) VALUES($1,$2) RETURNING *',[randomUUID(),d.name]));}
+      if(id==='price-lists'&&action&&method==='PUT'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({name:z.string().trim().min(1).max(150),active:z.boolean(),version:z.number().int()}).parse(await body(req));return response(await db.transaction(async tx=>{const saved=await one(tx,'UPDATE commerce_price_lists SET name=$2,active=$3,version=version+1 WHERE id=$1 AND version=$4 RETURNING *',[uuid(action),d.name,d.active,d.version]);assert(saved,409,'Price list changed. Reload');await audit(tx,actor.id,'COMMERCE_PRICE_LIST_SAVE','commerce_price_lists',action,null,d);return saved}));}
+      if(id==='requirements'&&action&&method==='PUT')return response(await requirements.review(db,actor,uuid(action),await body(req)));
+      if(id==='order-actions'&&action&&method==='PUT')return response(await storeOperations.orderAction(db,actor,uuid(action),await body(req)));
+      if(id==='returns'&&action&&method==='PUT')return response(await storeOperations.reviewReturn(db,actor,uuid(action),await body(req)));
+      if(id==='attachments'&&action&&method==='GET'){const a=await requirements.attachment(db,uuid(action),undefined,actor);return new Response(new Uint8Array(a.content),{headers:{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(a.name)}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
+      if(id==='media'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const bytes=await readLimited(req,8*1024*1024);const sharp=(await import('sharp')).default;const content=await sharp(bytes,{limitInputPixels:25000000}).rotate().resize(1920,1000,{fit:'inside',withoutEnlargement:true}).webp({quality:85}).toBuffer();const mediaId=randomUUID();await db.query('INSERT INTO commerce_media(id,content) VALUES($1,$2)',[mediaId,content]);return response({url:'/amt_price_list/api/v1/storefront/media/'+mediaId});}
+      if(id==='notifications'&&action&&method==='PUT'){auth.requirePermission(actor,'STOREFRONT_MANAGE');await db.query("UPDATE commerce_notifications SET status='QUEUED',error=NULL WHERE id=$1 AND status='FAILED'",[uuid(action)]);return response({ok:true});}
       if (id === "management" && method === "GET")
         return response(
           await storefront.management(
