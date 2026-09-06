@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import sharp from "sharp";
 const origin = process.env.COMMERCE_TEST_ORIGIN || "http://127.0.0.1:18182",
   base = origin + "/amt_price_list";
 assert(
@@ -108,6 +109,26 @@ try {
     .getByRole("heading", { name: "Store management", exact: true })
     .waitFor();
   await page.getByRole("button", { name: "Products", exact: true }).click();
+  assert.ok(await page.getByRole("button",{name:"Publish selected",exact:true}).isDisabled());
+  await page.getByRole("button",{name:"Select all matching",exact:true}).click();
+  await page.getByRole("button",{name:"Publish selected",exact:true}).waitFor();
+  await page.getByRole("button",{name:"Publish selected",exact:true}).click();
+  await page.getByText(/Updated:/).waitFor();
+  await page.getByRole("link",{name:"Bulk import workspace",exact:true}).click();
+  await page.getByRole("heading",{name:"Catalog Management",exact:true}).waitFor();
+  assert.deepEqual(errors,[]);
+  console.log("PASS bulk publishing visibility, all-matching selection and import deep link");
+  await page.goto(base);
+  await page.getByRole("button",{name:"Commercial",exact:true}).click();
+  await page.locator(".commercial-tabs button").filter({hasText:/Storefront|Online store/}).click();
+  await page.getByRole("button",{name:"Products",exact:true}).click();
+  await page.getByText("Bulk product images",{exact:true}).click();
+  const png=await sharp({create:{width:80,height:80,channels:3,background:'#175b44'}}).png().toBuffer();
+  await page.getByLabel("Choose product images",{exact:true}).setInputFiles({name:"QA-SWITCH.png",mimeType:"image/png",buffer:png});
+  await page.getByRole("cell",{name:"READY",exact:true}).waitFor();
+  await page.getByRole("button",{name:"Upload reviewed matches",exact:true}).click();
+  await page.getByRole("cell",{name:"UPLOADED",exact:true}).waitFor();
+  console.log("PASS bulk image matching and upload");
   await page.getByRole("button", { name: "Add product", exact: true }).click();
   await page
     .getByLabel("Part number", { exact: true })
@@ -181,7 +202,12 @@ try {
     /"priceCurrency":"SAR"/,
   );
   console.log("PASS public product page and metadata");
+  const seo=await api("storefront-admin/category-seo");
+  await api("storefront-admin/category-seo","PUT",{categoryId:seo.categories.find(c=>c.name==="Switches").id,version:seo.version,title:"Switches for projects | AMT",description:"Project switches and electrical supplies",titleAr:"مفاتيح المشاريع",descriptionAr:"مستلزمات كهربائية للمشاريع"});
   await page.goto(base + "/store/categories/Switches");
+  assert.equal(await page.title(),"Switches for projects | AMT");
+  await page.getByText("مفاتيح المشاريع",{exact:true}).waitFor();
+  console.log("PASS editable category SEO and Arabic content");
   await page.getByRole("heading", { name: "Switches", exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(base + "/store");

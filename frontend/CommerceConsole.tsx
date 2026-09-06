@@ -41,7 +41,7 @@ const local = (v: any) =>
 export default function CommerceConsole({
   tab,
   t,
-  products,
+  products: initialProducts,
   user,
 }: {
   tab: string;
@@ -55,6 +55,9 @@ export default function CommerceConsole({
     [busy, setBusy] = useState(false),
     [edit, setEdit] = useState<any>(),
     [preview, setPreview] = useState(false);
+  const [extraProducts,setExtraProducts]=useState<any[]>([]);
+  const products=[...new Map([...initialProducts,...extraProducts].map(p=>[p.id,p])).values()];
+  useEffect(()=>{if(edit?.data?.productIds?.length)api('storefront-admin/catalog-options','POST',{ids:edit.data.productIds}).then(r=>setExtraProducts(r.products)).catch(e=>setError(e.message))},[edit?.id,edit?.kind]);
   const can = (p: string) => user?.permissions?.includes(p);
   async function load() {
     try {
@@ -104,6 +107,7 @@ export default function CommerceConsole({
   const productSelect = (name = "productId", value = "") => (
     <select name={name} defaultValue={value} required>
       <option value="">{t("Choose product", "اختر المنتج")}</option>
+      {value && !products.some(p=>p.id===value) && <option value={value}>{t("Current product", "المنتج الحالي")}</option>}
       {products.map((p) => (
         <option key={p.id} value={p.id}>
           {p.part_number} · {p.description}
@@ -565,7 +569,8 @@ export default function CommerceConsole({
                   <select
                     name="productIds"
                     multiple
-                    defaultValue={edit.data.productIds || []}
+                    value={edit.data.productIds || []}
+                    onChange={e=>setEdit((current:any)=>({...current,data:{...current.data,productIds:Array.from(e.target.selectedOptions,o=>o.value)}}))}
                     size={8}
                   >
                     {products.map((p) => (

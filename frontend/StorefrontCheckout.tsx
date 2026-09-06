@@ -45,10 +45,12 @@ export function StoreDialog({
   );
 }
 function Otp({
+  purpose = "CHECKOUT",
   destination,
   verified,
   t,
 }: {
+  purpose?: "CHECKOUT" | "SIGNUP" | "LOGIN";
   destination: string;
   verified: (id: string, token: string) => void;
   t: Translate;
@@ -74,7 +76,8 @@ function Otp({
       setChallenge(
         await api("storefront/otp/request", "POST", {
           destination,
-          channel: destination.includes("@") ? "EMAIL" : "SMS",
+          channel: purpose !== "CHECKOUT" ? "WHATSAPP" : destination.includes("@") ? "EMAIL" : "SMS",
+          purpose,
         }),
       );
       setCooldown(60);
@@ -162,6 +165,9 @@ export function StoreAccount({
 }) {
   const [mode, setMode] = useState("login"),
     [email, setEmail] = useState(""),
+    [mobile, setMobile] = useState(""),
+    [accountType, setAccountType] = useState("RETAIL"),
+    [loginMethod, setLoginMethod] = useState("OTP"),
     [verification, setVerification] = useState<any>(),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
@@ -173,10 +179,7 @@ export function StoreAccount({
     try {
       const f = new FormData(e.currentTarget);
       if (mode === "login") {
-        await api("storefront/account/login", "POST", {
-          login: f.get("login"),
-          password: f.get("password"),
-        });
+        await api(loginMethod === "OTP" ? "storefront/account/login-otp" : "storefront/account/login", "POST", loginMethod === "OTP" ? {mobile,...verification} : {login:f.get("login"),password:f.get("password")});
         changed((await api("storefront/account/me")).account);
         close();
       } else {
@@ -197,9 +200,10 @@ export function StoreAccount({
         }
         await api("storefront/account/register", "POST", {
           supportingDocument,
+          accountType,
           name: f.get("name"),
           email,
-          mobile: f.get("mobile"),
+          mobile,
           customerCode: f.get("customerCode"),
           registrationNumber: f.get("registrationNumber") || "",
           taxNumber: f.get("taxNumber") || "",
@@ -212,7 +216,7 @@ export function StoreAccount({
         });
         setMessage(
           t(
-            "Application received. Your account will be available after AMT approval.",
+            "Account created. Company purchasing, if requested, requires AMT approval.",
             "تم استلام الطلب. سيتاح الحساب بعد موافقة AMT.",
           ),
         );
@@ -263,26 +267,31 @@ export function StoreAccount({
         <>
           <div className="sf-tabs">
             <button
-              onClick={() => setMode("login")}
+              onClick={() => {setMode("login");setVerification(undefined)}}
               className={mode === "login" ? "active" : ""}
             >
               {t("Sign in", "تسجيل الدخول")}
             </button>
             <button
-              onClick={() => setMode("register")}
+              onClick={() => {setMode("register");setVerification(undefined)}}
               className={mode === "register" ? "active" : ""}
             >
-              {t("Apply for a business account", "طلب حساب شركات")}
+              {t("Sign up", "إنشاء حساب")}
             </button>
           </div>
           <form className="sf-form" onSubmit={submit}>
-            {mode === "login" ? (
+            {mode === "login" && <label>{t("Sign-in method", "طريقة الدخول")}<select aria-label={t("Sign-in method", "طريقة الدخول")} value={loginMethod} onChange={e=>{setLoginMethod(e.target.value);setVerification(undefined)}}><option value="OTP">WhatsApp OTP</option><option value="PASSWORD">{t("Password", "كلمة المرور")}</option></select></label>}
+            {mode === "login" ? loginMethod === "OTP" ? <>
+              <label>{t("WhatsApp mobile", "رقم واتساب")}<input type="tel" required value={mobile} onChange={e=>{setMobile(e.target.value);setVerification(undefined)}} /></label>
+              {verification ? <p>{t("Mobile verified", "تم التحقق من الجوال")}</p> : <Otp key="login" purpose="LOGIN" destination={mobile} verified={(id,token)=>setVerification({verificationId:id,verificationToken:token})} t={t}/>}
+            </> : (
               <label>
                 {t("Email or mobile", "البريد أو الجوال")}
                 <input name="login" required autoComplete="username" />
               </label>
             ) : (
               <>
+                <label>{t("Account type", "نوع الحساب")}<select value={accountType} onChange={e=>setAccountType(e.target.value)}><option value="RETAIL">{t("Personal", "شخصي")}</option><option value="COMPANY">{t("Company", "شركة")}</option></select></label>
                 <label>
                   {t("Business / customer name", "اسم الشركة / العميل")}
                   <input
@@ -292,7 +301,7 @@ export function StoreAccount({
                     autoComplete="organization"
                   />
                 </label>
-                <div className="sf-form">
+                {accountType === "COMPANY" && <div className="sf-form">
                   {[
                     [
                       "registrationNumber",
@@ -326,14 +335,14 @@ export function StoreAccount({
                       accept="application/pdf"
                     />
                   </label>
-                </div>
+                </div>}
                 <label>
                   {t("Customer code (optional)", "رمز العميل (اختياري)")}
                   <input name="customerCode" />
                 </label>
                 <label>
                   {t("Mobile", "الجوال")}
-                  <input name="mobile" required type="tel" autoComplete="tel" />
+                  <input name="mobile" required type="tel" autoComplete="tel" value={mobile} onChange={e=>{setMobile(e.target.value);setVerification(undefined)}} />
                 </label>
                 <label>
                   {t("Email", "البريد الإلكتروني")}
@@ -349,10 +358,12 @@ export function StoreAccount({
                   />
                 </label>
                 {verification ? (
-                  <p>{t("Email verified", "تم التحقق من البريد")}</p>
+                  <p>{t("WhatsApp mobile verified", "تم التحقق من رقم واتساب")}</p>
                 ) : (
                   <Otp
-                    destination={email}
+                    purpose="SIGNUP"
+                    key="signup"
+                    destination={mobile}
                     verified={(id, token) =>
                       setVerification({
                         verificationId: id,
@@ -364,7 +375,7 @@ export function StoreAccount({
                 )}
               </>
             )}
-            <label>
+            {(mode === "register" || loginMethod === "PASSWORD") && <label>
               {t("Password", "كلمة المرور")}
               <input
                 name="password"
@@ -375,10 +386,10 @@ export function StoreAccount({
                   mode === "register" ? "new-password" : "current-password"
                 }
               />
-            </label>
+            </label>}
             <button
               className="sf-primary"
-              disabled={busy || (mode === "register" && !verification)}
+              disabled={busy || ((mode === "register" || loginMethod === "OTP") && !verification)}
             >
               {mode === "login"
                 ? t("Sign in", "تسجيل الدخول")

@@ -1,3 +1,4 @@
+import { whatsappAdmin } from "../storefront/whatsapp";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -148,6 +149,11 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if (id === "account") {
         if (action === "me" && method === "GET")
           return response({ account: account || null });
+        if (action === "login-otp" && method === "POST") {
+          await auth.throttle(db,"store-login-otp",200);
+          const result=await storefront.loginAccountOtp(db,await body(req));
+          return response({account:result.account},200,{"Set-Cookie":storefront.accountSessionCookie(result.token)});
+        }
         if (action === "login" && method === "POST") {
           await auth.throttle(db, "store-login", 200);
           const data = await body(req);
@@ -237,8 +243,32 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
     if (root === "storefront-admin") {
+      if(id==='catalog-options'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({ids:z.array(z.string().uuid()).max(200)}).parse(await body(req));return response({products:(await db.query('SELECT id,part_number,description FROM products WHERE id=ANY($1::uuid[]) ORDER BY part_number',[d.ids])).rows});}
+
+      if(id==='category-seo'){
+        auth.requirePermission(actor,'STOREFRONT_MANAGE');
+        if(method==='GET'){const settings=await one(db,'SELECT data,version FROM storefront_settings WHERE id=1');return response({version:settings!.version,content:settings!.data.categorySeo||{},categories:(await db.query('SELECT id,name FROM categories WHERE active ORDER BY name')).rows});}
+        if(method==='PUT'){const d=z.object({categoryId:z.string().uuid(),version:z.number().int(),title:z.string().max(150),description:z.string().max(320),titleAr:z.string().max(150),descriptionAr:z.string().max(320)}).parse(await body(req));return response(await db.transaction(async tx=>{assert(await one(tx,'SELECT id FROM categories WHERE id=$1',[d.categoryId]),404,'Category not found');const before=await one(tx,'SELECT * FROM storefront_settings WHERE id=1 FOR UPDATE');assert(before?.version===d.version,409,'Settings changed. Reload');const content={...before!.data,categorySeo:{...before!.data.categorySeo,[d.categoryId]:{title:d.title,description:d.description,titleAr:d.titleAr,descriptionAr:d.descriptionAr}}};await tx.query('UPDATE storefront_settings SET data=$1,version=version+1 WHERE id=1',[json(content)]);await audit(tx,actor.id,'CATEGORY_SEO_UPDATE','categories',d.categoryId,null,d);return {ok:true}}));}
+      }
+
+      if(id==='image-matches'&&method==='POST'){
+        auth.requirePermission(actor,'STOREFRONT_MANAGE');auth.requirePermission(actor,'PRODUCT_EDIT');
+        const d=z.object({names:z.array(z.string().min(1).max(250)).min(1).max(200)}).parse(await body(req));const items=[];
+        for(const name of d.names){let partNumber=name.replace(/\.(?:jpe?g|png|webp)$/i,'');let matches=(await db.query('SELECT id FROM products WHERE lower(part_number)=lower($1)',[partNumber])).rows;if(!matches.length){partNumber=partNumber.replace(/__\d+$/,'');matches=(await db.query('SELECT id FROM products WHERE lower(part_number)=lower($1)',[partNumber])).rows;}items.push({partNumber,productId:matches.length===1?matches[0].id:null});}
+        return response({items});
+      }
+
+      if(id==='whatsapp'){
+        auth.requirePermission(actor,'SETTINGS_MANAGE');
+        auth.requirePermission(actor,'STOREFRONT_MANAGE');
+        assert((action==='status' && method==='GET') || (['connect','disconnect','test'].includes(action) && method==='POST'),405,'Method not allowed');
+        const result=await whatsappAdmin(action,method==='POST'?await body(req):{});
+        if(method==='POST') await audit(db,actor.id,'WHATSAPP_'+action.toUpperCase(),'settings','1',null,{action});
+        return response(result,200,{'Cache-Control':'no-store'});
+      }
+
       if(id==='replenishment'&&method==='PUT'){auth.requirePermission(actor,'INVENTORY_MANAGE');const d=z.object({productId:z.string().uuid(),warehouseId:z.string().uuid(),minimum:z.string().regex(/^\d+(?:\.\d{1,6})?$/)}).parse(await body(req));await db.transaction(async tx=>{await tx.query('INSERT INTO replenishment_settings(product_id,warehouse_id,minimum) VALUES($1,$2,$3) ON CONFLICT(product_id,warehouse_id) DO UPDATE SET minimum=$3',[d.productId,d.warehouseId,d.minimum]);await audit(tx,actor.id,'REPLENISHMENT_UPDATE','products',d.productId,null,d)});return response({ok:true});}
-      if(id==='bulk-publish'&&method==='PUT'){const d=z.object({items:z.array(z.object({id:z.string().uuid(),version:z.number().int(),published:z.boolean()})).min(1).max(100)}).parse(await body(req));await db.transaction(async tx=>{for(const p of [...d.items].sort((a,b)=>a.id.localeCompare(b.id)))await storefront.publishProduct(tx,actor,p.id,p)});return response({ok:true});}
+      if(id==='bulk-publish'&&method==='PUT'){const d=z.object({items:z.array(z.object({id:z.string().uuid(),version:z.number().int(),published:z.boolean()})).min(1).max(100)}).parse(await body(req));auth.requirePermission(actor,'STOREFRONT_MANAGE');const results=[];for(const p of d.items){try{await storefront.publishProduct(db,actor,p.id,p);results.push({id:p.id,ok:true})}catch(e){if(!(e instanceof AppError))throw e;results.push({id:p.id,ok:false,error:e.message})}}return response({ok:results.every(r=>r.ok),results});}
       if(id==='commerce'&&method==='GET')return response(await commerce.dashboard(db,actor));
       if(id==='campaigns'&&method==='PUT')return response(await commerce.saveCampaign(db,actor,await body(req)));
       if(id==='company'&&action&&method==='PUT')return response(await commerce.saveCompany(db,actor,uuid(action),await body(req)));
@@ -257,6 +287,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             db,
             actor,
             url.searchParams.get("q") || "",
+            {offset:url.searchParams.get("offset")||0,publication:url.searchParams.get("publication")||"ALL",selection:url.searchParams.get("selection")==="true"},
           ),
         );
       if (id === "products" && action && method === "PUT")

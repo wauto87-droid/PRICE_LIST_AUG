@@ -1,3 +1,4 @@
+import { normalizePhone, whatsapp } from "./whatsapp";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { z } from "zod";
@@ -287,46 +288,27 @@ export async function publicImage(db: DB, id: string) {
 }
 
 export async function requestOtp(db: DB, raw: unknown) {
-  const data = z
-    .object({
-      destination: z.string().trim().min(5).max(200),
-      channel: z.enum(["SMS", "EMAIL"]),
-    })
-    .parse(raw);
-  await throttle(db, `store-otp:${normalizeContact(data.destination)}`, 5);
-  const code = String(randomInt(100000, 1000000)),
-    id = randomUUID();
-  await db.query(
-    "INSERT INTO otp_challenges(id,purpose,destination_hash,code_hash,expires_at) VALUES($1,'STOREFRONT_CHECKOUT',$2,$3,now()+interval '10 minutes')",
-    [id, sha(normalizeContact(data.destination)), sha(`${id}:${code}`)],
-  );
-  const endpoint = process.env.OTP_PROVIDER_URL;
-  if (endpoint) {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${process.env.OTP_PROVIDER_TOKEN ?? ""}`,
-      },
-      body: JSON.stringify({
-        destination: data.destination,
-        channel: data.channel,
-        code,
-      }),
-    });
-    assert(res.ok, 503, "Unable to send verification code");
-  } else
-    assert(
-      process.env.NODE_ENV === "test",
-      503,
-      "OTP delivery provider is not configured",
-    );
-  return {
-    id,
-    expiresInSeconds: 600,
-    ...(process.env.NODE_ENV === "test" ? { testCode: code } : {}),
-  };
+  const data = z.object({ destination:z.string().trim().min(5).max(200), channel:z.enum(["SMS","EMAIL","WHATSAPP"]), purpose:z.enum(["CHECKOUT","SIGNUP","LOGIN"]).default("CHECKOUT") }).parse(raw);
+  assert(data.purpose === "CHECKOUT" || data.channel === "WHATSAPP",400,"Signup and login require WhatsApp verification");
+  const destination=data.channel === "WHATSAPP" ? normalizePhone(data.destination) : normalizeContact(data.destination);
+  const destinationHash=sha(destination);
+  await throttle(db, `store-otp:${destinationHash}`, 5);
+  return db.transaction(async tx => {
+    await tx.query("INSERT INTO commerce_otp_destinations(destination_hash) VALUES($1) ON CONFLICT DO NOTHING",[destinationHash]);
+    const previous=await one(tx,"SELECT sent_at FROM commerce_otp_destinations WHERE destination_hash=$1 FOR UPDATE",[destinationHash]);
+    assert(!previous?.sent_at || Date.now()-new Date(previous.sent_at).getTime()>=60000,429,"Wait 60 seconds before requesting another code");
+    const code=String(randomInt(100000,1000000)),id=randomUUID();
+    if(data.channel === "WHATSAPP") {
+      if(process.env.NODE_ENV !== "test" || process.env.WHATSAPP_SERVICE_URL) await whatsapp("send",{destination,code});
+    } else if(process.env.OTP_PROVIDER_URL) {
+      const res=await fetch(process.env.OTP_PROVIDER_URL,{method:"POST",signal:AbortSignal.timeout(15000),headers:{"content-type":"application/json",authorization:`Bearer ${process.env.OTP_PROVIDER_TOKEN ?? ""}`},body:JSON.stringify({destination,channel:data.channel,code})});
+      assert(res.ok,503,"Unable to send verification code");
+    } else assert(process.env.NODE_ENV === "test",503,"OTP delivery provider is not configured");
+    await tx.query("UPDATE otp_challenges SET consumed_at=now() WHERE destination_hash=$1 AND purpose=$2 AND consumed_at IS NULL",[destinationHash,`STOREFRONT_${data.purpose}`]);
+    await tx.query("INSERT INTO otp_challenges(id,purpose,destination_hash,code_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes')",[id,`STOREFRONT_${data.purpose}`,destinationHash,sha(`${id}:${code}`)]);
+    await tx.query("UPDATE commerce_otp_destinations SET sent_at=now() WHERE destination_hash=$1",[destinationHash]);
+    return {id,expiresInSeconds:600,...(process.env.NODE_ENV === "test"?{testCode:code}:{})};
+  });
 }
 export async function verifyOtp(db: DB, raw: unknown) {
   const data = z
@@ -700,7 +682,7 @@ export async function checkout(db: DB, raw: unknown, account?: any) {
           ])
         : null;
       assert(
-        verifiedContact(otp, data.verificationToken, data.contact) &&
+        otp?.purpose === "STOREFRONT_CHECKOUT" && verifiedContact(otp, data.verificationToken, data.contact) &&
           !otp?.consumed_at,
         403,
         "Verify the checkout contact again; verification is invalid or expired",
@@ -1031,20 +1013,15 @@ export async function logoutAccount(db: DB, req: Request) {
       [sha(decodeURIComponent(token))],
     );
 }
-export async function management(db: DB, actor: Actor, q = "") {
-  requirePermission(actor, "STOREFRONT_MANAGE");
-  return {
-    settings: await configuration(db, actor),
-    defaultVat:(await one(db,'SELECT data FROM settings WHERE id=1'))?.data.vat||'15',
-    accounts: await listAccounts(db, actor),
-    zones: (await db.query("SELECT * FROM delivery_zones ORDER BY name")).rows,
-    products: (
-      await db.query(
-        "SELECT id,part_number,description,active,storefront_published,storefront_slug,storefront_content,version FROM products WHERE $1='' OR part_number ILIKE '%'||$1||'%' OR description ILIKE '%'||$1||'%' ORDER BY part_number LIMIT 100",
-        [q.slice(0, 100)],
-      )
-    ).rows,
-  };
+export async function management(db: DB, actor: Actor, q = "", raw: unknown = {}) {
+  requirePermission(actor,"STOREFRONT_MANAGE");
+  const options=z.object({offset:z.coerce.number().int().min(0).default(0),publication:z.enum(["ALL","PUBLISHED","UNPUBLISHED","INACTIVE","MISSING_IMAGE","MISSING_PRICE"]).default("ALL"),selection:z.boolean().default(false)}).parse(raw);
+  const where=`($1='' OR p.part_number ILIKE '%'||$1||'%' OR p.description ILIKE '%'||$1||'%') AND ($2='ALL' OR ($2='PUBLISHED' AND p.storefront_published) OR ($2='UNPUBLISHED' AND NOT p.storefront_published) OR ($2='INACTIVE' AND NOT p.active) OR ($2='MISSING_IMAGE' AND NOT EXISTS(SELECT 1 FROM product_images i WHERE i.product_id=p.id)) OR ($2='MISSING_PRICE' AND NOT EXISTS(SELECT 1 FROM product_selling_levels l WHERE l.product_id=p.id AND l.active AND l.code IN ('RETAIL','END_CUSTOMER'))))`;
+  const params=[q.slice(0,100),options.publication];
+  const total=Number((await one(db,`SELECT count(*) n FROM products p WHERE ${where}`,params))!.n);
+  if(options.selection){assert(total<=10000,400,"Narrow the filters to select at most 10,000 products per operation");return {products:(await db.query(`SELECT p.id,p.version FROM products p WHERE ${where} ORDER BY p.part_number,p.id`,params)).rows,total};}
+  return {settings:await configuration(db,actor),defaultVat:(await one(db,'SELECT data FROM settings WHERE id=1'))?.data.vat||'15',accounts:await listAccounts(db,actor),zones:(await db.query("SELECT * FROM delivery_zones ORDER BY name")).rows,total,offset:options.offset,
+    products:(await db.query(`SELECT p.id,p.part_number,p.description,p.active,p.storefront_published,p.storefront_slug,p.storefront_content,p.version FROM products p WHERE ${where} ORDER BY p.part_number,p.id LIMIT 100 OFFSET $3`,[...params,options.offset])).rows};
 }
 export async function publishProduct(
   db: DB,
@@ -1150,16 +1127,17 @@ export async function authenticateAccount(db: DB, req: Request) {
     db,
     `SELECT a.id,a.customer_id,a.email,a.mobile,a.status,COALESCE(co.price_level,a.price_level) price_level,COALESCE(co.credit_enabled,a.credit_enabled) credit_enabled,COALESCE(co.credit_limit,a.credit_limit) credit_limit,a.company_id,a.company_role,c.name,c.number
     FROM customer_account_sessions s JOIN customer_accounts a ON a.id=s.account_id LEFT JOIN customers c ON c.id=a.customer_id LEFT JOIN commerce_companies co ON co.id=a.company_id
-    WHERE s.token_hash=$1 AND s.expires_at>now() AND a.status='ACTIVE' AND (a.company_id IS NULL OR EXISTS(SELECT 1 FROM commerce_companies co WHERE co.id=a.company_id AND co.status='ACTIVE'))`,
+    WHERE s.token_hash=$1 AND s.expires_at>now() AND a.status='ACTIVE' AND (a.company_id IS NULL OR EXISTS(SELECT 1 FROM commerce_companies co WHERE co.id=a.company_id AND co.status IN ('ACTIVE','PENDING')))`,
     [sha(decodeURIComponent(raw))],
   );
 }
 export const accountSessionCookie = (token: string) =>
-  `${accountCookie}=${encodeURIComponent(token)}; Path=/amt_price_list; HttpOnly; ${process.env.COOKIE_SECURE === "false" ? "" : "Secure; "}SameSite=Lax; Max-Age=${token ? 2592000 : 0}`;
+  `${accountCookie}=${encodeURIComponent(token)}; Path=${APP_BASE_PATH || "/"}; HttpOnly; ${process.env.COOKIE_SECURE === "false" ? "" : "Secure; "}SameSite=Lax; Max-Age=${token ? 2592000 : 0}`;
 
 export async function registerAccount(db: DB, raw: unknown) {
   const data = z
     .object({
+      accountType: z.enum(["RETAIL", "COMPANY"]).default("COMPANY"),
       name: z.string().trim().min(2).max(150),
       customerCode: z.string().trim().max(80).default(""),
       email: z.string().email(),
@@ -1184,10 +1162,13 @@ export async function registerAccount(db: DB, raw: unknown) {
       [data.verificationId],
     );
     assert(
-      verifiedContact(otp, data.verificationToken, data) && !otp?.consumed_at,
+      otp?.purpose === "STOREFRONT_SIGNUP" && verifiedContact(otp, data.verificationToken, {mobile:normalizePhone(data.mobile)}) && !otp?.consumed_at,
       403,
       "Account verification is invalid or expired",
     );
+    data.mobile = normalizePhone(data.mobile);
+    const matchingPhones=(await tx.query("SELECT mobile FROM customer_accounts")).rows;
+    assert(!matchingPhones.some(a=>{try{return normalizePhone(a.mobile)===data.mobile}catch{return false}}),409,"An account already exists for this mobile");
     assert(
       !(await one(
         tx,
@@ -1204,7 +1185,7 @@ export async function registerAccount(db: DB, raw: unknown) {
       [customerId, data.name, data.customerCode, data.mobile],
     );
     await tx.query(
-      "INSERT INTO customer_accounts(id,customer_id,email,mobile,password_hash,status) VALUES($1,$2,lower($3),$4,$5,'PENDING')",
+      "INSERT INTO customer_accounts(id,customer_id,email,mobile,password_hash,status,verified_mobile) VALUES($1,$2,lower($3),$4,$5,'ACTIVE',$4)",
       [
         accountId,
         customerId,
@@ -1214,11 +1195,6 @@ export async function registerAccount(db: DB, raw: unknown) {
       ],
     );
     if (data.invitationToken) {
-      assert(
-        otp?.destination_hash === sha(normalizeContact(data.email)),
-        403,
-        "Verify the invited email address",
-      );
       const invitation = await one(
         tx,
         "SELECT * FROM commerce_invitations WHERE token_hash=$1 AND accepted_at IS NULL AND expires_at>now() FOR UPDATE",
@@ -1245,7 +1221,7 @@ export async function registerAccount(db: DB, raw: unknown) {
         "UPDATE commerce_invitations SET accepted_at=now() WHERE id=$1",
         [invitation.id],
       );
-    } else {
+    } else if (data.accountType === "COMPANY") {
       await tx.query(
         "INSERT INTO commerce_companies(id,customer_id,name,profile) VALUES($1,$2,$3,$4)",
         [
@@ -1298,8 +1274,28 @@ export async function registerAccount(db: DB, raw: unknown) {
     );
     return {
       id: accountId,
-      status: data.invitationToken ? "ACTIVE" : "PENDING",
+      status: "ACTIVE",
+      companyStatus: !data.invitationToken && data.accountType === "COMPANY" ? "PENDING" : undefined,
     };
+  });
+}
+
+export async function loginAccountOtp(db: DB, raw: unknown) {
+  const data=z.object({mobile:z.string().max(40),verificationId:z.string().uuid(),verificationToken:z.string().min(20)}).parse(raw);
+  const mobile=normalizePhone(data.mobile);
+  return db.transaction(async tx=>{
+    const otp=await one(tx,"SELECT * FROM otp_challenges WHERE id=$1 FOR UPDATE",[data.verificationId]);
+    assert(otp?.purpose === "STOREFRONT_LOGIN" && !otp.consumed_at && verifiedContact(otp,data.verificationToken,{mobile}),403,"Login verification is invalid or expired");
+    const matches=(await tx.query("SELECT id,mobile FROM customer_accounts")).rows.filter(a=>{try{return normalizePhone(a.mobile)===mobile}catch{return false}});
+    assert(matches.length===1,401,"Use password login or contact the administrator to verify your account mobile");
+    const account=await one(tx,"SELECT * FROM customer_accounts WHERE id=$1 FOR UPDATE",[matches[0].id]);
+    assert(account?.status==='ACTIVE',401,"Account is unavailable");
+    if(account.company_id) assert(["ACTIVE","PENDING"].includes((await one(tx,"SELECT status FROM commerce_companies WHERE id=$1",[account.company_id]))?.status),401,"Company account is unavailable");
+    await tx.query("UPDATE customer_accounts SET verified_mobile=$2 WHERE id=$1",[account.id,mobile]);
+    await tx.query("UPDATE otp_challenges SET consumed_at=now() WHERE id=$1",[otp.id]);
+    const token=randomBytes(32).toString("hex");
+    await tx.query("INSERT INTO customer_account_sessions(token_hash,account_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[sha(token),account.id]);
+    return {token,account:{id:account.id,email:account.email,mobile}};
   });
 }
 
@@ -1329,11 +1325,7 @@ export async function loginAccount(db: DB, raw: unknown) {
   );
   if (activeAccount.company_id)
     assert(
-      (
-        await one(db, "SELECT status FROM commerce_companies WHERE id=$1", [
-          activeAccount.company_id,
-        ])
-      )?.status === "ACTIVE",
+      ["ACTIVE", "PENDING"].includes((await one(db, "SELECT status FROM commerce_companies WHERE id=$1", [activeAccount.company_id]))?.status),
       401,
       "Company account is unavailable",
     );

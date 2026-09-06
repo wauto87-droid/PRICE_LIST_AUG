@@ -476,7 +476,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     });
     return results;
   }
-  const heading = sections.find((s) => s[0] === section)!;
+  const heading = sections.find((s) => s[0] === section) ?? ["dashboard", "Dashboard", "لوحة التحكم"];
   const visibleProductIds =
     section === "products" ? productItems.map((p: any) => p.id) : [];
   const suggestions =
@@ -602,7 +602,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
     const full = await api("products/" + id);
     setEdit(full);
   };
-  useEffect(()=>{if(new URLSearchParams(location.search).get('commerce')==='imports')setSection('imports')},[]);
+  useEffect(()=>{if(new URLSearchParams(location.search).get('commerce')==='imports' && user.permissions.includes('IMPORT_EXCEL')){setSection('products');setCatalogTab('IMPORT')}},[]);
   return (
     <div
       className={`admin-layout ${menuOpen ? "menu-open" : "menu-collapsed"}`}

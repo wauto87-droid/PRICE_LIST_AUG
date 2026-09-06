@@ -4,6 +4,10 @@ import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
 import CommerceConsole from "./CommerceConsole";
 import ProductEditor, { blankProduct } from "./ProductEditor";
+import CatalogOptionsSearch from "./CatalogOptionsSearch";
+import CategorySeo from "./CategorySeo";
+import BulkProductImages from "./BulkProductImages";
+import WhatsAppAdmin from "./WhatsAppAdmin";
 import StoreInventory from "./StoreInventory";
 
 export default function StorefrontAdmin({
@@ -16,7 +20,14 @@ export default function StorefrontAdmin({
   navigate: (section: any) => void;
 }) {
   const [edit, setEdit] = useState<any>();
+  const [optionProducts,setOptionProducts]=useState<any[]>([]);
+  const addOptions=(rows:any[])=>setOptionProducts(current=>[...new Map([...current,...rows].map(p=>[p.id,p])).values()]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [versions,setVersions]=useState<Record<string,number>>({});
+  const [offset,setOffset]=useState(0),[publication,setPublication]=useState("ALL");
+  const queryParams=()=>`q=${encodeURIComponent(q)}&publication=${publication}`;
+  async function selectAll(){setBusy(true);try{const r=await api(`storefront-admin/management?${queryParams()}&selection=true`);setSelected(r.products.map((p:any)=>p.id));setVersions(Object.fromEntries(r.products.map((p:any)=>[p.id,p.version])))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+  async function publishSelected(published:boolean){setBusy(true);setError("");setNotice("");const failed:string[]=[];try{for(let i=0;i<selected.length;i+=100){const result=await api("storefront-admin/bulk-publish","PUT",{items:selected.slice(i,i+100).map(id=>({id,version:versions[id],published}))});for(const r of result.results)if(!r.ok)failed.push(`${r.id}: ${r.error}`)}setSelected([]);await load();setNotice(`${t("Updated","تم تحديث")}: ${selected.length-failed.length}`);if(failed.length)setError(failed.join("; "))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
   const can = (p: string) => user?.permissions?.includes(p);
   const [data, setData] = useState<any>(),
     [tab, setTab] = useState("overview"),
@@ -24,15 +35,13 @@ export default function StorefrontAdmin({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState("");
-  async function load() {
+  async function load(nextOffset=offset) {
     try {
-      setData(
-        await api(`storefront-admin/management?q=${encodeURIComponent(q)}`),
-      );
+      const result=await api(`storefront-admin/management?${queryParams()}&offset=${nextOffset}`);
+      setData(result);setOffset(nextOffset);addOptions(result.products);
+      setVersions(previous=>({...previous,...Object.fromEntries(result.products.filter((p:any)=>!selected.includes(p.id)).map((p:any)=>[p.id,p.version]))}));
       setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    } catch(e){setError((e as Error).message)}
   }
   useEffect(() => {
     load();
@@ -81,6 +90,7 @@ export default function StorefrontAdmin({
           ["returns", "Returns & refunds", "المرتجعات والمبالغ المستردة"],
           ["promotions", "Promotions", "العروض"],
           ["settings", "Store settings", "إعدادات المتجر"],
+          ...(can("SETTINGS_MANAGE") ? [["whatsapp", "WhatsApp OTP", "واتساب والتحقق"]] : []),
           ["products", "Products", "المنتجات"],
           ["zones", "Delivery zones", "مناطق التوصيل"],
           ["accounts", "Business accounts", "حسابات الشركات"],
@@ -118,9 +128,10 @@ export default function StorefrontAdmin({
       )}
       {notice && <p role="status">{notice}</p>}
       {!data ? (
-        <button onClick={load}>{t("Load management", "تحميل الإدارة")}</button>
+        <button onClick={() => load()}>{t("Load management", "تحميل الإدارة")}</button>
       ) : (
         <>
+          {["homepage","pricing","quotes","promotions","inventory"].includes(tab) && <CatalogOptionsSearch t={t} onResults={addOptions}/>}
           {[
             "overview",
             "homepage",
@@ -134,12 +145,13 @@ export default function StorefrontAdmin({
             <CommerceConsole
               tab={tab}
               t={t}
-              products={data.products}
+              products={optionProducts}
               user={user}
             />
           )}
+          {tab === "homepage" && <CategorySeo t={t}/>}
           {tab === "inventory" && (
-            <StoreInventory t={t} products={data.products} user={user} />
+            <StoreInventory t={t} products={optionProducts} user={user} />
           )}
           {tab === "settings" && (
             <form
@@ -293,8 +305,10 @@ export default function StorefrontAdmin({
               </button>
             </form>
           )}
+          {tab === "whatsapp" && can("SETTINGS_MANAGE") && <WhatsAppAdmin t={t}/>}
           {tab === "products" && (
             <>
+              {can("PRODUCT_EDIT") && <BulkProductImages t={t}/>}
               <div className="actions">
                 {can("PRODUCT_CREATE") && can("COST_VIEW") && (
                   <button
@@ -309,41 +323,21 @@ export default function StorefrontAdmin({
                     {t("Bulk import workspace", "مساحة الاستيراد الجماعي")}
                   </a>
                 )}
-                {selected.length > 0 && (
-                  <button
-                    disabled={busy}
-                    onClick={async () => {
-                      setBusy(true);
-                      try {
-                        await api("storefront-admin/bulk-publish", "PUT", {
-                          items: data.products
-                            .filter((p: any) => selected.includes(p.id))
-                            .map((p: any) => ({
-                              id: p.id,
-                              version: p.version,
-                              published: true,
-                            })),
-                        });
-                        setSelected([]);
-                        await load();
-                      } catch (e) {
-                        setError((e as Error).message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    {t("Publish selected", "نشر المحدد")} ({selected.length})
-                  </button>
-                )}
+                <button type="button" disabled={busy} onClick={() => setSelected(v=>[...new Set([...v,...data.products.map((p:any)=>p.id)])])}>{t("Select page", "تحديد الصفحة")}</button>
+                <button type="button" disabled={busy} onClick={selectAll}>{t("Select all matching", "تحديد كل النتائج")}</button>
+                <button type="button" disabled={busy} onClick={() => setSelected([])}>{t("Clear selection", "إلغاء التحديد")}</button>
+                <span>{t("Selected", "المحدد")}: {selected.length}</span>
+                <button type="button" disabled={busy || !selected.length} onClick={()=>publishSelected(true)}>{t("Publish selected", "نشر المحدد")}</button>
+                <button type="button" disabled={busy || !selected.length} onClick={()=>publishSelected(false)}>{t("Unpublish selected", "إلغاء نشر المحدد")}</button>
               </div>
               <form
                 className="actions"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  load();
+                  setSelected([]);load(0);
                 }}
               >
+                <select aria-label={t("Publication filter", "تصفية النشر")} value={publication} onChange={e=>setPublication(e.target.value)}>{[["ALL","All products","كل المنتجات"],["PUBLISHED","Published","منشور"],["UNPUBLISHED","Unpublished","غير منشور"],["INACTIVE","Inactive","غير نشط"],["MISSING_IMAGE","Missing image","بدون صورة"],["MISSING_PRICE","Missing public price","بدون سعر عام"]].map(([value,en,ar])=><option key={value} value={value}>{t(en,ar)}</option>)}</select>
                 <input
                   aria-label={t("Find products", "بحث المنتجات")}
                   placeholder={t(
@@ -357,10 +351,11 @@ export default function StorefrontAdmin({
               </form>
               <p>
                 {t(
-                  "Showing up to 100 matches. Search to find more products. Publication requires an active product and selling level.",
-                  "عرض حتى 100 نتيجة. ابحث للوصول لمنتجات أخرى. النشر يتطلب منتجاً نشطاً ومستوى بيع.",
+                  "Unpriced products can be published for quotation requests. Only priced, available quantities can be purchased.",
+                  "يمكن نشر المنتجات بدون أسعار لطلب عروض الأسعار. الشراء للكميات المتاحة والمسعّرة فقط.",
                 )}
               </p>
+              <div className="actions"><button disabled={busy||offset===0} onClick={()=>load(Math.max(0,offset-100))}>{t("Previous","السابق")}</button><span>{offset+1}–{offset+data.products.length} / {data.total}</span><button disabled={busy||offset+100>=data.total} onClick={()=>load(offset+100)}>{t("Next","التالي")}</button></div>
               <div className="dense-table-wrap">
                 <table className="dense-table">
                   <thead>

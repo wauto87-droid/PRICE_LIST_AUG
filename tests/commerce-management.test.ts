@@ -101,9 +101,10 @@ test("commerce management: company isolation, shared prices, stock holds and ope
       version: x.version,
     });
   async function account(email: string) {
+    const mobile="+9665" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
     const otp = await store.requestOtp(db, {
-      destination: email,
-      channel: "EMAIL",
+      destination: mobile,
+      channel: "WHATSAPP", purpose:"SIGNUP",
     });
     const verification = await store.verifyOtp(db, {
       id: otp.id,
@@ -112,8 +113,7 @@ test("commerce management: company isolation, shared prices, stock holds and ope
     const a = await store.registerAccount(db, {
       name: email,
       email,
-      mobile:
-        "+9665" + String(Math.floor(Math.random() * 1e8)).padStart(8, "0"),
+      mobile,
       password: "Buyer123456!",
       verificationId: otp.id,
       verificationToken: verification.verificationToken,
@@ -607,4 +607,32 @@ test("commerce management: company isolation, shared prices, stock holds and ope
       );
     },
   );
+  await t.test("simultaneous submissions cannot oversell the last item or exceed shared credit",async()=>{
+    const item=await db.transaction(tx=>saveProduct(tx,actor,{partNumber:"COM-LAST",description:"Last item",brand:"AMT",category:"Switches",method:"COST_MARKUP",cost:"100",markup:"0",unit:"pcs",quantityPrecision:0}));
+    await store.publishProduct(db,actor,item.id,{published:true,version:item.version});
+    await stockAdjustment(db,actor,{warehouseId:w.id,productId:item.id,quantity:"1",unitCost:"100",reason:"Last item concurrency fixture",idempotencyKey:randomUUID()});
+    const base={lines:[{productId:item.id,quantity:"1"}],fulfillmentMethod:"PICKUP",warehouseId:w.id,paymentMethod:"BANK_TRANSFER"};
+    const attempts=await Promise.allSettled([store.checkout(db,{...base,idempotencyKey:randomUUID()},other),store.checkout(db,{...base,idempotencyKey:randomUUID()},other)]);
+    assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal((await operations.available(db,w.id,item.id)).toString(),'0');
+    const winner=attempts.find(r=>r.status==='fulfilled') as PromiseFulfilledResult<any>;
+    const order=await one(db,'SELECT version FROM ecommerce_orders WHERE id=$1',[winner.value.orderId]);
+    await operations.orderAction(db,actor,winner.value.orderId,{action:'CANCEL',version:order!.version,reason:'Concurrency fixture reset',idempotencyKey:randomUUID()});
+    await stockAdjustment(db,actor,{warehouseId:w.id,productId:item.id,quantity:"2",unitCost:"100",reason:"Credit concurrency fixture",idempotencyKey:randomUUID()});
+    await db.query("UPDATE commerce_companies SET credit_enabled=true,credit_limit=115 WHERE id=$1",[other.company_id]);
+    const credit=await Promise.allSettled([store.checkout(db,{...base,paymentMethod:'CREDIT_TERMS',idempotencyKey:randomUUID()},other),store.checkout(db,{...base,paymentMethod:'CREDIT_TERMS',idempotencyKey:randomUUID()},other)]);
+    assert.equal(credit.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(Number((await one(db,'SELECT sum(amount) total FROM commerce_credit_entries WHERE company_id=$1',[other.company_id]))!.total),115);
+  });
+  await t.test("store management filters, selection snapshots and paging remain available",async()=>{
+    const missing=await store.management(db,actor,'COM-200',{publication:'MISSING_PRICE'});
+    assert.equal(missing.products.length,1);
+    const selected=await store.management(db,actor,'COM-',{selection:true});
+    assert.equal(selected.total,selected.products.length);
+    assert.ok(selected.products.every(p=>Number.isInteger(p.version)));
+    const beyond=await store.management(db,actor,'',{offset:100});
+    assert.equal(beyond.products.length,0);
+    await assert.rejects(store.management(db,{...actor,permissions:[]},''),/permission|Permission|Forbidden/);
+  });
+
 });

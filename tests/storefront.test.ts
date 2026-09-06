@@ -313,7 +313,9 @@ test("storefront routing, publication, pricing, verification and reliable checko
   await t.test(
     "approved business pricing, credit limits and business order customer conversion",
     async () => {
-      const verification = await otp("business@example.com");
+      const signup = await store.requestOtp(db,{destination:"0500000099",channel:"WHATSAPP",purpose:"SIGNUP"});
+      const verified=await store.verifyOtp(db,{id:signup.id,code:signup.testCode});
+      const verification={verificationId:signup.id,verificationToken:verified.verificationToken};
       const registered = await store.registerAccount(db, {
         ...verification,
         name: "Business Buyer",
@@ -321,13 +323,8 @@ test("storefront routing, publication, pricing, verification and reliable checko
         mobile: "0500000099",
         password: "Business123456!",
       });
-      await assert.rejects(
-        store.loginAccount(db, {
-          login: "business@example.com",
-          password: "Business123456!",
-        }),
-        /awaiting approval/,
-      );
+      assert.equal(registered.companyStatus,"PENDING");
+      assert.ok((await store.loginAccount(db,{login:"business@example.com",password:"Business123456!"})).token);
       await store.updateAccount(db, actor, registered.id, {
         status: "ACTIVE",
         priceLevel: "WHOLESALE",

@@ -9,6 +9,15 @@ x-app-environment: &app-environment
   SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN}
   AI_SECRET_ENCRYPTION_KEY: ${AI_SECRET_ENCRYPTION_KEY:?Generate AI_SECRET_ENCRYPTION_KEY}
   OPENAI_PRODUCT_MODEL: ${OPENAI_PRODUCT_MODEL:-gpt-5.4-nano}
+  PUBLIC_URL: ${PUBLIC_URL:-}
+  MOYASAR_PUBLISHABLE_KEY: ${MOYASAR_PUBLISHABLE_KEY:-}
+  MOYASAR_SECRET_KEY: ${MOYASAR_SECRET_KEY:-}
+  OTP_PROVIDER_URL: ${OTP_PROVIDER_URL:-}
+  OTP_PROVIDER_TOKEN: ${OTP_PROVIDER_TOKEN:-}
+  COMMERCE_NOTIFICATION_URL: ${COMMERCE_NOTIFICATION_URL:-}
+  COMMERCE_NOTIFICATION_TOKEN: ${COMMERCE_NOTIFICATION_TOKEN:-}
+  WHATSAPP_SERVICE_URL: http://whatsapp:3010
+  WHATSAPP_SERVICE_TOKEN: ${WHATSAPP_SERVICE_TOKEN:-}
   UPLOAD_DIR: /data/uploads
   BACKUP_DIR: /data/backups
   DB_HOST: ${DB_HOST:-127.0.0.1}
@@ -16,6 +25,25 @@ x-app-environment: &app-environment
   PDF_MAX_PAGES: ${PDF_MAX_PAGES:-100}
   UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-20}
 services:
+  whatsapp:
+    image: localhost/amt-pricelist-whatsapp:${AMT_RELEASE_TAG:-local}
+    build: { context: ., target: whatsapp }
+    profiles: [whatsapp]
+    restart: unless-stopped
+    environment:
+      WHATSAPP_SERVICE_TOKEN: ${WHATSAPP_SERVICE_TOKEN:-}
+      WHATSAPP_SESSION_DIR: /data/whatsapp
+      WHATSAPP_NO_SANDBOX: "true"
+    volumes: [whatsapp_session:/data/whatsapp]
+    networks: [private, whatsapp_outbound]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 1024m
+    pids_limit: 256
+    shm_size: 256m
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
   db:
     image: docker.io/library/postgres:17-bookworm
     restart: unless-stopped
@@ -62,7 +90,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - database_socket:/var/run/postgresql:ro
-    networks: [private]
+    networks: [private, commerce_outbound]
     depends_on: { migrate: { condition: service_completed_successfully } }
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -88,7 +116,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - database_socket:/var/run/postgresql:ro
-    networks: [private]
+    networks: [private, commerce_outbound]
     depends_on: { migrate: { condition: service_completed_successfully } }
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -113,9 +141,12 @@ services:
     cpus: 0.25
     logging: *logging
 networks:
+  commerce_outbound: {}
+  whatsapp_outbound: {}
   private:
     internal: true
 volumes:
+  whatsapp_session:
   database:
   database_socket:
   uploads:

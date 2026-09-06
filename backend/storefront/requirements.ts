@@ -372,11 +372,11 @@ export async function review(db: DB, actor: Actor, id: string, raw: unknown) {
       if (r.quotation_id && r.quotation_id !== quotationId) {
         const revision = await one(
           tx,
-          "SELECT parent_quotation_id FROM quotations WHERE id=$1",
+          "SELECT COALESCE(parent_quotation_id,id) root FROM quotations WHERE id=$1",
           [quotationId],
         );
         assert(
-          revision?.parent_quotation_id === r.quotation_id,
+          revision?.root === (await one(tx,"SELECT COALESCE(parent_quotation_id,id) root FROM quotations WHERE id=$1",[r.quotation_id]))?.root,
           400,
           "Select a revision of this request quotation",
         );

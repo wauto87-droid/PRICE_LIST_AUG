@@ -26,3 +26,11 @@ export async function publicPage(slug: string) {
     seo: p.storefront_content || {},
   };
 }
+
+export async function categorySeo(name: string) {
+  const db=await getDB();
+  const category=await one(db,'SELECT id FROM categories WHERE name=$1 AND active',[name]);
+  if(!category)return {};
+  const settings=await one(db,'SELECT enabled,data FROM storefront_settings WHERE id=1');
+  return settings?.enabled ? settings.data.categorySeo?.[category.id] || {} : {};
+}

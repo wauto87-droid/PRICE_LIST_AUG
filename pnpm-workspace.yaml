@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  puppeteer: false
   sharp: true
 overrides:
   "exceljs>uuid": "11.1.1"

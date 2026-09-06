@@ -287,8 +287,8 @@ test("quotation approval, issue, customer view and acceptance form one guarded l
   });
   assert.equal(webOrder.status, "PENDING_REVIEW");
   const regOtp = await storefront.requestOtp(db, {
-    destination: "buyer@example.com",
-    channel: "EMAIL",
+    destination: "0500000001",
+    channel: "WHATSAPP", purpose:"SIGNUP",
   });
   const regVerif = await storefront.verifyOtp(db, {
     id: regOtp.id,
@@ -303,7 +303,8 @@ test("quotation approval, issue, customer view and acceptance form one guarded l
     verificationId: regOtp.id,
     verificationToken: regVerif.verificationToken,
   });
-  assert.equal(registered.status, "PENDING");
+  assert.equal(registered.status, "ACTIVE");
+  assert.equal(registered.companyStatus,"PENDING");
   await db.query("UPDATE customer_accounts SET status='ACTIVE' WHERE id=$1", [registered.id]);
   const loggedIn = await storefront.loginAccount(db, {
     login: "buyer@example.com",

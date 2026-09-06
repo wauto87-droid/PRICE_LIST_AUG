@@ -18,7 +18,7 @@ RUN set -eu; \
     done; \
     exit 1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN PUPPETEER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build && mkdir -p /data/uploads && chown -R node:node /app /data
 ENV NODE_ENV=production
@@ -46,3 +46,10 @@ RUN mkdir -p /data/backups && chown -R 1000:1000 /data /app
 USER 1000:1000
 ENTRYPOINT []
 CMD ["node","node_modules/tsx/dist/cli.mjs","scripts/backup-service.ts"]
+
+FROM app AS whatsapp
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/* && mkdir -p /data/whatsapp && chown node:node /data/whatsapp
+ENV CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+USER node
+CMD ["node", "scripts/whatsapp-service.cjs"]
