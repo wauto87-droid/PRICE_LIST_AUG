@@ -37,8 +37,9 @@ export async function whatsapp(path: string, payload?: unknown) {
       cache: "no-store",
     });
   } catch {
-    throw new Error("WhatsApp service is unavailable. Please retry later");
+    assert(false, 503, "WhatsApp service is unreachable. Check that the WhatsApp service is running and its private URL is correct.");
   }
+  assert(response!.status !== 401, 503, "WhatsApp service authentication failed. Configure the same service token in the application and WhatsApp service.");
   assert(
     response.ok,
     503,

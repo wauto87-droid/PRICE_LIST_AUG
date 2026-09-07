@@ -226,10 +226,11 @@ DB_IMAGE = 'docker.io/library/postgres:17-bookworm'
 BASE_PATH = '/amt_price_list'
 SERVICES = ('app', 'worker', 'backup')
 PM2_PROCESSES = ('amt-pricelist-app', 'amt-pricelist-worker')
-MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256}
+MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256, 'whatsapp': 1024}
 DEFAULT_DB_PORT = '15432'
 MIN_PM2_NODE = (24, 0, 0)
 ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'AI_SECRET_ENCRYPTION_KEY', 'OPENAI_PRODUCT_MODEL', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
+ENV_KEYS.update({'PUBLIC_URL', 'OTP_PROVIDER_URL', 'OTP_PROVIDER_TOKEN', 'MOYASAR_PUBLISHABLE_KEY', 'MOYASAR_SECRET_KEY', 'WHATSAPP_MANAGED', 'WHATSAPP_SERVICE_URL', 'WHATSAPP_SERVICE_TOKEN', 'WHATSAPP_SESSION_DIR', 'WHATSAPP_NO_SANDBOX', 'CHROMIUM_EXECUTABLE_PATH'})
 
 class DeployError(Exception):
     pass
@@ -568,6 +569,15 @@ class Deployment:
             'ecosystem': release / 'scripts' / 'deployment' / 'pm2.ecosystem.config.cjs',
         }
 
+    def managed_whatsapp(self):
+        return bool(self.env and self.env.get('WHATSAPP_MANAGED') == 'true')
+
+    def pm2_processes(self):
+        return PM2_PROCESSES + (('amt-pricelist-whatsapp',) if self.managed_whatsapp() else ())
+
+    def services(self):
+        return SERVICES + (('whatsapp',) if self.managed_whatsapp() else ())
+
     def native_env(self, extra=None, release=None, values_override=None):
         require(self.env is not None, 'Environment not loaded')
         paths = self.native_paths(release)
@@ -580,6 +590,12 @@ class Deployment:
         env['PLAYWRIGHT_BROWSERS_PATH'] = str(paths['browsers'])
         env['PYTHON_BIN'] = str(paths['python'] / 'bin' / 'python')
         env['PM2_LOG_DIR'] = str(paths['logs'])
+        if self.managed_whatsapp():
+            require(len(values.get('WHATSAPP_SERVICE_TOKEN', '')) >= 32, 'Managed WhatsApp requires a service token of at least 32 characters')
+            env['WHATSAPP_SERVICE_URL'] = 'http://127.0.0.1:3010'
+            env['WHATSAPP_BIND_HOST'] = '127.0.0.1'
+            env['WHATSAPP_PORT'] = '3010'
+            env['WHATSAPP_SESSION_DIR'] = str(paths['browsers'].parent / 'whatsapp-session')
         if extra:
             env.update(extra)
         return env
@@ -852,7 +868,7 @@ class Deployment:
         if result.returncode != 0:
             return {}
         states = pm2_process_states(decoded(result))
-        return {name: states.get(name) for name in PM2_PROCESSES if name in states}
+        return {name: states.get(name) for name in self.pm2_processes() if name in states}
 
     def backup_timer_name(self):
         return 'amt-pricelist-backup.timer'
@@ -866,15 +882,15 @@ class Deployment:
             if self.database('SELECT 1;', check=False).returncode == 0:
                 if self.native_runtime():
                     states = self.pm2_running()
-                    if all(states.get(name) == 'online' for name in PM2_PROCESSES):
+                    if all(states.get(name) == 'online' for name in self.pm2_processes()):
                         try:
                             self.healthy_upstream()
                             return
                         except DeployError:
                             pass
                 else:
-                    ids = decoded(self.compose('ps', '-q', *SERVICES)).split()
-                    if len(ids) == 3:
+                    ids = decoded(self.compose('ps', '-q', *self.services())).split()
+                    if len(ids) == len(self.services()):
                         states = json.loads(decoded(self.engine('inspect', *ids)))
                         if all(c.get('State', {}).get('Running') for c in states):
                             try:
@@ -902,13 +918,13 @@ class Deployment:
             # PM2 exclusively owns AMT app/worker processes. Keep only the
             # dedicated PostgreSQL container from the legacy Compose runtime.
             self.compose('rm', '-s', '-f', 'app', 'worker', 'backup', check=False)
-            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=env)
-            run(['pm2', 'start', self.native_paths()['ecosystem'], '--only', ','.join(PM2_PROCESSES), '--update-env'],
+            run(['pm2', 'delete', *self.pm2_processes()], check=False, env=env)
+            run(['pm2', 'start', self.native_paths()['ecosystem'], '--only', ','.join(self.pm2_processes()), '--update-env'],
                 timeout=300, live=True, env=env)
         else:
-            self.compose('up', '-d', '--no-deps', '--no-build', *SERVICES)
+            self.compose('up', '-d', '--no-deps', '--no-build', *self.services())
             try:
-                self.verify_limits(*SERVICES)
+                self.verify_limits(*self.services())
             except DeployError:
                 self.stop()
                 raise
@@ -929,9 +945,9 @@ class Deployment:
     def stop_runtime(self, runtime):
         if self.is_native_runtime(runtime):
             run(['systemctl', 'stop', self.backup_timer_name(), self.backup_service_name()], check=False)
-            run(['pm2', 'delete', *PM2_PROCESSES], check=False, env=self.native_runtime_env())
+            run(['pm2', 'delete', *self.pm2_processes()], check=False, env=self.native_runtime_env())
         else:
-            self.compose('stop', '-t', '60', *SERVICES)
+            self.compose('stop', '-t', '60', *self.services())
 
     @staticmethod
     def _managed_unit_text(path):
@@ -1023,7 +1039,7 @@ class Deployment:
         self.wait_db()
         self.port(int(self.env['APP_PORT']))
         if not self.native_runtime():
-            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+            self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *self.services())
         else:
             self.start()
         self.healthy()
@@ -1065,7 +1081,7 @@ class Deployment:
                 'image': f'localhost/{PROJECT}-' + ('app' if s == 'migrate' else s) + ':' + commit,
                 'environment': {'APP_RELEASE': commit[:12]},
             }
-            for s in ['app', 'migrate', 'worker', 'backup']
+            for s in ['app', 'migrate', 'worker', 'backup'] + (['whatsapp'] if self.managed_whatsapp() else [])
         }
         atomic(release / 'deploy-images.json', json.dumps({'services': images}))
         metadata = {'commit': commit, 'migrations': self.migration_files(release)}
@@ -1088,7 +1104,7 @@ class Deployment:
                 REPORT.emit(warning)
             else:
                 print(warning, flush=True)
-        for target in ('app', 'worker', 'backup'):
+        for target in self.services():
             self.stage(f'Build {target} image (2 GiB memory cap)')
             run(['podman', 'build', *network_args, '--jobs=1', '--memory=2g', '--memory-swap=2g',
                  '--build-arg', 'AMT_VERIFY_BUILD_LIMIT=1', '--target', target,
@@ -1540,7 +1556,7 @@ class Deployment:
             if self.native_runtime():
                 self.start()
             else:
-                self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES)
+                self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *self.services())
             self.healthy()
             created_site = self._apply_caddy(target, self.stable_upstream())
             atomic(self.state / 'public-url.json', json.dumps({'url': target['url'], 'createdSite': created_site,
@@ -1554,7 +1570,7 @@ class Deployment:
                 if self.native_runtime():
                     self.start()
                 else:
-                    self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *SERVICES, check=False)
+                    self.compose('up', '-d', '--no-deps', '--no-build', '--force-recreate', *self.services(), check=False)
             raise
 
     def rollback(self):

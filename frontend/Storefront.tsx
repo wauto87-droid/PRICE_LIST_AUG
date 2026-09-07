@@ -1,4 +1,5 @@
 "use client";
+import StoreProductEditLink from "./StoreProductEditLink";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { appPath } from "../shared/paths";
@@ -844,6 +845,7 @@ export default function Storefront() {
                 {detail.priceIncl===null?t('Price on request','السعر عند الطلب'):<>SAR <strong>{detail.priceIncl}</strong> / {detail.unit}</>}
               </div>
               <p>{t("Including VAT", "شامل الضريبة")}</p>
+              <StoreProductEditLink productId={detail.id}/>
               <button className="sf-primary" onClick={() => add(detail)}>
                 {detail.purchasable===false?t('Request a quote','طلب عرض سعر'):t("Add to cart", "أضف للسلة")}
               </button>

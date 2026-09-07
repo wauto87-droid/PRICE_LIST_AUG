@@ -1,3 +1,4 @@
+import StoreProductEditLink from "@/frontend/StoreProductEditLink";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { publicPage, publicUrl } from "@/backend/storefront/pages";
@@ -71,6 +72,7 @@ export default async function ProductPage({ params }: Props) {
             {p.brand} · {p.part_number}
           </small>
           <h1>{p.description}</h1>
+          <StoreProductEditLink productId={p.id}/>
           <p>{p.content.description}</p>
           <h2>
             {p.priceIncl === null

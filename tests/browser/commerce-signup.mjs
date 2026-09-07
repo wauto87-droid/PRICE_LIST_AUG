@@ -2,8 +2,9 @@ import http from "node:http";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import QRCode from "qrcode";
-const origin = "http://127.0.0.1:18183",
+const origin = process.env.COMMERCE_TEST_ORIGIN || "http://127.0.0.1:18183",
   base = origin + "/amt_price_list";
+assert(["127.0.0.1", "localhost"].includes(new URL(origin).hostname), "Use an isolated local test server");
 let sentCode = "",
   connected = false,
   deliveryFails = false;

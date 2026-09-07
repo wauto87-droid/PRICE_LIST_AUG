@@ -22,6 +22,24 @@ def result(text=''):
     return subprocess.CompletedProcess([], 0, text.encode(), b'')
 
 class SafetyTests(unittest.TestCase):
+    def test_managed_whatsapp_is_explicit_and_uses_private_persistent_session(self):
+        self.assertTrue({'WHATSAPP_MANAGED', 'WHATSAPP_SERVICE_TOKEN', 'WHATSAPP_SERVICE_URL', 'PUBLIC_URL', 'MOYASAR_SECRET_KEY'}.issubset(m.ENV_KEYS))
+        d = self.deployment()
+        d.env = {'POSTGRES_USER': 'amt', 'POSTGRES_PASSWORD': 'test', 'POSTGRES_DB': 'amt', 'WHATSAPP_MANAGED': 'false'}
+        self.assertNotIn('whatsapp', d.services())
+        self.assertNotIn('amt-pricelist-whatsapp', d.pm2_processes())
+        d.env.update(WHATSAPP_MANAGED='true', WHATSAPP_SERVICE_TOKEN='x' * 32)
+        d.release = Path('/tmp/amt-release')
+        env = d.native_env()
+        self.assertIn('whatsapp', d.services())
+        self.assertIn('amt-pricelist-whatsapp', d.pm2_processes())
+        self.assertEqual(env['WHATSAPP_SERVICE_URL'], 'http://127.0.0.1:3010')
+        self.assertEqual(env['WHATSAPP_BIND_HOST'], '127.0.0.1')
+        self.assertTrue(env['WHATSAPP_SESSION_DIR'].endswith('whatsapp-session'))
+        d.env['WHATSAPP_SERVICE_TOKEN'] = 'short'
+        with self.assertRaises(m.DeployError):
+            d.native_env()
+
     def deployment(self):
         args = m.arguments(['install', '--dry-run'])
         args.resume = False

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
 import CommerceConsole from "./CommerceConsole";
@@ -7,6 +7,7 @@ import ProductEditor, { blankProduct } from "./ProductEditor";
 import CatalogOptionsSearch from "./CatalogOptionsSearch";
 import CategorySeo from "./CategorySeo";
 import BulkProductImages from "./BulkProductImages";
+import { ProductImageManager } from "./ProductImages";
 import WhatsAppAdmin from "./WhatsAppAdmin";
 import StoreInventory from "./StoreInventory";
 
@@ -20,28 +21,76 @@ export default function StorefrontAdmin({
   navigate: (section: any) => void;
 }) {
   const [edit, setEdit] = useState<any>();
+  const [imageProduct, setImageProduct] = useState<string>();
   const [optionProducts,setOptionProducts]=useState<any[]>([]);
   const addOptions=(rows:any[])=>setOptionProducts(current=>[...new Map([...current,...rows].map(p=>[p.id,p])).values()]);
+  const loadSequence = useRef(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [versions,setVersions]=useState<Record<string,number>>({});
   const [offset,setOffset]=useState(0),[publication,setPublication]=useState("ALL");
   const queryParams=()=>`q=${encodeURIComponent(q)}&publication=${publication}`;
   async function selectAll(){setBusy(true);try{const r=await api(`storefront-admin/management?${queryParams()}&selection=true`);setSelected(r.products.map((p:any)=>p.id));setVersions(Object.fromEntries(r.products.map((p:any)=>[p.id,p.version])))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
-  async function publishSelected(published:boolean){setBusy(true);setError("");setNotice("");const failed:string[]=[];try{for(let i=0;i<selected.length;i+=100){const result=await api("storefront-admin/bulk-publish","PUT",{items:selected.slice(i,i+100).map(id=>({id,version:versions[id],published}))});for(const r of result.results)if(!r.ok)failed.push(`${r.id}: ${r.error}`)}setSelected([]);await load();setNotice(`${t("Updated","تم تحديث")}: ${selected.length-failed.length}`);if(failed.length)setError(failed.join("; "))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+  async function publishSelected(published: boolean) {
+    setBusy(true); setError(""); setNotice("");
+    const pending = new Set(selected), failures: string[] = [];
+    let updated = 0;
+    try {
+      for (let i = 0; i < selected.length; i += 100) {
+        const result = await api("storefront-admin/bulk-publish", "PUT", {
+          items: selected.slice(i,i+100).map(id => ({id, version: versions[id], published})),
+        });
+        for (const row of result.results) {
+          if (row.ok) { pending.delete(row.id); updated++; }
+          else failures.push(row.id + ": " + row.error);
+        }
+      }
+    } catch (e) { failures.push((e as Error).message); }
+    finally {
+      setSelected([...pending]);
+      await load();
+      setNotice(t("Updated", "تم تحديث") + ": " + updated);
+      setError(failures.join("; "));
+      setBusy(false);
+    }
+  }
   const can = (p: string) => user?.permissions?.includes(p);
   const [data, setData] = useState<any>(),
-    [tab, setTab] = useState("overview"),
+    [tab, updateTab] = useState("overview"),
     [q, setQ] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState("");
+  const tabs = ["overview","products","homepage","customers","pricing","quotes","orders","returns","promotions","inventory","settings","whatsapp","zones","accounts"];
+  function setTab(value: string) {
+    updateTab(value);
+    const url = new URL(location.href);
+    url.searchParams.set("commerce", "storefront");
+    url.searchParams.set("storeTab", value);
+    history.pushState(null, "", url);
+  }
+  useEffect(() => {
+    const restore = () => {
+      const value = new URLSearchParams(location.search).get("storeTab");
+      updateTab(value && tabs.includes(value) ? value : "overview");
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    const id = new URLSearchParams(location.search).get("editProduct");
+    if (id && can("PRODUCT_EDIT") && can("PRODUCT_VIEW")) {
+      if (can("COST_VIEW")) api("products/" + encodeURIComponent(id)).then(r => setEdit({...r, partNumber: r.part_number || r.partNumber})).catch(e => setError(e.message));
+      else setImageProduct(id);
+    }
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
   async function load(nextOffset=offset) {
+    const sequence = ++loadSequence.current;
     try {
       const result=await api(`storefront-admin/management?${queryParams()}&offset=${nextOffset}`);
+      if (sequence !== loadSequence.current) return;
       setData(result);setOffset(nextOffset);addOptions(result.products);
       setVersions(previous=>({...previous,...Object.fromEntries(result.products.filter((p:any)=>!selected.includes(p.id)).map((p:any)=>[p.id,p.version]))}));
       setError("");
-    } catch(e){setError((e as Error).message)}
+    } catch(e){if (sequence === loadSequence.current) setError((e as Error).message)}
   }
   useEffect(() => {
     load();
@@ -82,6 +131,7 @@ export default function StorefrontAdmin({
       <div className="actions">
         {[
           ["overview", "Overview", "نظرة عامة"],
+          ["products", "Products", "المنتجات"],
           ["homepage", "Homepage", "الصفحة الرئيسية"],
           ["customers", "Companies", "الشركات"],
           ["pricing", "Company prices", "أسعار الشركات"],
@@ -91,7 +141,6 @@ export default function StorefrontAdmin({
           ["promotions", "Promotions", "العروض"],
           ["settings", "Store settings", "إعدادات المتجر"],
           ...(can("SETTINGS_MANAGE") ? [["whatsapp", "WhatsApp OTP", "واتساب والتحقق"]] : []),
-          ["products", "Products", "المنتجات"],
           ["zones", "Delivery zones", "مناطق التوصيل"],
           ["accounts", "Business accounts", "حسابات الشركات"],
         ].map(([key, en, ar]) => (
@@ -127,7 +176,8 @@ export default function StorefrontAdmin({
         </p>
       )}
       {notice && <p role="status">{notice}</p>}
-      {!data ? (
+      {tab === "whatsapp" && can("SETTINGS_MANAGE") && <WhatsAppAdmin t={t}/> }
+      {tab === "whatsapp" ? null : !data ? (
         <button onClick={() => load()}>{t("Load management", "تحميل الإدارة")}</button>
       ) : (
         <>
@@ -305,7 +355,7 @@ export default function StorefrontAdmin({
               </button>
             </form>
           )}
-          {tab === "whatsapp" && can("SETTINGS_MANAGE") && <WhatsAppAdmin t={t}/>}
+
           {tab === "products" && (
             <>
               {can("PRODUCT_EDIT") && <BulkProductImages t={t}/>}
@@ -355,7 +405,7 @@ export default function StorefrontAdmin({
                   "يمكن نشر المنتجات بدون أسعار لطلب عروض الأسعار. الشراء للكميات المتاحة والمسعّرة فقط.",
                 )}
               </p>
-              <div className="actions"><button disabled={busy||offset===0} onClick={()=>load(Math.max(0,offset-100))}>{t("Previous","السابق")}</button><span>{offset+1}–{offset+data.products.length} / {data.total}</span><button disabled={busy||offset+100>=data.total} onClick={()=>load(offset+100)}>{t("Next","التالي")}</button></div>
+              <div className="actions"><button disabled={busy||offset===0} onClick={()=>load(Math.max(0,offset-100))}>{t("Previous","السابق")}</button><span>{data.total ? offset+1 : 0}–{offset+data.products.length} / {data.total}</span><button disabled={busy||offset+100>=data.total} onClick={()=>load(offset+100)}>{t("Next","التالي")}</button></div>
               <div className="dense-table-wrap">
                 <table className="dense-table">
                   <thead>
@@ -454,6 +504,7 @@ export default function StorefrontAdmin({
                               </button>
                             </form>
                           </details>
+                          {can("PRODUCT_EDIT") && can("PRODUCT_VIEW") && <button onClick={() => setImageProduct(p.id)}>{t("Manage images", "إدارة الصور")}</button>}
                           {can("PRODUCT_EDIT") && can("COST_VIEW") && (
                             <button
                               onClick={async () => {
@@ -658,8 +709,10 @@ export default function StorefrontAdmin({
           )}
         </>
       )}
+      {imageProduct && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label={t("Product images", "صور المنتج")}><button onClick={() => { setImageProduct(undefined); void load(); }}>{t("Close", "إغلاق")}</button><ProductImageManager key={imageProduct} productId={imageProduct} t={t}/></section></div>}
       {edit && (
         <ProductEditor
+          key={edit.id || "new"}
           t={t}
           initial={edit}
           actionBusy={busy}
@@ -667,13 +720,15 @@ export default function StorefrontAdmin({
           onSave={async (p) => {
             setBusy(true);
             try {
-              await api(
+              const saved = await api(
                 "products" + (edit.id ? "/" + edit.id : ""),
                 edit.id ? "PUT" : "POST",
                 p,
               );
-              setEdit(undefined);
+              setEdit({ ...saved, partNumber: saved.part_number || saved.partNumber });
+              setNotice(t("Product saved. You can now manage its images below.", "تم حفظ المنتج. يمكنك إدارة صوره أدناه."));
               await load();
+              return saved;
             } catch (e) {
               setError((e as Error).message);
               throw e;

@@ -62,6 +62,7 @@ export default function CommerceConsole({
   async function load() {
     try {
       setData(await api("storefront-admin/commerce"));
+      setError("");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -116,7 +117,7 @@ export default function CommerceConsole({
     </select>
   );
   if (!data)
-    return <p>{error || t("Loading management…", "جارٍ تحميل الإدارة…")}</p>;
+    return <div><p role={error ? "alert" : "status"}>{error || t("Loading management…", "جارٍ تحميل الإدارة…")}</p>{error && <button onClick={() => void load()}>{t("Try again", "حاول مرة أخرى")}</button>}</div>;
   return (
     <div className="commerce-console">
       {tab==='quotes'&&data.requests.filter((r:any)=>!r.quotation_id&&['SUBMITTED','REVIEW'].includes(r.status)).map((r:any)=><RequirementMatcher key={r.id+':'+r.version} request={r} products={products} t={t} save={save} busy={busy}/>)}

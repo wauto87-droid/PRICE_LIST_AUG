@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 export default function WhatsAppAdmin({ t }: { t: Translate }) {
   const [state, setState] = useState<any>(),
+    [now, setNow] = useState(Date.now()),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [mobile, setMobile] = useState(""),
@@ -18,11 +19,13 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
-    return () => clearInterval(timer);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => { clearInterval(timer); clearInterval(clock); };
   }, []);
   async function action(name: string) {
     setBusy(true);
     setNotice("");
+    setError("");
     try {
       await api(
         `storefront-admin/whatsapp/${name}`,
@@ -53,7 +56,10 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
         {state?.status || t("Unavailable", "غير متاح")}{" "}
         {state?.number ? `(+${state.number})` : ""}
       </p>
-      {state?.qr && (
+      {state?.diagnostic && <p role="status">{state.diagnostic}</p>}
+      {state?.status === "STARTING" && <p>{t("Starting WhatsApp. A QR code will appear when the browser is ready.", "جارٍ تشغيل واتساب. سيظهر رمز الاتصال عندما يصبح المتصفح جاهزاً.")}</p>}
+      {state?.qrExpiresAt && state.qrExpiresAt <= now && state.status !== "READY" && <p role="status">{t("QR expired. Reconnect to request a new code.", "انتهت صلاحية الرمز. أعد الاتصال لطلب رمز جديد.")}</p>}
+      {state?.qr && (!state.qrExpiresAt || state.qrExpiresAt > now) && (
         <img
           src={state.qr}
           width={256}
@@ -64,6 +70,7 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
           )}
         />
       )}
+      {state?.qr && state.qrExpiresAt > now && <p>{t("QR expires in", "تنتهي صلاحية الرمز خلال")} {Math.ceil((state.qrExpiresAt-now)/1000)} {t("seconds", "ثانية")}</p>}
       <div className="actions">
         <button disabled={busy} onClick={() => action("connect")}>
           {t("Connect / reconnect", "اتصال / إعادة الاتصال")}

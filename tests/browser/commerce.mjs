@@ -140,8 +140,13 @@ try {
     .getByRole("button", { name: "Preview changes", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Confirm & publish", exact: true })
+    .getByRole("button", { name: "Confirm & save", exact: true })
     .click();
+  await page.getByText("Product images", { exact: true }).waitFor();
+  await page.locator('.product-image-manager input[type=file]').setInputFiles({name:"new-product.png",mimeType:"image/png",buffer:png});
+  await page.locator('.product-image-edit img').waitFor();
+  await page.getByText("Cover image", { exact: true }).waitFor();
+  await page.locator('.modal').getByRole('button', {name:'Cancel',exact:true}).click();
   await page.locator(".modal").waitFor({ state: "hidden" });
   console.log("PASS product creation from store admin");
   await page

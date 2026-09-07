@@ -1,5 +1,17 @@
 module.exports = {
   apps: [
+    ...(process.env.WHATSAPP_MANAGED === "true" ? [{
+      name: "amt-pricelist-whatsapp",
+      cwd: __dirname + "/../..",
+      script: "scripts/whatsapp-service.cjs",
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      max_memory_restart: "768M",
+      kill_timeout: 15000,
+      time: true,
+      watch: false,
+    }] : []),
     {
       name: "amt-pricelist-app",
       cwd: __dirname + "/../..",

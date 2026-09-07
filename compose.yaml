@@ -33,6 +33,7 @@ services:
     environment:
       WHATSAPP_SERVICE_TOKEN: ${WHATSAPP_SERVICE_TOKEN:-}
       WHATSAPP_SESSION_DIR: /data/whatsapp
+      WHATSAPP_BIND_HOST: 0.0.0.0
       WHATSAPP_NO_SANDBOX: "true"
     volumes: [whatsapp_session:/data/whatsapp]
     networks: [private, whatsapp_outbound]

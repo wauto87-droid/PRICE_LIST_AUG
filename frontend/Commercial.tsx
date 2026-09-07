@@ -17,6 +17,9 @@ type Section =
 
 export default function Commercial({ t, user }: { t: Translate; user: any }) {
   const [section, setSection] = useState<Section>("overview");
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("commerce") === "storefront" && user.permissions.includes("STOREFRONT_MANAGE")) setSection("storefront");
+  }, []);
   const [stockQuery, setStockQuery] = useState(""),
     [stockSearch, setStockSearch] = useState(""),
     [stockPage, setStockPage] = useState(1),
@@ -37,6 +40,8 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
     setLoading(true);
     setError("");
     try {
+      // Storefront owns its requests; unrelated warehouse/order permissions must not block it.
+      if (section === "storefront") { setData(null); return; }
       const path =
         section === "overview"
           ? "commercial/dashboard"
@@ -54,10 +59,6 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                       ? "purchase-orders"
                       : "online-orders";
       const result = await api(path);
-      if (section === "storefront")
-        result.warehouses = (
-          await api("warehouses?pageSize=100&active=ACTIVE")
-        ).items;
       if (sequence === loadSequence.current) setData(result);
     } catch (e) {
       if (sequence === loadSequence.current) setError((e as Error).message);
@@ -639,7 +640,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
         user.permissions.includes("STOREFRONT_MANAGE") && (
           <StorefrontAdmin t={t} user={user} navigate={setSection} />
         )}
-      {!loading && ["orders", "purchasing", "storefront"].includes(section) && (
+      {!loading && ["orders", "purchasing"].includes(section) && (
         <CommercialLists
           section={section}
           data={data}

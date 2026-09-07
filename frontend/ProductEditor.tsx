@@ -227,10 +227,14 @@ export default function ProductEditor({
             return;
           }
           const { version, ...data } = p;
-          await onSave({
+          try {
+          const saved: any = await onSave({
             ...canonicalProduct(productInput.parse(data)),
             ...(version ? { version } : {}),
           });
+          if (saved?.version) setP((current: any) => ({ ...current, version: saved.version }));
+          setPreview(false);
+          } catch (e) { setError((e as Error).message); }
         }}
       >
         <div className="section-title">
@@ -613,8 +617,8 @@ export default function ProductEditor({
         {preview && (
           <div className="notice">
             {t(
-              "Review the values above. Confirm to publish this product and record its price history.",
-              "راجع القيم أعلاه. أكد لنشر الصنف وتسجيل سجل الأسعار.",
+              "Review the values above. Confirm to save this product and record its price history. Store visibility is managed separately in Products.",
+              "راجع القيم أعلاه. أكد لحفظ المنتج وتسجيل سجل الأسعار. تتم إدارة ظهوره في المتجر من قسم المنتجات.",
             )}
           </div>
         )}
@@ -627,7 +631,7 @@ export default function ProductEditor({
             {preview
               ? actionBusy
                 ? t("Saving…", "جارٍ الحفظ…")
-                : t("Confirm & publish", "تأكيد ونشر")
+                : t("Confirm & save", "تأكيد وحفظ")
               : t("Preview changes", "معاينة التغييرات")}
           </button>
         </div>

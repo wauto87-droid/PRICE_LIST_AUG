@@ -4,6 +4,33 @@ New personal and company accounts require a WhatsApp SIGNUP challenge for their 
 
 ## Deployment
 
+### Guided installer QR service
+
+The guided installer now accepts the storefront provider environment keys. Earlier
+versions rejected WhatsApp/payment configuration as unknown environment keys and
+did not supervise the QR service.
+
+In the deployment's private `shared/.env`, set `WHATSAPP_MANAGED=true` and a random
+`WHATSAPP_SERVICE_TOKEN` of at least 32 characters before upgrading. PM2 runs one
+`amt-pricelist-whatsapp` process on loopback port 3010, with its session under
+`shared/runtime/whatsapp-session`; its app URL is set automatically. Compose builds
+and starts the private `whatsapp` service with the same release as the app. Do not
+also run a manually started service against the same session directory or port.
+Stop the managed service before disabling its management flag.
+
+PM2 uses the installer's Playwright Chromium unless `CHROMIUM_EXECUTABLE_PATH` is
+set. Host Chromium keeps its sandbox enabled by default; use an appropriate
+unprivileged host process. A root-managed host must explicitly configure its
+Chromium sandbox policy (`WHATSAPP_NO_SANDBOX=true` is supported). The container
+already supplies its isolated runtime policy. Do not delete the persistent
+session during an upgrade. **Disconnect** explicitly clears pairing credentials;
+reconnect preserves them.
+
+Startup is bounded to 90 seconds. The admin displays QR expiry and safe connection
+diagnostics, and remains accessible when unrelated store-management requests fail.
+Missing service configuration, unreachable service, and mismatched tokens have
+distinct errors. Actual pairing still requires scanning with the company phone.
+
 1. Back up PostgreSQL and uploaded files. Build the app and worker, and apply additive migrations through `026_signup_verification.sql` using the existing migration command. Keep the commerce switches disabled until staging acceptance.
 2. Set a random `WHATSAPP_SERVICE_TOKEN` of at least 32 characters in the deployment environment. The application and WhatsApp service must use the same token. The Compose URL is `http://whatsapp:3010`; the service has no published host port.
 3. Build and start the optional service with `docker compose --profile whatsapp up -d --build whatsapp`. Its Chromium session persists in the `whatsapp_session` volume. Do not run multiple instances against that volume.
