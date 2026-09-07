@@ -67,8 +67,8 @@ export async function api<T = any>(
     window.dispatchEvent(new Event("amt-connection-lost"));
     throw error;
   }
-  if (result.status === 503)
-    window.dispatchEvent(new Event("amt-connection-lost"));
+  // A provider-specific 503 (for example WhatsApp) is not a lost connection.
+  // The app health probe determines server availability; keep HTTP errors local.
   if (result.status === 401 && path !== "auth/login" && path !== "auth/me")
     window.dispatchEvent(new Event("amt-session-expired"));
   const data = await readApiResponse(result);
