@@ -1,6 +1,6 @@
 // One owner per Chromium session. Dependencies are injected for lifecycle tests.
 function createConnection({ createClient, encodeQr, clearSession = async () => {}, now = Date.now, startupMs = 90000 }) {
-  let client, generation = 0, timer, cleanup = Promise.resolve();
+  let client, generation = 0, qrGeneration = 0, timer, cleanup = Promise.resolve();
   let state = { status: "DISCONNECTED", qr: null, qrExpiresAt: null, number: null, diagnostic: null };
   const clear = () => { clearTimeout(timer); timer = undefined; };
   const reset = (status, diagnostic = null) => {
@@ -40,15 +40,17 @@ function createConnection({ createClient, encodeQr, clearSession = async () => {
     try {
       const current = createClient(); client = current;
       current.on("qr", async value => {
+        const qrEpoch = ++qrGeneration;
         try {
           const qr = await encodeQr(value);
-          if (epoch !== generation || state.status === "READY") return;
+          if (epoch !== generation || qrEpoch !== qrGeneration || state.status === "READY") return;
           state = { status: "QR", qr, qrExpiresAt: now() + 45000, number: null, diagnostic: null };
           deadline();
         } catch { fail("QR generation failed. Reconnect to try again."); }
       });
       current.on("authenticated", () => {
         if (epoch !== generation) return;
+        ++qrGeneration;
         reset("STARTING"); deadline();
       });
       current.on("ready", () => {

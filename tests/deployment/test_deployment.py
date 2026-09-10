@@ -36,6 +36,10 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(env['WHATSAPP_SERVICE_URL'], 'http://127.0.0.1:3010')
         self.assertEqual(env['WHATSAPP_BIND_HOST'], '127.0.0.1')
         self.assertTrue(env['WHATSAPP_SESSION_DIR'].endswith('whatsapp-session'))
+        with patch.object(m.os, 'geteuid', return_value=0, create=True), patch.dict(m.os.environ, {}, clear=True):
+            self.assertEqual(d.native_env()['WHATSAPP_NO_SANDBOX'], 'true')
+        d.env['WHATSAPP_NO_SANDBOX'] = 'false'
+        self.assertEqual(d.native_env()['WHATSAPP_NO_SANDBOX'], 'false')
         d.env['WHATSAPP_SERVICE_TOKEN'] = 'short'
         with self.assertRaises(m.DeployError):
             d.native_env()

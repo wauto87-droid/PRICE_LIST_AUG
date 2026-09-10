@@ -1,0 +1,11 @@
+import {embedded,migrate} from "../backend/core/db";
+import {setup,login,authenticate,sessionCookie} from "../backend/auth/service";
+import {saveProduct} from "../backend/products/service";
+process.env.SETUP_TOKEN="history-local-qa-setup-token-long-enough";
+const db=await embedded(".data/price-history-qa");
+await migrate(db);
+await setup(db,{token:process.env.SETUP_TOKEN,username:"historyqa",password:"HistoryQA123!",name:"History QA",companyName:"QA"});
+const logged=await login(db,{username:"historyqa",password:"HistoryQA123!"});
+const actor=await authenticate(db,new Request("http://localhost",{headers:{Cookie:sessionCookie(logged.token).split(";")[0]}}));
+await db.transaction(tx=>saveProduct(tx,actor,{partNumber:"HISTORY-QA",description:"History QA contactor",brand:"",category:"",keywords:"",aliases:[],method:"LIST_DISCOUNT",cost:"0",markup:"0",listPrice:"100",baseDiscount:"0",vat:"15",minimumEnabled:false,minimum:"0",unit:"pcs",quantityPrecision:0,active:true}));
+await db.close?.();

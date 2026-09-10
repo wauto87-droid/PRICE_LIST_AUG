@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 export default function WhatsAppAdmin({ t }: { t: Translate }) {
   const [state, setState] = useState<any>(),
@@ -8,37 +8,69 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
     [busy, setBusy] = useState(false),
     [mobile, setMobile] = useState(""),
     [notice, setNotice] = useState("");
+  const generation = useRef(0),
+    actionPending = useRef(false),
+    mounted = useRef(false);
+  const unavailable = (message: string) => ({
+    status: /authentication/i.test(message)
+      ? "AUTH_FAILED"
+      : /not configured/i.test(message)
+        ? "NOT_CONFIGURED"
+        : "UNREACHABLE",
+    qr: null,
+  });
   async function refresh() {
+    if (actionPending.current) return;
+    const current = ++generation.current;
     try {
-      setState(await api("storefront-admin/whatsapp/status"));
+      const result = await api("storefront-admin/whatsapp/status");
+      if (!mounted.current || current !== generation.current) return;
+      setState(result);
       setError("");
     } catch (e) {
+      if (!mounted.current || current !== generation.current) return;
       setError((e as Error).message);
+      setState(unavailable((e as Error).message));
     }
   }
   useEffect(() => {
+    mounted.current = true;
     void refresh();
-    const timer = setInterval(() => void refresh(), 5000);
+    const timer = setInterval(() => void refresh(), 2500);
     const clock = setInterval(() => setNow(Date.now()), 1000);
-    return () => { clearInterval(timer); clearInterval(clock); };
+    return () => {
+      mounted.current = false;
+      ++generation.current;
+      clearInterval(timer);
+      clearInterval(clock);
+    };
   }, []);
   async function action(name: string) {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const current = ++generation.current;
     setBusy(true);
     setNotice("");
     setError("");
     try {
-      await api(
+      const result = await api(
         `storefront-admin/whatsapp/${name}`,
         "POST",
         name === "test" ? { mobile } : {},
       );
+      if (!mounted.current || current !== generation.current) return;
+      if (name !== "test") setState(result);
       if (name === "test")
         setNotice(t("Test message sent", "تم إرسال رسالة الاختبار"));
-      await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      if (mounted.current && current === generation.current)
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      actionPending.current = false;
+      if (mounted.current) {
+        setBusy(false);
+        void refresh();
+      }
     }
   }
   return (
@@ -53,12 +85,28 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       <p role="status">
-        {state?.status || t("Unavailable", "غير متاح")}{" "}
+        {state?.status || t("Loading…", "جارٍ التحميل…")}{" "}
         {state?.number ? `(+${state.number})` : ""}
       </p>
       {state?.diagnostic && <p role="status">{state.diagnostic}</p>}
-      {state?.status === "STARTING" && <p>{t("Starting WhatsApp. A QR code will appear when the browser is ready.", "جارٍ تشغيل واتساب. سيظهر رمز الاتصال عندما يصبح المتصفح جاهزاً.")}</p>}
-      {state?.qrExpiresAt && state.qrExpiresAt <= now && state.status !== "READY" && <p role="status">{t("QR expired. Reconnect to request a new code.", "انتهت صلاحية الرمز. أعد الاتصال لطلب رمز جديد.")}</p>}
+      {state?.status === "STARTING" && (
+        <p>
+          {t(
+            "Starting WhatsApp. A QR code will appear when the browser is ready.",
+            "جارٍ تشغيل واتساب. سيظهر رمز الاتصال عندما يصبح المتصفح جاهزاً.",
+          )}
+        </p>
+      )}
+      {state?.qrExpiresAt &&
+        state.qrExpiresAt <= now &&
+        state.status !== "READY" && (
+          <p role="status">
+            {t(
+              "QR expired. Reconnect to request a new code.",
+              "انتهت صلاحية الرمز. أعد الاتصال لطلب رمز جديد.",
+            )}
+          </p>
+        )}
       {state?.qr && (!state.qrExpiresAt || state.qrExpiresAt > now) && (
         <img
           src={state.qr}
@@ -70,7 +118,12 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
           )}
         />
       )}
-      {state?.qr && state.qrExpiresAt > now && <p>{t("QR expires in", "تنتهي صلاحية الرمز خلال")} {Math.ceil((state.qrExpiresAt-now)/1000)} {t("seconds", "ثانية")}</p>}
+      {state?.qr && state.qrExpiresAt > now && (
+        <p>
+          {t("QR expires in", "تنتهي صلاحية الرمز خلال")}{" "}
+          {Math.ceil((state.qrExpiresAt - now) / 1000)} {t("seconds", "ثانية")}
+        </p>
+      )}
       <div className="actions">
         <button disabled={busy} onClick={() => action("connect")}>
           {t("Connect / reconnect", "اتصال / إعادة الاتصال")}

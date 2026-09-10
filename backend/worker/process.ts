@@ -350,7 +350,7 @@ export async function runJob(db: DB) {
           await fs.mkdir(target, { recursive: true });
           await page.pdf({
             path: path.join(target, job.id + ".pdf"),
-            format: "A4",
+            format: "A3",
             landscape: true,
             printBackground: true,
             displayHeaderFooter: true,

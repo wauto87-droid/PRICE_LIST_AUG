@@ -1,6 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
+import {
+  activityColumns,
+  groupColumns,
+  staffColumns,
+} from "../shared/price-watch";
+import { PriceActivityTable, WatchPagination } from "./PriceActivityTable";
 import { appPath } from "../shared/paths";
 
 const money = (value: unknown) =>
@@ -23,13 +29,20 @@ export default function PriceWatcher({ t }: { t: Translate }) {
     from: "",
     to: "",
     page: 0,
+    view: "ACTIVITY",
+    sort: "",
+    direction: "desc",
+    staffSort: "subtotal",
+    staffDirection: "desc",
   };
   const [filters, setFilters] = useState(empty),
     [data, setData] = useState<any>(null),
     [detail, setDetail] = useState<any>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [exports, setExports] = useState<any[]>([]);
+    [exports, setExports] = useState<any[]>([]),
+    [refresh, setRefresh] = useState(0),
+    [detailFilters, setDetailFilters] = useState<any>(null);
   const params = useMemo(() => {
     const p = new URLSearchParams();
     Object.entries(filters).forEach(
@@ -38,16 +51,45 @@ export default function PriceWatcher({ t }: { t: Translate }) {
     return p.toString();
   }, [filters]);
   useEffect(() => {
+    let active = true;
     const timer = setTimeout(() => {
       setBusy(true);
       setError("");
       api("price-watcher?" + params)
-        .then(setData)
-        .catch((e) => setError(e.message))
-        .finally(() => setBusy(false));
+        .then((value) => {
+          if (active) setData(value);
+        })
+        .catch((e) => {
+          if (active) setError(e.message);
+        })
+        .finally(() => {
+          if (active) setBusy(false);
+        });
     }, 250);
-    return () => clearTimeout(timer);
-  }, [params]);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [params, refresh]);
+  useEffect(() => {
+    const focus = () => setRefresh((v) => v + 1);
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, []);
+  useEffect(() => {
+    if (!detailFilters) return;
+    let active = true;
+    api("price-watcher/details?" + new URLSearchParams(detailFilters))
+      .then((value) => {
+        if (active) setDetail(value);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [detailFilters, refresh]);
   useEffect(() => {
     if (!exports.some((x) => !["DONE", "FAILED"].includes(x.status))) return;
     const timer = setInterval(
@@ -71,20 +113,29 @@ export default function PriceWatcher({ t }: { t: Translate }) {
       [key]: value,
       page: key === "page" ? Number(value) : 0,
     }));
-  async function openDetail(itemKey: string) {
-    try {
-      setDetail(
-        await api(
-          "price-watcher/details?" +
-            params +
-            "&itemKey=" +
-            encodeURIComponent(itemKey),
-        ),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  function openDetail(row: any) {
+    setDetail(null);
+    setDetailFilters({
+      ...filters,
+      actorId: row.actor_id,
+      itemKey: row.item_key,
+      page: "0",
+      view: "ACTIVITY",
+      sort: "last_seen_at",
+      direction: "desc",
+    });
   }
+  const changeSort = (sort: string) =>
+    setFilters((f) => ({
+      ...f,
+      sort,
+      page: 0,
+      direction:
+        (f.sort || (f.view === "ACTIVITY" ? "last_seen_at" : "latest_at")) ===
+          sort && f.direction === "desc"
+          ? "asc"
+          : "desc",
+    }));
   return (
     <div className="price-watcher">
       <div className="notice warning" role="note">
@@ -104,6 +155,59 @@ export default function PriceWatcher({ t }: { t: Translate }) {
           {busy && <small>{t("Loading…", "جارٍ التحميل…")}</small>}
         </div>
         <div className="form-grid">
+          <label>
+            {t("View", "العرض")}
+            <select
+              aria-label={t("View", "العرض")}
+              value={filters.view}
+              onChange={(e) =>
+                setFilters((f) => ({
+                  ...f,
+                  view: e.target.value,
+                  sort: "",
+                  direction: "desc",
+                  page: 0,
+                }))
+              }
+            >
+              <option value="ACTIVITY">
+                {t("Individual activity", "النشاط الفردي")}
+              </option>
+              <option value="GROUPS">
+                {t("Item and staff comparison", "مقارنة الصنف والموظف")}
+              </option>
+            </select>
+          </label>
+          <label>
+            {t("Date order", "ترتيب التاريخ")}
+            <select
+              aria-label={t("Date order", "ترتيب التاريخ")}
+              value={
+                filters.sort === "" ||
+                ["last_seen_at", "latest_at"].includes(filters.sort)
+                  ? filters.direction
+                  : "custom"
+              }
+              onChange={(e) =>
+                setFilters((f) => ({
+                  ...f,
+                  sort: "",
+                  direction: e.target.value,
+                  page: 0,
+                }))
+              }
+            >
+              <option value="desc">
+                {t("Newest to oldest", "الأحدث إلى الأقدم")}
+              </option>
+              <option value="asc">
+                {t("Oldest to newest", "الأقدم إلى الأحدث")}
+              </option>
+              <option value="custom" disabled>
+                {t("Column sorting", "ترتيب حسب العمود")}
+              </option>
+            </select>
+          </label>
           <label>
             {t("Item / reference", "الصنف / المرجع")}
             <input
@@ -207,6 +311,13 @@ export default function PriceWatcher({ t }: { t: Translate }) {
         <div className="actions wrap">
           <button
             type="button"
+            disabled={busy}
+            onClick={() => setRefresh((v) => v + 1)}
+          >
+            {t("Refresh", "تحديث")}
+          </button>
+          <button
+            type="button"
             className="secondary"
             onClick={() => setFilters(empty)}
           >
@@ -259,12 +370,12 @@ export default function PriceWatcher({ t }: { t: Translate }) {
         <>
           <div className="watcher-summary">
             <article>
-              <small>{t("Activity", "النشاط")}</small>
+              <small>{t("Summary interactions", "تفاعلات الملخص")}</small>
               <strong>{data.summary.events}</strong>
             </article>
             <article>
               <small>
-                {t("Quoted value excl. VAT", "قيمة النشاط دون ضريبة")}
+                {t("Activity value excl. VAT", "قيمة النشاط دون ضريبة")}
               </small>
               <strong>SAR {money(data.summary.subtotal)}</strong>
             </article>
@@ -287,154 +398,120 @@ export default function PriceWatcher({ t }: { t: Translate }) {
           </div>
           <section className="card">
             <h3>{t("Staff overview", "ملخص الموظفين")}</h3>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("Staff", "الموظف")}</th>
-                    <th>{t("Activity", "النشاط")}</th>
-                    <th>{t("Items", "الأصناف")}</th>
-                    <th>{t("Quotations", "العروض")}</th>
-                    <th>{t("Value", "القيمة")}</th>
-                    <th>{t("Weighted discount", "الخصم الموزون")}</th>
-                    <th>{t("High-discount flags", "تنبيهات الخصم العالي")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.staff.map((r: any) => (
-                    <tr key={r.id}>
-                      <td>{r.name || r.username}</td>
-                      <td>{r.events}</td>
-                      <td>{r.items}</td>
-                      <td>{r.quotations}</td>
-                      <td>{money(r.subtotal)}</td>
-                      <td>{percent(r.weighted_discount)}</td>
-                      <td>{r.high_discount_events}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PriceActivityTable
+              rows={data.staff}
+              columns={staffColumns}
+              sort={filters.staffSort}
+              direction={filters.staffDirection}
+              t={t}
+              onSort={(staffSort) =>
+                setFilters((f) => ({
+                  ...f,
+                  staffSort,
+                  staffDirection:
+                    f.staffSort === staffSort && f.staffDirection === "desc"
+                      ? "asc"
+                      : "desc",
+                  page: 0,
+                }))
+              }
+            />
           </section>
           <section className="card">
             <h3>
-              {t(
-                "Item and staff price comparison",
-                "مقارنة أسعار الصنف والموظف",
-              )}
+              {filters.view === "ACTIVITY"
+                ? t("Individual pricing activity", "نشاط التسعير الفردي")
+                : t(
+                    "Item and staff price comparison",
+                    "مقارنة أسعار الصنف والموظف",
+                  )}
             </h3>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("Item", "الصنف")}</th>
-                    <th>{t("Staff", "الموظف")}</th>
-                    <th>{t("Count", "العدد")}</th>
-                    <th>{t("Qty", "الكمية")}</th>
-                    <th>{t("Weighted avg.", "المتوسط الموزون")}</th>
-                    <th>{t("Median", "الوسيط")}</th>
-                    <th>{t("Min / Max", "الأدنى / الأعلى")}</th>
-                    <th>{t("Latest", "الأحدث")}</th>
-                    <th>{t("Discount", "الخصم")}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.groups.map((r: any) => (
-                    <tr
-                      key={r.actor_id + r.item_key}
-                      className={r.zero_price_events ? "watcher-exception" : ""}
-                    >
-                      <td>
-                        <strong>{r.part_number || t("Custom", "مخصص")}</strong>
-                        <small>{r.description}</small>
-                      </td>
-                      <td>{r.staff_name}</td>
-                      <td>{r.events}</td>
-                      <td>{money(r.quantity)}</td>
-                      <td>{money(r.weighted_average)}</td>
-                      <td>{money(r.median)}</td>
-                      <td>
-                        {money(r.minimum)} / {money(r.maximum)}
-                      </td>
-                      <td>{money(r.latest)}</td>
-                      <td>
-                        {percent(r.weighted_discount)}
-                        {r.zero_price_events > 0 && (
-                          <b className="danger-text"> · ZERO</b>
-                        )}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => void openDetail(r.item_key)}
-                        >
-                          {t("Details", "التفاصيل")}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="pagination">
-              <button
-                disabled={data.page <= 0}
-                onClick={() => set("page", data.page - 1)}
-              >
-                {t("Previous", "السابق")}
-              </button>
-              <span>
-                {data.page + 1} / {data.totalPages} · {data.total}
-              </span>
-              <button
-                disabled={data.page + 1 >= data.totalPages}
-                onClick={() => set("page", data.page + 1)}
-              >
-                {t("Next", "التالي")}
-              </button>
-            </div>
+            <p>
+              {t(
+                "Riyadh time. Summary totals count lifecycle interactions; individual activity includes separate calculation snapshots.",
+                "توقيت الرياض. إجماليات الملخص تحسب التفاعلات؛ النشاط الفردي يشمل لقطات التسعير المنفصلة.",
+              )}
+            </p>
+            <PriceActivityTable
+              rows={
+                filters.view === "ACTIVITY" ? (data.items ?? []) : data.groups
+              }
+              columns={
+                filters.view === "ACTIVITY" ? activityColumns : groupColumns
+              }
+              sort={
+                filters.sort ||
+                (filters.view === "ACTIVITY" ? "last_seen_at" : "latest_at")
+              }
+              direction={filters.direction}
+              onSort={changeSort}
+              t={t}
+              onOpen={openDetail}
+            />
+            <WatchPagination
+              data={data}
+              onPage={(page) => set("page", page)}
+              t={t}
+            />
           </section>
         </>
       )}
-      {detail && (
-        <div className="modal-backdrop" onClick={() => setDetail(null)}>
+      {detailFilters && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setDetailFilters(null);
+            setDetail(null);
+          }}
+        >
           <section
             className="modal card watcher-detail"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="section-heading">
               <h3>{t("Price evidence", "أدلة الأسعار")}</h3>
-              <button onClick={() => setDetail(null)}>×</button>
+              <button
+                type="button"
+                aria-label={t("Close", "إغلاق")}
+                onClick={() => {
+                  setDetailFilters(null);
+                  setDetail(null);
+                }}
+              >
+                ×
+              </button>
             </div>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("Date", "التاريخ")}</th>
-                    <th>{t("Stage", "المرحلة")}</th>
-                    <th>{t("Staff", "الموظف")}</th>
-                    <th>{t("Qty", "الكمية")}</th>
-                    <th>{t("Unit price", "سعر الوحدة")}</th>
-                    <th>{t("Discount", "الخصم")}</th>
-                    <th>{t("Quotation", "عرض السعر")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.items.map((x: any) => (
-                    <tr key={x.id}>
-                      <td>{new Date(x.last_seen_at).toLocaleString()}</td>
-                      <td>{x.stage}</td>
-                      <td>{x.staff_name}</td>
-                      <td>{x.quantity}</td>
-                      <td>{money(x.final_excl)}</td>
-                      <td>{percent(x.effective_discount)}</td>
-                      <td>{x.quotation_number || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {!detail ? (
+              <p>{t("Loading…", "جارٍ التحميل…")}</p>
+            ) : (
+              <>
+                <PriceActivityTable
+                  rows={detail.items}
+                  columns={activityColumns}
+                  sort={detailFilters.sort}
+                  direction={detailFilters.direction}
+                  t={t}
+                  onSort={(sort) =>
+                    setDetailFilters((f: any) => ({
+                      ...f,
+                      sort,
+                      page: "0",
+                      direction:
+                        f.sort === sort && f.direction === "desc"
+                          ? "asc"
+                          : "desc",
+                    }))
+                  }
+                />
+                <WatchPagination
+                  data={detail}
+                  onPage={(page) =>
+                    setDetailFilters((f: any) => ({ ...f, page: String(page) }))
+                  }
+                  t={t}
+                />
+              </>
+            )}
           </section>
         </div>
       )}

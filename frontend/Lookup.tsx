@@ -21,6 +21,7 @@ import {
   normalizeLookupQuery,
   relatedLookupResults,
 } from "./lookup-view";
+import LookupHistory from "./LookupHistory";
 import CustomLineForm from "./CustomLineForm";
 export default function Lookup({
   t,
@@ -64,7 +65,32 @@ export default function Lookup({
     [requestDialogOpen, setRequestDialogOpen] = useState(false),
     [discountRequestReason, setDiscountRequestReason] = useState(""),
     [requestFeedback, setRequestFeedback] = useState(""),
-    [attentionTick, setAttentionTick] = useState(0);
+    [historyRevision, setHistoryRevision] = useState(0),
+    [captureFailures, setCaptureFailures] = useState<any[]>([]);
+  const lastCalculation = useRef<{ key: string; id: string } | null>(null);
+  const captureInFlight = useRef(new Set<string>());
+  async function recordCalculation(payload: any) {
+    if (captureInFlight.current.has(payload.calculationId)) return;
+    captureInFlight.current.add(payload.calculationId);
+    try {
+      await api("price-watcher/capture", "POST", {
+        interactionId: payload.interactionId,
+        calculationId: payload.calculationId,
+        line: payload.line,
+      });
+      setCaptureFailures((rows) =>
+        rows.filter((r) => r.calculationId !== payload.calculationId),
+      );
+      setHistoryRevision((v) => v + 1);
+    } catch (e) {
+      setCaptureFailures((rows) => [
+        ...rows.filter((r) => r.calculationId !== payload.calculationId),
+        { ...payload, error: (e as Error).message },
+      ]);
+    } finally {
+      captureInFlight.current.delete(payload.calculationId);
+    }
+  }
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
     finalPriceRef = useRef<HTMLDivElement>(null),
@@ -197,11 +223,11 @@ export default function Lookup({
     setRequestFeedback("");
   }, [selected?.id, sellingLevel, quantity, discount, markup]);
   useEffect(() => {
+    const current = ++pricingGeneration.current;
     if (!selected || !online) {
       setPricingBusy(false);
       return;
     }
-    const current = ++pricingGeneration.current;
     setPricingBusy(true);
     setPrice(null);
     let input;
@@ -218,9 +244,18 @@ export default function Lookup({
       setError((e as Error).message);
       return;
     }
+    const interactionId = watcherEventId.current;
+    const calculationKey = JSON.stringify({ interactionId, input });
+    if (lastCalculation.current?.key !== calculationKey)
+      lastCalculation.current = {
+        key: calculationKey,
+        id: crypto.randomUUID(),
+      };
+    const calculationId = lastCalculation.current.id;
     api("pricing", "POST", input)
       .then((p) => {
         if (current !== pricingGeneration.current) return;
+        void recordCalculation({ interactionId, calculationId, line: input });
         setPrice({
           input: {
             sellingLevel: input.sellingLevel,
@@ -239,7 +274,7 @@ export default function Lookup({
         if (current === pricingGeneration.current) setPricingBusy(false);
       });
   }, [
-    selected?.id,
+    selected,
     sellingLevel,
     quantity,
     discount,
@@ -250,58 +285,6 @@ export default function Lookup({
   useEffect(() => {
     if (selected) discountRef.current?.focus();
   }, [selected?.id]);
-  useEffect(() => {
-    const changed = () => {
-      if (document.visibilityState === "visible" && document.hasFocus())
-        setAttentionTick((value) => value + 1);
-    };
-    window.addEventListener("focus", changed);
-    document.addEventListener("visibilitychange", changed);
-    return () => {
-      window.removeEventListener("focus", changed);
-      document.removeEventListener("visibilitychange", changed);
-    };
-  }, []);
-  useEffect(() => {
-    if (!selected || !online || !watcherEventId.current) return;
-    const interactionId = watcherEventId.current;
-    const timer = window.setTimeout(() => {
-      if (
-        document.visibilityState !== "visible" ||
-        !document.hasFocus() ||
-        interactionId !== watcherEventId.current
-      )
-        return;
-      try {
-        const line = {
-          ...buildLookupLineRequest(
-            selected.id,
-            sellingLevel as any,
-            quantity,
-            staffMarkupMode ? "0" : discount,
-            staffMarkupMode ? markup : undefined,
-          ),
-          watcherEventId: interactionId,
-        };
-        void api("price-watcher/capture", "POST", {
-          interactionId,
-          line,
-        }).catch(() => undefined);
-      } catch {
-        // Invalid/transient input is deliberately not captured.
-      }
-    }, 2000);
-    return () => window.clearTimeout(timer);
-  }, [
-    selected?.id,
-    sellingLevel,
-    quantity,
-    discount,
-    markup,
-    staffMarkupMode,
-    online,
-    attentionTick,
-  ]);
   useEffect(() => {
     setHighlightedIndex((current) =>
       clampHighlightedIndex(current, filteredSuggestions.length),
@@ -316,6 +299,7 @@ export default function Lookup({
   }, [highlightedIndex, suggestionsOpen]);
   function choose(p: any) {
     watcherEventId.current = crypto.randomUUID();
+    lastCalculation.current = null;
     setSelected(p);
     setQuery(p.partNumber);
     setSellingLevel(p.defaultLevel ?? "END_CUSTOMER");
@@ -568,17 +552,18 @@ export default function Lookup({
     displayPrice = null;
   }
   const activeError = previewError || error;
-  const estimate = selectedPrice && !staffMarkupMode
-    ? new Decimal(selectedPrice.masterExcl)
-        .mul(
-          new Decimal(1).sub(
-            new Decimal(
-              /^\d+(\.\d*)?$/.test(discount) ? discount || "0" : "0",
-            ).div(100),
-          ),
-        )
-        .toFixed(2)
-    : "0.00";
+  const estimate =
+    selectedPrice && !staffMarkupMode
+      ? new Decimal(selectedPrice.masterExcl)
+          .mul(
+            new Decimal(1).sub(
+              new Decimal(
+                /^\d+(\.\d*)?$/.test(discount) ? discount || "0" : "0",
+              ).div(100),
+            ),
+          )
+          .toFixed(2)
+      : "0.00";
   const unitVat = displayPrice
     ? new Decimal(displayPrice.finalIncl)
         .minus(displayPrice.finalExcl)
@@ -586,7 +571,11 @@ export default function Lookup({
         .toFixed(2)
     : "";
   useEffect(() => {
-    if (!revealFinalPriceAfterValidation.current || pricingBusy || !displayPrice)
+    if (
+      !revealFinalPriceAfterValidation.current ||
+      pricingBusy ||
+      !displayPrice
+    )
       return;
     revealFinalPriceAfterValidation.current = false;
     const node = finalPriceRef.current;
@@ -1017,7 +1006,9 @@ export default function Lookup({
                     </select>
                   </label>
                 </section>
-                {selected.imageCount > 0 && <ProductImageGallery productId={selected.id} t={t} />}
+                {selected.imageCount > 0 && (
+                  <ProductImageGallery productId={selected.id} t={t} />
+                )}
               </div>
               <div className="lookup-selected-side">
                 <div className="field-pair lookup-compact-fields">
@@ -1049,7 +1040,8 @@ export default function Lookup({
                           if (
                             node &&
                             bounds &&
-                            (bounds.top < 0 || bounds.bottom > window.innerHeight)
+                            (bounds.top < 0 ||
+                              bounds.bottom > window.innerHeight)
                           )
                             node.scrollIntoView({
                               behavior: "smooth",
@@ -1101,16 +1093,18 @@ export default function Lookup({
                   </div>
                   {!staffMarkupMode &&
                     displayPrice?.discountLimitSource === "ZERO_FLOOR" && (
-                    <p className="muted">
-                      No minimum-price restriction; discount up to 100%
-                    </p>
-                  )}
+                      <p className="muted">
+                        No minimum-price restriction; discount up to 100%
+                      </p>
+                    )}
                   {staffMarkupMode && displayPrice?.maxMarkup !== undefined && (
                     <p className="muted">
-                      {t("Markup limit", "حد الزيادة")}: {displayPrice.maxMarkup}%
+                      {t("Markup limit", "حد الزيادة")}:{" "}
+                      {displayPrice.maxMarkup}%
                     </p>
                   )}
-                  {!staffMarkupMode && displayPrice?.maxDiscount !== undefined &&
+                  {!staffMarkupMode &&
+                    displayPrice?.maxDiscount !== undefined &&
                     displayPrice.discountLimitSource !== "ZERO_FLOOR" && (
                       <p className="muted">
                         {t("Salesman limit", "حد المندوب")}:{" "}
@@ -1202,22 +1196,22 @@ export default function Lookup({
                         ? t(
                             pricingBusy
                               ? "Loading base validation…"
-                            : staffMarkupMode
-                              ? "Enter a valid quantity and markup to preview the price."
-                              : "Enter a valid quantity and discount to preview the price.",
+                              : staffMarkupMode
+                                ? "Enter a valid quantity and markup to preview the price."
+                                : "Enter a valid quantity and discount to preview the price.",
                             pricingBusy
                               ? "جارٍ تحميل التحقق الأساسي…"
-                            : staffMarkupMode
-                              ? "أدخل كمية ونسبة زيادة صالحتين لمعاينة السعر."
-                              : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
+                              : staffMarkupMode
+                                ? "أدخل كمية ونسبة زيادة صالحتين لمعاينة السعر."
+                                : "أدخل كمية وخصماً صالحين لمعاينة السعر.",
                           )
                         : t(
-                          staffMarkupMode
-                            ? "Cost-based markup requires online price validation."
-                            : `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
-                          staffMarkupMode
-                            ? "تسعير الزيادة حسب التكلفة يتطلب التحقق عبر الإنترنت."
-                            : `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
+                            staffMarkupMode
+                              ? "Cost-based markup requires online price validation."
+                              : `Offline estimate: SAR ${estimate} excl. VAT. Final price requires online validation.`,
+                            staffMarkupMode
+                              ? "تسعير الزيادة حسب التكلفة يتطلب التحقق عبر الإنترنت."
+                              : `تقدير دون اتصال: ${estimate} ر.س قبل الضريبة. يتطلب السعر النهائي التحقق عبر الإنترنت.`,
                           )}
                     </p>
                   )}
@@ -1244,7 +1238,8 @@ export default function Lookup({
                     disabled={
                       adding ||
                       !!previewError ||
-                      (!online && (!settings.allowOfflineCache || staffMarkupMode))
+                      (!online &&
+                        (!settings.allowOfflineCache || staffMarkupMode))
                     }
                   >
                     {t("＋ ADD TO CART", "＋ أضف إلى السلة")}
@@ -1331,6 +1326,34 @@ export default function Lookup({
           </div>
         </div>
       )}
+      {captureFailures.length > 0 && (
+        <div className="notice error" role="alert">
+          <p>
+            {t(
+              "Some calculations could not be saved to history.",
+              "تعذر حفظ بعض عمليات التسعير في السجل.",
+            )}
+          </p>
+          {captureFailures.map((f) => (
+            <div key={f.calculationId}>
+              <span>{f.error}</span>{" "}
+              <button
+                type="button"
+                disabled={!online}
+                onClick={() => void recordCalculation(f)}
+              >
+                {t("Retry saving", "إعادة محاولة الحفظ")}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <LookupHistory
+        t={t}
+        revision={historyRevision}
+        onOpen={choose}
+        online={online}
+      />
     </div>
   );
 }

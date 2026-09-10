@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
@@ -12,9 +13,18 @@ import {
   normalizePart,
 } from "../pricing/engine";
 import { getProduct, toInput } from "../products/service";
+import {
+  activityColumns,
+  groupColumns,
+  staffColumns,
+} from "../../shared/price-watch";
 
 const lookupSchema = z
-  .object({ interactionId: z.string().uuid(), line: lineInput })
+  .object({
+    interactionId: z.string().uuid(),
+    calculationId: z.string().uuid().optional(),
+    line: lineInput,
+  })
   .strict();
 const cartSchema = z
   .object({
@@ -45,6 +55,11 @@ const filtersSchema = z
     itemKey: z.string().max(300).optional(),
     page: z.coerce.number().int().min(0).default(0),
     pageSize: z.coerce.number().int().min(1).max(100).default(25),
+    view: z.enum(["ACTIVITY", "GROUPS"]).default("ACTIVITY"),
+    sort: z.string().default(""),
+    direction: z.enum(["asc", "desc"]).default("desc"),
+    staffSort: z.string().default("subtotal"),
+    staffDirection: z.enum(["asc", "desc"]).default("desc"),
   })
   .strict();
 
@@ -158,23 +173,100 @@ async function upsertEvent(
 export async function captureLookup(db: DB, actor: Actor, raw: unknown) {
   requirePermission(actor, "PRODUCT_VIEW");
   const input = lookupSchema.parse(raw);
-  const product = await getProduct(db, input.line.productId);
-  assert(product.active, 409, "Product is archived");
-  const price = calculate(toInput(product), pricingPolicy(actor), input.line);
-  await upsertEvent(db, {
-    id: input.interactionId,
-    actorId: actor.id,
-    stage: "LOOKUP",
-    source: "CATALOG",
-    productId: product.id,
-    itemKey: `CATALOG:${product.id}`,
-    partNumber: product.part_number,
-    description: product.description,
-    unit: product.unit,
-    sellingLevel: price.sellingLevel,
-    price,
+  return db.transaction(async (tx) => {
+    // Older clients remain supported; new clients retain a calculation ID for retries.
+    const calculationId = input.calculationId ?? randomUUID();
+    const previous = await one(
+      tx,
+      "SELECT actor_id,event_id,request FROM price_lookup_history WHERE id=$1",
+      [calculationId],
+    );
+    if (previous) {
+      assert(
+        previous.actor_id === actor.id &&
+          previous.event_id === input.interactionId &&
+          isDeepStrictEqual(previous.request, JSON.parse(json(input.line))),
+        409,
+        "Calculation ID already used",
+      );
+      return { ok: true, interactionId: input.interactionId, calculationId };
+    }
+    const product = await getProduct(tx, input.line.productId);
+    assert(product.active, 409, "Product is archived");
+    const price = calculate(toInput(product), pricingPolicy(actor), input.line);
+    const existing = await one(
+      tx,
+      "SELECT actor_id,stage FROM price_watch_events WHERE id=$1 FOR UPDATE",
+      [input.interactionId],
+    );
+    assert(
+      !existing || existing.actor_id === actor.id,
+      409,
+      "Price interaction belongs to another user",
+    );
+    if (!existing || existing.stage === "LOOKUP")
+      await upsertEvent(tx, {
+        id: input.interactionId,
+        actorId: actor.id,
+        stage: "LOOKUP",
+        source: "CATALOG",
+        productId: product.id,
+        itemKey: `CATALOG:${product.id}`,
+        partNumber: product.part_number,
+        description: product.description,
+        unit: product.unit,
+        sellingLevel: price.sellingLevel,
+        price,
+      });
+    const snapshot = {
+      product_id: product.id,
+      item_key: `CATALOG:${product.id}`,
+      part_number: product.part_number,
+      description: product.description,
+      unit: product.unit,
+      selling_level: price.sellingLevel,
+      source: "CATALOG",
+      quantity: price.quantity,
+      master_excl: price.masterExcl,
+      final_excl: price.finalExcl,
+      final_incl: price.finalIncl,
+      subtotal: price.subtotal,
+      total: price.total,
+      requested_discount: price.requestedDiscount,
+      effective_discount: price.effectiveDiscount,
+      requested_markup: price.requestedMarkup ?? "0",
+      effective_markup: price.effectiveMarkup ?? "0",
+      adjustment_mode: price.adjustmentMode ?? "DISCOUNT",
+      vat_rate: price.vatRate,
+      minimum_reached: price.minimumReached,
+      discount_limited: price.discountLimited,
+    };
+    await tx.query(
+      `INSERT INTO price_lookup_history(id,event_id,actor_id,snapshot,request)
+    SELECT $1,e.id,$3,to_jsonb(e)||$4::jsonb,$5::jsonb FROM price_watch_events e WHERE e.id=$2
+    ON CONFLICT(id) DO NOTHING`,
+      [
+        calculationId,
+        input.interactionId,
+        actor.id,
+        json(snapshot),
+        json(input.line),
+      ],
+    );
+    const saved = await one(
+      tx,
+      "SELECT actor_id,event_id,request FROM price_lookup_history WHERE id=$1",
+      [calculationId],
+    );
+    assert(
+      saved?.actor_id === actor.id &&
+        saved.event_id === input.interactionId &&
+        isDeepStrictEqual(saved.request, JSON.parse(json(input.line))),
+      409,
+      "Calculation ID already used",
+    );
+    return { ok: true, interactionId: input.interactionId, calculationId };
   });
-  return { ok: true, interactionId: input.interactionId };
 }
 
 export async function captureCart(
@@ -255,8 +347,8 @@ export async function syncQuotationEvents(db: DB, quotation: any) {
   }
 }
 
-function filteredWhere(actor: Actor, raw: unknown) {
-  requirePermission(actor, "PRICE_WATCHER");
+function filteredWhere(actor: Actor, raw: unknown, personal = false) {
+  requirePermission(actor, personal ? "PRODUCT_VIEW" : "PRICE_WATCHER");
   const value = filtersSchema.parse(raw);
   assert(
     value.minDiscount === undefined ||
@@ -276,6 +368,8 @@ function filteredWhere(actor: Actor, raw: unknown) {
     `e.last_seen_at>=COALESCE(${from}::date::timestamp AT TIME ZONE 'Asia/Riyadh',now()-interval '90 days')`,
     `(${to}::date IS NULL OR e.last_seen_at<((${to}::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh'))`,
   ];
+  if (personal)
+    conditions.push(`e.actor_id=${bind(actor.id)}`, "e.stage='LOOKUP'");
   if (value.actorId) conditions.push(`e.actor_id=${bind(value.actorId)}`);
   if (value.stage !== "ALL") conditions.push(`e.stage=${bind(value.stage)}`);
   if (value.source !== "ALL") conditions.push(`e.source=${bind(value.source)}`);
@@ -299,8 +393,73 @@ function filteredWhere(actor: Actor, raw: unknown) {
   return { value, args, where: conditions.join(" AND "), bind };
 }
 
+function ordered(
+  field: string,
+  direction: string,
+  columns: { key: string; kind?: string }[],
+  fallback: string,
+  prefix = "",
+) {
+  const key = field || fallback;
+  const column = columns.find((c) => c.key === key);
+  assert(column, 400, "Unsupported sort column");
+  const cast =
+    column.kind === "number" || column.kind === "percent" ? "::numeric" : "";
+  return `${prefix}${key}${cast} ${direction === "asc" ? "ASC" : "DESC"} NULLS LAST`;
+}
+
+export async function activity(
+  db: DB,
+  actor: Actor,
+  raw: unknown,
+  personal = false,
+) {
+  const f = filteredWhere(actor, raw, personal);
+  const count = await one(
+    db,
+    `SELECT count(*)::int AS total FROM price_watch_activity e WHERE ${f.where}`,
+    f.args,
+  );
+  const total = count?.total ?? 0,
+    totalPages = Math.max(1, Math.ceil(total / f.value.pageSize));
+  const page = Math.min(f.value.page, totalPages - 1);
+  const order = ordered(
+    f.value.sort,
+    f.value.direction,
+    activityColumns,
+    "last_seen_at",
+    "r.",
+  );
+  const limit = f.bind(f.value.pageSize),
+    offset = f.bind(page * f.value.pageSize);
+  const items = (
+    await db.query(
+      `SELECT * FROM (
+    SELECT e.*,COALESCE(NULLIF(u.name,''),u.username) AS staff_name,q.number AS quotation_number
+    FROM price_watch_activity e JOIN users u ON u.id=e.actor_id LEFT JOIN quotations q ON q.id=e.quotation_id
+    WHERE ${f.where}) r ORDER BY ${order},r.id ASC LIMIT ${limit} OFFSET ${offset}`,
+      f.args,
+    )
+  ).rows;
+  return { items, total, totalPages, page, pageSize: f.value.pageSize };
+}
+
 export async function dashboard(db: DB, actor: Actor, raw: unknown) {
   const filter = filteredWhere(actor, raw);
+  const groupOrder = ordered(
+    filter.value.view === "GROUPS" ? filter.value.sort : "",
+    filter.value.direction,
+    groupColumns,
+    "latest_at",
+    "r.",
+  );
+  const staffOrder = ordered(
+    filter.value.staffSort,
+    filter.value.staffDirection,
+    staffColumns,
+    "subtotal",
+    "r.",
+  );
   const summary = await one(
     db,
     `SELECT count(*)::int AS events,count(DISTINCT quotation_id)::int AS quotations,
@@ -330,14 +489,14 @@ export async function dashboard(db: DB, actor: Actor, raw: unknown) {
   ).rows;
   const staff = (
     await db.query(
-      `SELECT u.id,u.name,u.username,count(*)::int AS events,count(DISTINCT e.item_key)::int AS items,
+      `SELECT * FROM (SELECT u.id,u.name,u.username,COALESCE(NULLIF(u.name,''),u.username) AS staff_name,count(*)::int AS events,count(DISTINCT e.item_key)::int AS items,
               count(DISTINCT e.quotation_id)::int AS quotations,count(DISTINCT NULLIF(e.customer_name,''))::int AS customers,
               COALESCE(sum(e.subtotal),0)::text AS subtotal,
               CASE WHEN sum(e.master_excl*e.quantity)>0 THEN
                 (100*(1-sum(e.final_excl*e.quantity)/sum(e.master_excl*e.quantity)))::text ELSE '0' END AS weighted_discount,
               count(*) FILTER (WHERE e.effective_discount>=50)::int AS high_discount_events
        FROM price_watch_events e JOIN users u ON u.id=e.actor_id
-       WHERE ${filter.where} GROUP BY u.id,u.name,u.username ORDER BY sum(e.subtotal) DESC,u.name`,
+       WHERE ${filter.where} GROUP BY u.id,u.name,u.username) r ORDER BY ${staffOrder},r.id`,
       filter.args,
     )
   ).rows;
@@ -355,7 +514,7 @@ export async function dashboard(db: DB, actor: Actor, raw: unknown) {
   const offset = filter.bind(page * filter.value.pageSize);
   const groups = (
     await db.query(
-      `SELECT e.actor_id,u.name AS staff_name,e.item_key,
+      `SELECT * FROM (SELECT e.actor_id,COALESCE(NULLIF(u.name,''),u.username) AS staff_name,e.item_key,
               (array_agg(e.part_number ORDER BY e.last_seen_at DESC))[1] AS part_number,
               (array_agg(e.description ORDER BY e.last_seen_at DESC))[1] AS description,
               (array_agg(e.source ORDER BY e.last_seen_at DESC))[1] AS source,
@@ -372,8 +531,8 @@ export async function dashboard(db: DB, actor: Actor, raw: unknown) {
               count(*) FILTER (WHERE e.final_excl=0 OR e.effective_discount=100)::int AS zero_price_events
        FROM price_watch_events e JOIN users u ON u.id=e.actor_id
        WHERE ${filter.where}
-       GROUP BY e.actor_id,u.name,e.item_key
-       ORDER BY sum(e.quantity) DESC,max(e.last_seen_at) DESC,e.item_key
+       GROUP BY e.actor_id,u.name,u.username,e.item_key) r
+       ORDER BY ${groupOrder},r.item_key,r.actor_id
        LIMIT ${limit} OFFSET ${offset}`,
       filter.args,
     )
@@ -383,6 +542,10 @@ export async function dashboard(db: DB, actor: Actor, raw: unknown) {
       "SELECT id,name,username FROM users WHERE NOT disabled ORDER BY name,username",
     )
   ).rows;
+  const individual =
+    filter.value.view === "ACTIVITY"
+      ? await activity(db, actor, raw)
+      : undefined;
   return {
     summary,
     coverage,
@@ -393,28 +556,18 @@ export async function dashboard(db: DB, actor: Actor, raw: unknown) {
     pageSize: filter.value.pageSize,
     total,
     totalPages,
+    view: filter.value.view,
+    ...(individual ?? {}),
   };
 }
 
 export async function details(db: DB, actor: Actor, raw: unknown) {
   const filter = filteredWhere(actor, raw);
   assert(filter.value.itemKey, 400, "Select an item");
-  const count = await one<{ total: number }>(
-    db,
-    `SELECT count(*)::int AS total FROM price_watch_events e WHERE ${filter.where}`,
-    filter.args,
-  );
-  const limit = filter.bind(filter.value.pageSize);
-  const offset = filter.bind(filter.value.page * filter.value.pageSize);
-  const items = (
-    await db.query(
-      `SELECT e.*,u.name AS staff_name,q.number AS quotation_number
-       FROM price_watch_events e JOIN users u ON u.id=e.actor_id
-       LEFT JOIN quotations q ON q.id=e.quotation_id
-       WHERE ${filter.where} ORDER BY e.last_seen_at DESC,e.id LIMIT ${limit} OFFSET ${offset}`,
-      filter.args,
-    )
-  ).rows;
+  const result = await activity(db, actor, {
+    ...filter.value,
+    view: "ACTIVITY",
+  });
   await audit(
     db,
     actor.id,
@@ -422,12 +575,7 @@ export async function details(db: DB, actor: Actor, raw: unknown) {
     "price_watch_events",
     filter.value.itemKey,
   );
-  return {
-    items,
-    total: count?.total ?? 0,
-    page: filter.value.page,
-    pageSize: filter.value.pageSize,
-  };
+  return result;
 }
 
 export function stageCanPromote(current: string, next: string) {

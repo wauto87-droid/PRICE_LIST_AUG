@@ -596,6 +596,10 @@ class Deployment:
             env['WHATSAPP_BIND_HOST'] = '127.0.0.1'
             env['WHATSAPP_PORT'] = '3010'
             env['WHATSAPP_SESSION_DIR'] = str(paths['browsers'].parent / 'whatsapp-session')
+            # Native deployments may run PM2 as root, where Chromium requires this.
+            env.setdefault('WHATSAPP_NO_SANDBOX', 'true' if getattr(os, 'geteuid', lambda: -1)() == 0 else 'false')
+            if not env.get('CHROMIUM_EXECUTABLE_PATH') and shutil.which('chromium'):
+                env['CHROMIUM_EXECUTABLE_PATH'] = shutil.which('chromium')
         if extra:
             env.update(extra)
         return env

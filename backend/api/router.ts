@@ -809,7 +809,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         itemKey: url.searchParams.get("itemKey") || undefined,
         page: url.searchParams.get("page") ?? 0,
         pageSize: url.searchParams.get("pageSize") ?? 25,
+        view: url.searchParams.get("view") ?? "ACTIVITY",
+        sort: url.searchParams.get("sort") ?? "",
+        direction: url.searchParams.get("direction") ?? "desc",
+        staffSort: url.searchParams.get("staffSort") ?? "subtotal",
+        staffDirection: url.searchParams.get("staffDirection") ?? "desc",
       };
+      if (id === "history" && method === "GET")
+        return response(await priceWatcher.activity(db, actor, filters, true));
       if (!id && method === "GET")
         return response(await priceWatcher.dashboard(db, actor, filters));
       if (id === "details" && method === "GET")

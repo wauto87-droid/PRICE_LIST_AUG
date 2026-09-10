@@ -1166,6 +1166,13 @@ strong + small {
   display: grid;
   gap: 16px;
 }
+.price-watcher > .card {
+  min-width: 0;
+}
+.lookup-history {
+  margin-top: 20px;
+  min-width: 0;
+}
 .watcher-filters .form-grid {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
@@ -2872,10 +2879,13 @@ fieldset label {
     height: 57px;
     justify-content: space-between;
     gap: 0;
+    overflow-x: auto;
   }
   .main-nav button {
     height: 57px;
     font-size: 13px;
+    flex-shrink: 0;
+    padding-inline: 10px;
   }
   main {
     padding: 24px 15px 35px;

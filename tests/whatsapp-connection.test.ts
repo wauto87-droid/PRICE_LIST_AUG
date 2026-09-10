@@ -69,3 +69,15 @@ test("disconnect clears failed authentication credentials", async () => {
     assert.equal(connection.snapshot().status, "DISCONNECTED");
   } finally { await connection.close(); }
 });
+
+test("QR refresh encoding cannot restore an older or authenticated QR", async () => {
+  const client=new Client();const pending:((s:string)=>void)[]=[];
+  const connection=createConnection({createClient:()=>client,encodeQr:()=>new Promise(resolve=>pending.push(resolve))});
+  try{
+    await connection.connect();client.emit("qr","first");client.emit("qr","second");
+    pending[1]("new");await Promise.resolve();pending[0]("old");await Promise.resolve();
+    assert.equal(connection.snapshot().qr,"new");
+    client.emit("qr","third");client.emit("authenticated");pending[2]("obsolete");await Promise.resolve();
+    assert.equal(connection.snapshot().qr,null);assert.equal(connection.snapshot().status,"STARTING");
+  }finally{await connection.close();}
+});
