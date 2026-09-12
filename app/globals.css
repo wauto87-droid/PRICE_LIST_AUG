@@ -1283,10 +1283,38 @@ strong + small {
 .danger-text {
   color: var(--danger);
 }
-.watcher-detail {
-  width: min(1100px, calc(100vw - 32px));
+.modal.watcher-detail {
+  width: min(1520px, calc(100vw - 32px));
   max-height: 86vh;
   overflow: auto;
+}
+.watcher-detail .price-activity-table {
+  overflow-x: auto;
+}
+.watcher-detail .price-activity-table table {
+  min-width: 1400px;
+  table-layout: auto;
+}
+.watcher-detail .price-activity-table th,
+.watcher-detail .price-activity-table td {
+  white-space: nowrap;
+}
+.watcher-detail .price-activity-table td:nth-child(2),
+.watcher-detail .price-activity-table td:nth-child(3) {
+  min-width: 190px;
+  white-space: normal;
+}
+@media (max-width: 760px) {
+  .modal.watcher-detail {
+    width: calc(100vw - 20px);
+  }
+  .watcher-detail .price-activity-table table {
+    min-width: 0;
+  }
+  .watcher-detail .price-activity-table th,
+  .watcher-detail .price-activity-table td {
+    white-space: normal;
+  }
 }
 .product-enrichment-panel {
   margin-top: 16px;

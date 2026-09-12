@@ -12,6 +12,7 @@ if (!secret || secret.length < 32)
     "Set WHATSAPP_SERVICE_TOKEN to at least 32 random characters",
   );
 const { createConnection } = require("./whatsapp-connection.cjs");
+const { formatOtpMessage, formatTestMessage } = require("./whatsapp-messages.cjs");
 const connection = createConnection({
   // LocalAuth's default client stores credentials only in this child directory.
   clearSession: () => fs.rm(path.join(sessionDirectory, "session"), { recursive: true, force: true }),
@@ -70,6 +71,8 @@ http
         return respond(400, { error: "Invalid destination" });
       if (req.url === "/send" && !/^\d{6}$/.test(body.code))
         return respond(400, { error: "Invalid code" });
+      if (req.url === "/send" && body.purpose != null && !["CHECKOUT", "SIGNUP", "LOGIN"].includes(body.purpose))
+        return respond(400, { error: "Invalid verification purpose" });
       await serial(async () => {
         if (!connection.readyClient()) throw new Error("Disconnected");
         const client = connection.readyClient();
@@ -78,8 +81,8 @@ http
         if (!recipient) throw new Error("Recipient unavailable");
         const message =
           req.url === "/test"
-            ? "AMT: WhatsApp connection test successful. تم اختبار اتصال واتساب بنجاح."
-            : `AMT verification code: ${body.code}. Expires in 10 minutes. Do not share this code.\nرمز التحقق: ${body.code}. صالح لمدة 10 دقائق. لا تشارك الرمز.`;
+            ? formatTestMessage()
+            : formatOtpMessage(body.code, body.purpose);
         await client.sendMessage(recipient._serialized, message);
       });
       respond(200, { sent: true });
