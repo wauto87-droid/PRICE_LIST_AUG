@@ -21,7 +21,6 @@ import {
   normalizeLookupQuery,
   relatedLookupResults,
 } from "./lookup-view";
-import LookupHistory from "./LookupHistory";
 import CustomLineForm from "./CustomLineForm";
 export default function Lookup({
   t,
@@ -64,9 +63,7 @@ export default function Lookup({
     [stamp, setStamp] = useState(""),
     [requestDialogOpen, setRequestDialogOpen] = useState(false),
     [discountRequestReason, setDiscountRequestReason] = useState(""),
-    [requestFeedback, setRequestFeedback] = useState(""),
-    [historyRevision, setHistoryRevision] = useState(0),
-    [captureFailures, setCaptureFailures] = useState<any[]>([]);
+    [requestFeedback, setRequestFeedback] = useState("");
   const lastCalculation = useRef<{ key: string; id: string } | null>(null);
   const captureInFlight = useRef(new Set<string>());
   async function recordCalculation(payload: any) {
@@ -78,15 +75,9 @@ export default function Lookup({
         calculationId: payload.calculationId,
         line: payload.line,
       });
-      setCaptureFailures((rows) =>
-        rows.filter((r) => r.calculationId !== payload.calculationId),
-      );
-      setHistoryRevision((v) => v + 1);
-    } catch (e) {
-      setCaptureFailures((rows) => [
-        ...rows.filter((r) => r.calculationId !== payload.calculationId),
-        { ...payload, error: (e as Error).message },
-      ]);
+    } catch {
+      // History is an administrative record; lookup stays usable if capture
+      // is temporarily unavailable.
     } finally {
       captureInFlight.current.delete(payload.calculationId);
     }
@@ -1326,34 +1317,6 @@ export default function Lookup({
           </div>
         </div>
       )}
-      {captureFailures.length > 0 && (
-        <div className="notice error" role="alert">
-          <p>
-            {t(
-              "Some calculations could not be saved to history.",
-              "تعذر حفظ بعض عمليات التسعير في السجل.",
-            )}
-          </p>
-          {captureFailures.map((f) => (
-            <div key={f.calculationId}>
-              <span>{f.error}</span>{" "}
-              <button
-                type="button"
-                disabled={!online}
-                onClick={() => void recordCalculation(f)}
-              >
-                {t("Retry saving", "إعادة محاولة الحفظ")}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <LookupHistory
-        t={t}
-        revision={historyRevision}
-        onOpen={choose}
-        online={online}
-      />
     </div>
   );
 }

@@ -30,49 +30,14 @@ try {
     .filter({ hasText: "HISTORY-QA" })
     .first()
     .click();
-  const history = page
-    .locator("section")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Recent lookup history",
-        exact: true,
-      }),
-    });
-  await history
-    .locator("tbody tr")
-    .filter({ hasText: "HISTORY-QA" })
-    .first()
-    .waitFor();
-  const before = await history.locator("tbody tr").count();
+  assert.equal(
+    await page.getByRole("heading", { name: "Recent lookup history" }).count(),
+    0,
+    "workspace must not show the administrative lookup history",
+  );
   const quantity = page.getByLabel(/^QUANTITY ·/);
   await quantity.fill("9");
-  await page.waitForFunction(
-    async ({ base, before }) => {
-      const r = await fetch(base + "/api/v1/price-watcher/history");
-      return (await r.json()).total > before;
-    },
-    { base, before },
-  );
-  await history
-    .locator("tbody tr")
-    .filter({ hasText: "9.00" })
-    .first()
-    .waitFor();
-  const captured = await (
-    await context.request.get(base + "/api/v1/price-watcher/history")
-  ).json();
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await page.waitForTimeout(600);
-  assert.equal(
-    (
-      await (
-        await context.request.get(base + "/api/v1/price-watcher/history")
-      ).json()
-    ).total,
-    captured.total,
-  );
-  await history.getByRole("button", { name: /Date \/ time/ }).click();
-  await history.locator('th[aria-sort="ascending"]').waitFor();
+  await page.waitForTimeout(400);
   await page.getByRole("button", { name: "Admin", exact: true }).click();
   await page.locator(".admin-menu-toggle").click();
   await page

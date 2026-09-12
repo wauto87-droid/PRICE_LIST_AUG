@@ -815,8 +815,6 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         staffSort: url.searchParams.get("staffSort") ?? "subtotal",
         staffDirection: url.searchParams.get("staffDirection") ?? "desc",
       };
-      if (id === "history" && method === "GET")
-        return response(await priceWatcher.activity(db, actor, filters, true));
       if (!id && method === "GET")
         return response(await priceWatcher.dashboard(db, actor, filters));
       if (id === "details" && method === "GET")
