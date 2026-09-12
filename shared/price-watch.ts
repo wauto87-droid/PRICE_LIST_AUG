@@ -41,6 +41,17 @@ export const activityColumns: WatchColumn[] = [
   { key: "quotation_number", en: "Quotation", ar: "عرض السعر" },
   { key: "evidence", en: "Evidence", ar: "الدليل" },
 ];
+// Keep the main screen readable. The complete record remains in Details.
+export const activitySummaryColumns: WatchColumn[] = [
+  { key: "last_seen_at", en: "When", ar: "الوقت", kind: "date" },
+  { key: "part_number", en: "Item", ar: "الصنف" },
+  { key: "staff_name", en: "Staff", ar: "الموظف" },
+  { key: "stage", en: "Activity", ar: "النشاط" },
+  { key: "quantity", en: "Qty", ar: "الكمية", kind: "number" },
+  { key: "final_excl", en: "Unit price", ar: "سعر الوحدة", kind: "number" },
+  { key: "effective_discount", en: "Discount", ar: "الخصم", kind: "percent" },
+  { key: "subtotal", en: "Value", ar: "القيمة", kind: "number" },
+];
 export const groupColumns: WatchColumn[] = [
   { key: "latest_at", en: "Latest activity", ar: "أحدث نشاط", kind: "date" },
   ...activityColumns.filter((c) =>
@@ -68,6 +79,15 @@ export const groupColumns: WatchColumn[] = [
     kind: "number",
   },
 ];
+export const groupSummaryColumns: WatchColumn[] = [
+  { key: "latest_at", en: "Latest", ar: "الأحدث", kind: "date" },
+  { key: "part_number", en: "Item", ar: "الصنف" },
+  { key: "staff_name", en: "Staff", ar: "الموظف" },
+  { key: "events", en: "Activity", ar: "النشاط", kind: "number" },
+  { key: "quantity", en: "Qty", ar: "الكمية", kind: "number" },
+  { key: "latest", en: "Latest price", ar: "أحدث سعر", kind: "number" },
+  { key: "weighted_discount", en: "Discount", ar: "الخصم", kind: "percent" },
+];
 export const staffColumns: WatchColumn[] = [
   { key: "staff_name", en: "Staff", ar: "الموظف" },
   ...[
@@ -88,6 +108,13 @@ export const staffColumns: WatchColumn[] = [
     ar: "تنبيهات الخصم العالي",
     kind: "number",
   },
+];
+export const staffSummaryColumns: WatchColumn[] = [
+  { key: "staff_name", en: "Staff", ar: "الموظف" },
+  { key: "events", en: "Activity", ar: "النشاط", kind: "number" },
+  { key: "items", en: "Items", ar: "الأصناف", kind: "number" },
+  { key: "subtotal", en: "Value", ar: "القيمة", kind: "number" },
+  { key: "weighted_discount", en: "Discount", ar: "الخصم", kind: "percent" },
 ];
 export const personalColumns = activityColumns.filter(
   (c) =>

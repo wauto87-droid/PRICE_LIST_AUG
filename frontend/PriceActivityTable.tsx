@@ -22,7 +22,7 @@ export function PriceActivityTable({
   openLabel?: string;
 }) {
   return (
-    <div className="table-scroll">
+    <div className="table-scroll price-activity-table">
       <table>
         <thead>
           <tr>
@@ -61,21 +61,30 @@ export function PriceActivityTable({
               }
             >
               {columns.map((c) => (
-                <td key={c.key}>
-                  {c.key === "evidence"
-                    ? t(
-                        String(r[c.key]),
-                        r[c.key] === "Legacy snapshot"
-                          ? "لقطة قديمة"
-                          : r[c.key] === "Calculation"
-                            ? "عملية تسعير"
-                            : "دورة عرض السعر",
-                      )
-                    : watchValue(r[c.key], c.kind)}
+                <td key={c.key} data-label={t(c.en, c.ar)}>
+                  {c.key === "part_number" ? (
+                    <>
+                      <strong>{watchValue(r.part_number)}</strong>
+                      {r.description && (
+                        <small>{watchValue(r.description)}</small>
+                      )}
+                    </>
+                  ) : c.key === "evidence" ? (
+                    t(
+                      String(r[c.key]),
+                      r[c.key] === "Legacy snapshot"
+                        ? "لقطة قديمة"
+                        : r[c.key] === "Calculation"
+                          ? "عملية تسعير"
+                          : "دورة عرض السعر",
+                    )
+                  ) : (
+                    watchValue(r[c.key], c.kind)
+                  )}
                 </td>
               ))}
               {onOpen && (
-                <td>
+                <td data-label={t("Action", "الإجراء")}>
                   <button type="button" onClick={() => onOpen(r)}>
                     {openLabel ?? t("Details", "التفاصيل")}
                   </button>

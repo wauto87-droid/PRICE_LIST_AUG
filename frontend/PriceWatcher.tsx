@@ -3,8 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import {
   activityColumns,
-  groupColumns,
-  staffColumns,
+  activitySummaryColumns,
+  groupSummaryColumns,
+  staffSummaryColumns,
 } from "../shared/price-watch";
 import { PriceActivityTable, WatchPagination } from "./PriceActivityTable";
 import { appPath } from "../shared/paths";
@@ -400,7 +401,7 @@ export default function PriceWatcher({ t }: { t: Translate }) {
             <h3>{t("Staff overview", "ملخص الموظفين")}</h3>
             <PriceActivityTable
               rows={data.staff}
-              columns={staffColumns}
+              columns={staffSummaryColumns}
               sort={filters.staffSort}
               direction={filters.staffDirection}
               t={t}
@@ -428,8 +429,8 @@ export default function PriceWatcher({ t }: { t: Translate }) {
             </h3>
             <p>
               {t(
-                "Riyadh time. Summary totals count lifecycle interactions; individual activity includes separate calculation snapshots.",
-                "توقيت الرياض. إجماليات الملخص تحسب التفاعلات؛ النشاط الفردي يشمل لقطات التسعير المنفصلة.",
+                "This table shows the essentials. Select Details for customer, quotation, source, selling level, markup, and the complete record.",
+                "يعرض الجدول المعلومات الأساسية. اختر التفاصيل لعرض العميل وعرض السعر والمصدر ومستوى البيع والزيادة والسجل الكامل.",
               )}
             </p>
             <PriceActivityTable
@@ -437,7 +438,9 @@ export default function PriceWatcher({ t }: { t: Translate }) {
                 filters.view === "ACTIVITY" ? (data.items ?? []) : data.groups
               }
               columns={
-                filters.view === "ACTIVITY" ? activityColumns : groupColumns
+                filters.view === "ACTIVITY"
+                  ? activitySummaryColumns
+                  : groupSummaryColumns
               }
               sort={
                 filters.sort ||
