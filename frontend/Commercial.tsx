@@ -4,6 +4,7 @@ import { api, type Translate } from "./api";
 import CommercialLists from "./CommercialLists";
 import StorefrontAdmin from "./StorefrontAdmin";
 import { ProductImageGallery } from "./ProductImages";
+import { showPrompt } from "./confirm";
 
 type Section =
   | "overview"
@@ -254,8 +255,17 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                           <button
                             className="danger"
                             onClick={async () => {
-                              const comment = prompt(
-                                t("Rejection reason", "سبب الرفض"),
+                              const comment = await showPrompt(
+                                t(
+                                  "Please provide a reason for rejecting this quotation:",
+                                  "يرجى ذكر سبب رفض عرض السعر:",
+                                ),
+                                {
+                                  title: t("Reject Quotation", "رفض عرض السعر"),
+                                  confirmText: t("Reject", "رفض"),
+                                  tone: "danger",
+                                  placeholder: t("Rejection reason", "سبب الرفض"),
+                                },
                               );
                               if (comment) {
                                 await api(

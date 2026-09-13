@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
 import { salesCheckMatchLabel, salesCheckReasonLabel, salesCheckStatusLabel } from "../shared/sales-check-labels";
+import { showConfirm } from "./confirm";
 import SalesCheckCatalogResolver from "./SalesCheckCatalogResolver";
 
 const autoMap = (columns: string[], names: string[]) =>
@@ -373,16 +374,20 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   type="button"
                   className="sales-check-card-delete-btn"
                   title={t("Delete report", "حذف التقرير")}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (
-                      window.confirm(
-                        t(
-                          `Delete report "${item.filename}"?`,
-                          `هل تريد حذف تقرير "${item.filename}"؟`,
-                        ),
-                      )
-                    ) {
+                    const confirmed = await showConfirm(
+                      t(
+                        `Delete report "${item.filename}"?`,
+                        `هل تريد حذف تقرير "${item.filename}"؟`,
+                      ),
+                      {
+                        tone: "danger",
+                        confirmText: t("Delete", "حذف"),
+                        title: t("Delete Sales Check", "حذف فحص المبيعات"),
+                      },
+                    );
+                    if (confirmed) {
                       run(async () => {
                         await api(`sales-price-checks/${item.id}`, "DELETE");
                         if (report?.id === item.id) {
@@ -1009,7 +1014,21 @@ function HistoricalPrices({ t, run, busy }: { t: Translate, run: any, busy: bool
                         disabled={busy}
                         onClick={() =>
                           run(async () => {
-                            if (confirm("Are you sure?")) {
+                            const confirmed = await showConfirm(
+                              t(
+                                `Delete historical list "${l.name}"?`,
+                                `هل تريد حذف القائمة التاريخية "${l.name}"؟`,
+                              ),
+                              {
+                                tone: "danger",
+                                confirmText: t("Delete", "حذف"),
+                                title: t(
+                                  "Delete Historical List",
+                                  "حذف القائمة التاريخية",
+                                ),
+                              },
+                            );
+                            if (confirmed) {
                               await api(`historical-prices/${l.id}`, "DELETE");
                               await load();
                             }
