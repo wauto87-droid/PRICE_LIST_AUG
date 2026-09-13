@@ -16,6 +16,11 @@ export function normalizePhone(value: string) {
   return phone;
 }
 
+export function getStoreUrl() {
+  const base = process.env.APP_ORIGIN || process.env.PUBLIC_URL || "https://softwaresolver.online";
+  return `${base.replace(/\/$/, "")}/amt_price_list/store`;
+}
+
 export async function whatsapp(path: string, payload?: unknown) {
   const endpoint = process.env.WHATSAPP_SERVICE_URL;
   const token = process.env.WHATSAPP_SERVICE_TOKEN;
@@ -33,7 +38,7 @@ export async function whatsapp(path: string, payload?: unknown) {
         "content-type": "application/json",
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-      signal: AbortSignal.timeout(path === "status" ? 3000 : 20000),
+      signal: AbortSignal.timeout(path === "status" ? 8000 : 25000),
       cache: "no-store",
     });
   } catch {
@@ -56,7 +61,27 @@ export async function whatsappAdmin(action: string, raw: unknown) {
   );
   if (action === "test") {
     const { mobile } = z.object({ mobile: z.string().max(40) }).parse(raw);
-    return whatsapp("test", { destination: normalizePhone(mobile) });
+    return whatsapp("test", { destination: normalizePhone(mobile), storeUrl: getStoreUrl() });
   }
-  return whatsapp(action, action === "status" ? undefined : {});
+  if (action === "status") {
+    if (!process.env.WHATSAPP_SERVICE_URL || !process.env.WHATSAPP_SERVICE_TOKEN) {
+      return {
+        status: "NOT_CONFIGURED",
+        diagnostic: "WhatsApp service is not configured. Contact the store administrator.",
+        qr: null,
+        number: null,
+      };
+    }
+    try {
+      return await whatsapp("status");
+    } catch (e: any) {
+      return {
+        status: "UNREACHABLE",
+        diagnostic: e.message || "WhatsApp service is unreachable or restarting.",
+        qr: null,
+        number: null,
+      };
+    }
+  }
+  return whatsapp(action, {});
 }

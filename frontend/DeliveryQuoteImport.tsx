@@ -497,9 +497,25 @@ export default function DeliveryQuoteImport({
             }
           />
           {activeJobs.map((item) => (
-            <button key={item.id} onClick={() => void open(item.id)}>
-              {item.filename} · {item.status}
-            </button>
+            <div key={item.id} style={{ display: "flex", gap: "4px" }}>
+              <button onClick={() => void open(item.id)}>
+                {item.filename} · {item.status}
+              </button>
+              <button
+                className="danger outline"
+                title={t("Delete file", "حذف الملف")}
+                onClick={() =>
+                  void run(async () => {
+                    if (!await showConfirm(t("Delete this file?", "حذف هذا الملف؟"))) return;
+                    await api(`delivery-quote-imports/${item.id}`, "DELETE");
+                    if (job?.id === item.id) setJob(null);
+                    setActiveJobs((curr) => curr.filter((j) => j.id !== item.id));
+                  })
+                }
+              >
+                X
+              </button>
+            </div>
           ))}
           {!activeJobs.length && (
             <div className="muted">

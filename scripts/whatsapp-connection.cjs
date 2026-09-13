@@ -1,5 +1,5 @@
 // One owner per Chromium session. Dependencies are injected for lifecycle tests.
-function createConnection({ createClient, encodeQr, clearSession = async () => {}, now = Date.now, startupMs = 90000 }) {
+function createConnection({ createClient, encodeQr, onMessage, clearSession = async () => {}, now = Date.now, startupMs = 90000 }) {
   let client, generation = 0, qrGeneration = 0, timer, cleanup = Promise.resolve();
   let state = { status: "DISCONNECTED", qr: null, qrExpiresAt: null, number: null, diagnostic: null };
   const clear = () => { clearTimeout(timer); timer = undefined; };
@@ -57,6 +57,16 @@ function createConnection({ createClient, encodeQr, clearSession = async () => {
         if (epoch !== generation) return;
         reset("READY"); state.number = current.info?.wid?.user || null;
       });
+      if (onMessage) {
+        current.on("message", async msg => {
+          if (epoch !== generation || state.status !== "READY") return;
+          try {
+            await onMessage(msg, current);
+          } catch (err) {
+            console.error("WhatsApp message handler error:", err);
+          }
+        });
+      }
       current.on("auth_failure", () => fail("Session authentication failed. Disconnect to clear the saved session, then connect and scan again."));
       current.on("disconnected", () => {
         if (epoch !== generation) return;

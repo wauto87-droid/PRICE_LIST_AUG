@@ -12,11 +12,9 @@ const processingStates = new Set(["UPLOADED", "PROCESSING"]);
 const actionableStates = new Set(["AWAITING_MAPPING", "READY"]);
 
 export default function SalesPriceCheck({ t }: { t: Translate }) {
-  const [tab, setTab] = useState<"CHECKS" | "HISTORICAL">("CHECKS");
   const [reports, setReports] = useState<any[]>([]);
-  const [historicalLists, setHistoricalLists] = useState<any[]>([]);
   const [report, setReport] = useState<any>(null);
-  const [mapping, setMapping] = useState({ partNumber: "", salesPrice: "", description: "", saleDate: "", historicalListId: "" });
+  const [mapping, setMapping] = useState({ partNumber: "", salesPrice: "" });
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState("ALL");
   const [query, setQuery] = useState("");
@@ -26,10 +24,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
   const [error, setError] = useState("");
   const [exports, setExports] = useState<any[]>([]);
 
-  const load = () => {
-    api("historical-prices").then(setHistoricalLists);
-    return api("sales-price-checks").then(setReports);
-  };
+  const load = () => api("sales-price-checks").then(setReports);
   const open = async (
     id: string,
     p = 0,
@@ -64,17 +59,6 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
               "unitprice",
               "price",
             ]),
-            description: autoMap(nextReport.columns || [], [
-              "description",
-              "itemname",
-              "title",
-            ]),
-            saleDate: autoMap(nextReport.columns || [], [
-              "saledate",
-              "invoicedate",
-              "date",
-            ]),
-            historicalListId: "",
           },
     );
   };
@@ -150,13 +134,6 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
       ? "—"
       : Number(value).toFixed(2);
 
-  const discountDisplay = (value: unknown) => {
-    if (value === null || value === undefined || value === "") return "—";
-    const num = Number(value);
-    if (num < 0) return `+${Math.abs(num).toFixed(2)}% ${t("Markup", "زيادة")}`;
-    return `${num.toFixed(2)}%`;
-  };
-
   const phaseLabel = (phase?: string) => {
     if (phase === "READING")
       return t("Reading spreadsheet", "جارٍ قراءة الملف");
@@ -220,41 +197,24 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
         </div>
       </div>
 
-      <div className="actions wrap" style={{ marginBottom: "1rem" }}>
-        {[
-          ["CHECKS", "Checks", "الفحوصات"],
-          ["HISTORICAL", "Historical Lists", "قوائم التاريخ"],
-        ].map(([key, en, ar]) => (
-          <button
-            key={key}
-            className={tab === key ? "primary" : ""}
-            onClick={() => setTab(key as typeof tab)}
-          >
-            {t(en, ar)}
-          </button>
-        ))}
-      </div>
+      <form
+        className="actions wrap sales-check-toolbar sales-check-upload-bar"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const form = new FormData(e.currentTarget);
+          run(async () => {
+            const created = await api("sales-price-checks", "POST", form);
+            await open(created.id);
+          });
+        }}
+      >
+        <input name="file" type="file" accept=".xls,.xlsx,.csv" required />
+        <button className="primary" disabled={busy}>
+          {t("Upload sales file", "رفع ملف المبيعات")}
+        </button>
+      </form>
 
       {error && <div className="notice error">{error}</div>}
-
-      {tab === "CHECKS" && (
-        <>
-          <form
-            className="actions wrap sales-check-toolbar sales-check-upload-bar"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = new FormData(e.currentTarget);
-              run(async () => {
-                const created = await api("sales-price-checks", "POST", form);
-                await open(created.id);
-              });
-            }}
-          >
-            <input name="file" type="file" accept=".xls,.xlsx,.csv" required />
-            <button className="primary" disabled={busy}>
-              {t("Upload sales file", "رفع ملف المبيعات")}
-            </button>
-          </form>
 
       <div className="job-list sales-check-report-list">
         {reports.map((item) => (
@@ -417,8 +377,6 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                     "Sales price before VAT",
                     "سعر البيع قبل الضريبة",
                   ],
-                  ["description", "Description", "الوصف"],
-                  ["saleDate", "Sale date (Optional)", "تاريخ البيع (اختياري)"],
                 ].map(([key, en, ar]) => (
                   <label key={key}>
                     {t(en, ar)}
@@ -437,22 +395,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                   </label>
                 ))}
               </div>
-              <div className="mapping-grid" style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
-                <label>
-                  {t("Compare with Historical Prices (Optional)", "مقارنة مع الأسعار التاريخية (اختياري)")}
-                  <select
-                    disabled={busy || reportRunning}
-                    value={(mapping as any).historicalListId || ""}
-                    onChange={(e) => setMapping({ ...mapping, historicalListId: e.target.value })}
-                  >
-                    <option value="">{t("Use current app prices", "استخدام أسعار التطبيق الحالية")}</option>
-                    {historicalLists.map((l) => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="actions wrap" style={{ marginTop: "1rem" }}>
+              <div className="actions wrap">
                 <button
                   className="primary"
                   disabled={!canAnalyze}
@@ -701,7 +644,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                           {money(row.list_price)}
                         </td>
                         <td data-label="Discount %" className="number-cell">
-                          {discountDisplay(row.discount_percent)}
+                          {money(row.discount_percent)}
                         </td>
                         <td data-label="Item Check">
                           <span
@@ -766,158 +709,6 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
               </div>
             </>
           )}
-        </section>
-      )}
-      </>
-      )}
-
-      {tab === "HISTORICAL" && (
-        <HistoricalPrices t={t} run={run} busy={busy} />
-      )}
-    </div>
-  );
-}
-
-function HistoricalPrices({ t, run, busy }: { t: Translate, run: any, busy: boolean }) {
-  const [lists, setLists] = useState<any[]>([]);
-  const [mappingId, setMappingId] = useState("");
-  const [mappingCols, setMappingCols] = useState<string[]>([]);
-  const [mappingName, setMappingName] = useState("");
-  const [mapping, setMapping] = useState({ partNumber: "", validFrom: "", validTo: "", price: "" });
-
-  const load = () => api("historical-prices").then(setLists);
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  return (
-    <div className="historical-prices-section">
-      {!mappingId ? (
-        <>
-          <form
-            className="actions wrap sales-check-toolbar sales-check-upload-bar"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = new FormData(e.currentTarget);
-              run(async () => {
-                const res = await api("historical-prices", "POST", form);
-                setMappingId(res.id);
-                setMappingCols(res.columns);
-                setMappingName(res.name);
-                setMapping({
-                  partNumber: autoMap(res.columns, ["itemcode", "partnumber", "part"]),
-                  validFrom: autoMap(res.columns, ["validfrom", "fromdate", "start"]),
-                  validTo: autoMap(res.columns, ["validto", "todate", "end"]),
-                  price: autoMap(res.columns, ["price", "salesprice", "amount"]),
-                });
-              });
-            }}
-          >
-            <input name="file" type="file" accept=".xls,.xlsx,.csv" required />
-            <button className="primary" disabled={busy}>
-              {t("Upload historical prices", "رفع أسعار تاريخية")}
-            </button>
-          </form>
-
-          <div className="table-scroll" style={{ marginTop: "1rem" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("Name", "الاسم")}</th>
-                  <th>{t("Entries", "الإدخالات")}</th>
-                  <th>{t("Created", "تاريخ الإنشاء")}</th>
-                  <th>{t("Actions", "الإجراءات")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lists.length === 0 && (
-                  <tr>
-                    <td colSpan={4} style={{ textAlign: "center", padding: "2rem" }}>
-                      {t("No historical lists uploaded yet.", "لم يتم رفع قوائم تاريخية بعد.")}
-                    </td>
-                  </tr>
-                )}
-                {lists.map((l) => (
-                  <tr key={l.id}>
-                    <td>{l.name}</td>
-                    <td>{l.count}</td>
-                    <td>{new Date(l.created_at).toLocaleString()}</td>
-                    <td>
-                      <button
-                        className="danger small"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            if (confirm("Are you sure?")) {
-                              await api(`historical-prices/${l.id}`, "DELETE");
-                              await load();
-                            }
-                          })
-                        }
-                      >
-                        {t("Delete", "حذف")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      ) : (
-        <section className="card inset-card sales-check-shell">
-          <div className="sales-check-report-head">
-            <div>
-              <h3>{mappingName} - {t("Column Mapping", "ربط الأعمدة")}</h3>
-            </div>
-            <div className="actions wrap">
-              <button disabled={busy} onClick={() => setMappingId("")}>
-                {t("Cancel", "إلغاء")}
-              </button>
-            </div>
-          </div>
-          <div className="sales-check-setup">
-            <div className="mapping-grid">
-              {[
-                ["partNumber", "Part number", "رقم الصنف"],
-                ["price", "Price", "السعر"],
-                ["validFrom", "Valid from (Optional)", "صالح من (اختياري)"],
-                ["validTo", "Valid to (Optional)", "صالح إلى (اختياري)"],
-              ].map(([key, en, ar]) => (
-                <label key={key}>
-                  {t(en, ar)}
-                  <select
-                    disabled={busy}
-                    value={(mapping as any)[key]}
-                    onChange={(e) =>
-                      setMapping({ ...mapping, [key]: e.target.value })
-                    }
-                  >
-                    <option value="">—</option>
-                    {mappingCols.map((column) => (
-                      <option key={column}>{column}</option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="actions wrap">
-              <button
-                className="primary"
-                disabled={busy || !mapping.partNumber || !mapping.price}
-                onClick={() =>
-                  run(async () => {
-                    await api(`historical-prices/${mappingId}?action=map`, "POST", mapping);
-                    setMappingId("");
-                    await load();
-                  })
-                }
-              >
-                {t("Save mapping", "حفظ الربط")}
-              </button>
-            </div>
-          </div>
         </section>
       )}
     </div>

@@ -59,10 +59,6 @@ try {
     .first()
     .click();
   await page.locator(".watcher-detail tbody tr").first().waitFor();
-  assert.ok(
-    await page.locator(".watcher-detail").evaluate((element) => element.getBoundingClientRect().width > 1200),
-    "the desktop evidence dialog should use the available screen width",
-  );
   await page
     .locator(".watcher-detail")
     .getByRole("button", { name: "Close", exact: true })

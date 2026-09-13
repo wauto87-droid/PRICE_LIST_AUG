@@ -1,4 +1,4 @@
-import { normalizePhone, whatsapp } from "./whatsapp";
+import { normalizePhone, whatsapp, getStoreUrl } from "./whatsapp";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { z } from "zod";
@@ -299,7 +299,7 @@ export async function requestOtp(db: DB, raw: unknown) {
     assert(!previous?.sent_at || Date.now()-new Date(previous.sent_at).getTime()>=60000,429,"Wait 60 seconds before requesting another code");
     const code=String(randomInt(100000,1000000)),id=randomUUID();
     if(data.channel === "WHATSAPP") {
-      if(process.env.NODE_ENV !== "test" || process.env.WHATSAPP_SERVICE_URL) await whatsapp("send",{destination,code,purpose:data.purpose});
+      if(process.env.NODE_ENV !== "test" || process.env.WHATSAPP_SERVICE_URL) await whatsapp("send",{destination,code,purpose:data.purpose,storeUrl:getStoreUrl()});
     } else if(process.env.OTP_PROVIDER_URL) {
       const res=await fetch(process.env.OTP_PROVIDER_URL,{method:"POST",signal:AbortSignal.timeout(15000),headers:{"content-type":"application/json",authorization:`Bearer ${process.env.OTP_PROVIDER_TOKEN ?? ""}`},body:JSON.stringify({destination,channel:data.channel,code})});
       assert(res.ok,503,"Unable to send verification code");

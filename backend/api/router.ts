@@ -18,6 +18,7 @@ import * as discountRequests from "../discount-requests/service";
 import * as imports from "../imports/service";
 import { basicImportTemplate } from "../imports/basic-templates";
 import * as salesChecks from "../sales-checks/service";
+import * as historicalPrices from "../historical-prices/service";
 import * as quantityFinder from "../quantity-finder/service";
 import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
@@ -229,6 +230,25 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             z.string().min(5).parse(url.searchParams.get("id")),
           ),
         );
+      if (id === "bot" && action === "track-order" && method === "POST") {
+        const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
+        const order = await one(db, `
+          SELECT o.number, o.status, o.totals, o.fulfillment_method, o.created_at, jsonb_array_length(o.lines) as item_count
+          FROM ecommerce_orders o
+          WHERE lower(o.number) = lower($1) OR o.number ILIKE '%' || $1
+          ORDER BY o.created_at DESC LIMIT 1
+        `, [d.query]);
+        if (!order) return response({ found: false });
+        return response({
+          found: true,
+          number: order.number,
+          status: order.status,
+          totals: order.totals,
+          fulfillmentMethod: order.fulfillment_method,
+          itemCount: Number(order.item_count) || 0,
+          createdAt: order.created_at,
+        });
+      }
     }
     if (root === "customer-quotation" && id) {
       await auth.throttle(db, `customer-quotation:${id}`, 120);
@@ -1506,6 +1526,29 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(await imports.reopen(db, actor, id, await body(req)));
         if (action === "delete" && method === "POST")
           return response(await imports.deleteImport(db, actor, id));
+      }
+    }
+    if (root === "historical-prices") {
+      if (!id && method === "GET") {
+        return response(await historicalPrices.list(db, actor));
+      }
+      if (!id && method === "POST") {
+        const bytes = await readLimited(
+          req,
+          (Number(process.env.UPLOAD_MAX_MB || 20) + 1) * 1024 * 1024,
+        );
+        const form = await new Response(new Uint8Array(bytes), {
+          headers: { "Content-Type": req.headers.get("content-type") ?? "" },
+        }).formData();
+        const file = form.get("file");
+        assert(file instanceof File, 400, "Select a file");
+        return response(await historicalPrices.upload(db, actor, file));
+      }
+      if (id) {
+        if (!action && method === "DELETE")
+          return response(await historicalPrices.remove(db, actor, id));
+        if (action === "map" && method === "POST")
+          return response(await historicalPrices.mapAndSave(db, actor, id, await body(req)));
       }
     }
     if (root === "sales-price-checks") {

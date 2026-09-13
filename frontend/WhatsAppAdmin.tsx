@@ -10,6 +10,7 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
     [notice, setNotice] = useState("");
   const generation = useRef(0),
     actionPending = useRef(false),
+    refreshing = useRef(false),
     mounted = useRef(false);
   const unavailable = (message: string) => ({
     status: /authentication/i.test(message)
@@ -20,28 +21,47 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
     qr: null,
   });
   async function refresh() {
-    if (actionPending.current) return;
+    if (actionPending.current || refreshing.current) return;
+    refreshing.current = true;
     const current = ++generation.current;
     try {
       const result = await api("storefront-admin/whatsapp/status");
       if (!mounted.current || current !== generation.current) return;
       setState(result);
       setError("");
-    } catch (e) {
+    } catch (e: any) {
       if (!mounted.current || current !== generation.current) return;
-      setError((e as Error).message);
-      setState(unavailable((e as Error).message));
+      const msg = e?.message || "";
+      const friendly = e?.status === 502 || /502|page instead/i.test(msg)
+        ? t("WhatsApp service is restarting. Retrying...", "خدمة واتساب قيد إعادة التشغيل. جارٍ المحاولة...")
+        : msg;
+      setError(friendly);
+      setState(unavailable(msg));
+    } finally {
+      refreshing.current = false;
     }
   }
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    const timer = setInterval(() => void refresh(), 2500);
+    let pollInterval = 3000;
+    let pollTimer: ReturnType<typeof setTimeout>;
+
+    function schedulePoll() {
+      if (!mounted.current) return;
+      const status = state?.status;
+      pollInterval = status === "READY" ? 10000 : status === "STARTING" || status === "QR" ? 3000 : 5000;
+      pollTimer = setTimeout(() => {
+        void refresh().finally(schedulePoll);
+      }, pollInterval);
+    }
+    schedulePoll();
+
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       mounted.current = false;
       ++generation.current;
-      clearInterval(timer);
+      clearTimeout(pollTimer);
       clearInterval(clock);
     };
   }, []);
@@ -88,6 +108,14 @@ export default function WhatsAppAdmin({ t }: { t: Translate }) {
         {state?.status || t("Loading…", "جارٍ التحميل…")}{" "}
         {state?.number ? `(+${state.number})` : ""}
       </p>
+      {state?.status === "READY" && (
+        <p className="notice success" role="status">
+          {t(
+            "🟢 Connected: WhatsApp Bot is active and answering customers automatically (catalog lookup, price search, order tracking, and RFQs).",
+            "🟢 متصل: بوت واتساب الذكي نشط ويعمل تلقائياً للرد على العملاء، البحث في المنتجات والأسعار، تتبع الطلبات، واستقبال طلبات التسعير.",
+          )}
+        </p>
+      )}
       {state?.diagnostic && <p role="status">{state.diagnostic}</p>}
       {state?.status === "STARTING" && (
         <p>

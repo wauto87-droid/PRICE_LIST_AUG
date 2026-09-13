@@ -474,7 +474,6 @@ export default function Cart({
         let price = null;
         let livePriceError = "";
         if (
-          String(input.description ?? "").trim() &&
           decimalPattern.test(quantity) &&
           decimalPattern.test(discount) &&
           Number(discount) <= 100 &&

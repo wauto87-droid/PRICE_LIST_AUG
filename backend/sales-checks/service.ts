@@ -170,8 +170,10 @@ export async function analyze(
       version: z.coerce.number().int(),
       partNumber: z.string().min(1),
       salesPrice: z.string().min(1),
+      saleDate: z.string().optional(),
+      historicalListId: z.string().uuid().optional().or(z.literal("")),
     })
-    .strict()
+    .passthrough()
     .parse(input);
   return db.transaction(async (tx) => {
     const report = await one(
@@ -185,7 +187,9 @@ export async function analyze(
       "Report is not ready for mapping",
     );
     assert(report.version === data.version, 409, "Report changed. Reload");
-    for (const column of [data.partNumber, data.salesPrice])
+    const requiredCols = [data.partNumber, data.salesPrice];
+    if (data.saleDate) requiredCols.push(data.saleDate);
+    for (const column of requiredCols)
       assert(
         report.columns.includes(column),
         400,
@@ -255,6 +259,8 @@ export async function processAnalysis(
       version: z.coerce.number().int(),
       partNumber: z.string().min(1),
       salesPrice: z.string().min(1),
+      saleDate: z.string().optional(),
+      historicalListId: z.string().uuid().optional().or(z.literal("")),
     })
     .passthrough()
     .parse(report.mapping);
@@ -269,6 +275,19 @@ export async function processAnalysis(
         `SELECT p.id,p.part_number,p.normalized_part,p.description,p.version,p.active,l.list_price::text AS list_price FROM products p JOIN product_pricing pp ON pp.product_id=p.id LEFT JOIN product_selling_levels l ON l.product_id=p.id AND l.code=pp.default_level`,
       )
     ).rows;
+    let historicalEntries: any[] = [];
+    if (data.historicalListId) {
+      historicalEntries = (
+        await tx.query("SELECT * FROM historical_price_entries WHERE list_id=$1", [
+          data.historicalListId,
+        ])
+      ).rows;
+    }
+    const historicalByLoose = new Map<string, any[]>();
+    for (const entry of historicalEntries) {
+      const key = loose(entry.part_number);
+      historicalByLoose.set(key, [...(historicalByLoose.get(key) || []), entry]);
+    }
     const aliases = (
       await tx.query("SELECT a.product_id,a.normalized FROM product_aliases a")
     ).rows;
@@ -350,19 +369,19 @@ export async function processAnalysis(
           if (!source) {
             status = "INVALID";
             error = "Part number is blank";
-          } else if (!candidates.length) {
-            status = "UNMATCHED";
-            error = "No catalog product matched this part number";
           } else if (candidates.length > 1) {
             status = "AMBIGUOUS";
             error =
               "More than one catalog product matches this normalized part number";
-          } else {
+          } else if (candidates.length === 1) {
             product = candidates[0];
             if (!product.active) {
               status = "INVALID";
               error = "Matched product is inactive";
             }
+          } else if (!data.historicalListId) {
+            status = "UNMATCHED";
+            error = "No catalog product matched this part number";
           }
           try {
             sale = decimal(raw[data.salesPrice], "Sales price");
@@ -373,12 +392,49 @@ export async function processAnalysis(
           let listPrice: Decimal | null = null,
             listTotal: Decimal | null = null,
             actualTotal: Decimal | null = null,
-            discount: Decimal | null = null;
-          if (status === "MATCHED" && product && sale) {
-            listPrice = new Decimal(product.list_price || 0);
-            if (!listPrice.gt(0)) {
-              status = "INVALID";
-              error = "Matched product has no positive public list price";
+            discount: Decimal | null = null,
+            matchedPart = product?.part_number ?? null,
+            description = product?.description ?? null;
+          if (status === "MATCHED" && sale) {
+            if (data.historicalListId) {
+              const hCandidates = historicalByLoose.get(loose(source)) || (product ? historicalByLoose.get(loose(product.part_number)) : []) || [];
+              let matchedEntry = null;
+              let sDate: Date | null = null;
+              if (data.saleDate && raw[data.saleDate]) {
+                  sDate = new Date(raw[data.saleDate]);
+              }
+              for (const entry of hCandidates) {
+                let inRange = true;
+                if (sDate && !isNaN(sDate.getTime())) {
+                    if (entry.valid_from && new Date(entry.valid_from) > sDate) inRange = false;
+                    if (entry.valid_to && new Date(entry.valid_to) < sDate) inRange = false;
+                }
+                if (inRange) {
+                    matchedEntry = entry;
+                    break;
+                }
+              }
+              if (matchedEntry) {
+                 listPrice = new Decimal(matchedEntry.price);
+                 if (!product) {
+                     matchedPart = matchedEntry.part_number;
+                     description = "Historical list item";
+                 }
+              }
+            }
+
+            if (!listPrice && product && product.id) {
+               listPrice = new Decimal(product.list_price || 0);
+            }
+
+            if (!listPrice || !listPrice.gt(0)) {
+              if (data.historicalListId) {
+                 status = "UNMATCHED";
+                 error = "No valid historical price found for this part number and date";
+              } else {
+                 status = "INVALID";
+                 error = "Matched product has no positive public list price";
+              }
             } else {
               listTotal = listPrice.toDecimalPlaces(2);
               actualTotal = sale.toDecimalPlaces(2);
@@ -404,8 +460,8 @@ export async function processAnalysis(
             sales_price: sale?.toString() ?? null,
             product_id: product?.id ?? null,
             product_version: product?.version ?? null,
-            matched_part: product?.part_number ?? null,
-            description: product?.description ?? null,
+            matched_part: matchedPart,
+            description: description,
             list_price: listPrice?.toString() ?? null,
             list_total: listTotal?.toFixed(2) ?? null,
             actual_total: actualTotal?.toFixed(2) ?? null,

@@ -46,7 +46,7 @@ const unresolvedImportedCustomLineInput = z
   .object({
     type: z.literal("CUSTOM"),
     partNumber: z.string().trim().max(100).default(""),
-    description: z.string().trim().min(1).max(1000),
+    description: z.string().trim().max(1000).default(""),
     unit: z.string().trim().min(1).max(20).default("pcs"),
     quantity: decimal,
     unitPriceExcl: z
