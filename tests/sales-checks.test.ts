@@ -12,7 +12,7 @@ import {
   sessionCookie,
 } from "../backend/auth/service";
 import { saveProduct } from "../backend/products/service";
-import { analyze, get, processAnalysis } from "../backend/sales-checks/service";
+import { analyze, get, mapRow, processAnalysis } from "../backend/sales-checks/service";
 import {
   exportSalesCheckXlsx,
   salesCheckHtml,
@@ -228,6 +228,46 @@ test("Sales price check preserves lines, loosely matches punctuation, and export
   const html = await salesCheckHtml(db, reportId);
   assert.match(html, /LC1 \. D09/);
   assert.match(html, /Not matched item/);
+
+  const unmatchedRow = report.rows[3];
+  assert.equal(unmatchedRow.status, "UNMATCHED");
+  const mappedResult = await mapRow(db, actor, reportId, {
+    rowId: unmatchedRow.id,
+    productId: product.id,
+    scope: "ROW",
+    remember: true,
+  });
+  assert.equal(mappedResult.ok, true);
+  assert.equal(mappedResult.matchedPart, "LC1-D09");
+  assert.equal(mappedResult.summary.matchedRows, 3);
+  assert.equal(mappedResult.summary.unmatchedRows, 0);
+
+  const updatedReport = await get(db, actor, reportId, 0, 50, "ALL", "");
+  const updatedRow = updatedReport.rows.find((r: any) => r.id === unmatchedRow.id);
+  assert.equal(updatedRow.status, "MATCHED");
+  assert.equal(updatedRow.item_check, "Checked");
+  assert.equal(updatedRow.match_type, "ALIAS");
+  assert.equal(updatedRow.matched_part, "LC1-D09");
+  assert.equal(updatedRow.discount_percent, "90.000000");
+
+  const savedAlias: any = await one(db, "SELECT * FROM product_aliases WHERE normalized='UNKNOWN'");
+  assert.ok(savedAlias);
+  assert.equal(savedAlias.product_id, product.id);
+
+  // Re-run analysis on the report to verify the saved alias is automatically recognized!
+  await db.query("UPDATE jobs SET status='COMPLETED' WHERE payload->>'reportId'=$1", [reportId]);
+  const currentRep: any = await get(db, actor, reportId);
+  await analyze(db, actor, reportId, {
+    version: currentRep.version,
+    partNumber: "Item Code",
+    salesPrice: "Sales Price",
+  });
+  await processAnalysis(db, reportId, actor.id);
+  const reanalyzedReport = await get(db, actor, reportId, 0, 50, "ALL", "");
+  const reanalyzedRow = reanalyzedReport.rows.find((r: any) => r.row_number === 4);
+  assert.equal(reanalyzedRow.status, "MATCHED");
+  assert.equal(reanalyzedRow.match_type, "ALIAS");
+  assert.equal(reanalyzedRow.matched_part, "LC1-D09");
   if (process.env.SALES_CHECK_VISUAL_DIR) {
     await fs.mkdir(process.env.SALES_CHECK_VISUAL_DIR, { recursive: true });
     await fs.copyFile(

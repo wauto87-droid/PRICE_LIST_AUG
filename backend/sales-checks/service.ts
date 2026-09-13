@@ -7,6 +7,7 @@ import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
 import { audit, json } from "../core/audit";
 import { type Actor, requirePermission } from "../auth/service";
+import { normalizePart } from "../pricing/engine";
 
 const permission = (actor: Actor) =>
   requirePermission(actor, "SALES_PRICE_CHECK");
@@ -623,4 +624,256 @@ export async function remove(db: DB, actor: Actor, id: string) {
       { force: true },
     );
   return { ok: true };
+}
+
+export async function mapRow(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  permission(actor);
+  const data = z
+    .object({
+      rowId: z.string().uuid(),
+      productId: z.string().uuid(),
+      scope: z.enum(["ROW", "ALL_IDENTICAL"]).default("ROW"),
+      remember: z.boolean().default(true),
+    })
+    .strict()
+    .parse(input);
+
+  return db.transaction(async (tx) => {
+    const report = await one(
+      tx,
+      "SELECT * FROM sales_price_reports WHERE id=$1 FOR UPDATE",
+      [id],
+    );
+    assert(report, 404, "Sales price check not found");
+    assert(report.status === "READY", 409, "Report must be in READY state to map items");
+
+    const targetRow = await one(
+      tx,
+      "SELECT * FROM sales_price_rows WHERE id=$1 AND report_id=$2 FOR UPDATE",
+      [data.rowId, id],
+    );
+    assert(targetRow, 404, "Sales price check row not found");
+
+    const product = await one(
+      tx,
+      `SELECT p.id, p.part_number, p.normalized_part, p.description, p.version, p.active,
+              l.list_price::text AS list_price
+       FROM products p
+       JOIN product_pricing pp ON pp.product_id=p.id
+       LEFT JOIN product_selling_levels l ON l.product_id=p.id AND l.code=pp.default_level
+       WHERE p.id=$1`,
+      [data.productId],
+    );
+    assert(product, 404, "Catalog product not found");
+    assert(product.active, 400, "Selected product is inactive");
+
+    let listPriceNum: Decimal | null = null;
+    if (report.mapping?.historicalListId) {
+      const hEntries = (
+        await tx.query(
+          "SELECT * FROM historical_price_entries WHERE list_id=$1 AND part_number ILIKE $2",
+          [report.mapping.historicalListId, product.part_number],
+        )
+      ).rows;
+      if (hEntries.length > 0) {
+        listPriceNum = new Decimal(hEntries[0].price);
+      }
+    }
+
+    if (!listPriceNum && product.list_price) {
+      listPriceNum = new Decimal(product.list_price);
+    }
+    assert(
+      listPriceNum && listPriceNum.gt(0),
+      400,
+      "Matched product has no positive public list price",
+    );
+
+    const targetRows =
+      data.scope === "ALL_IDENTICAL" && targetRow.source_part
+        ? (
+            await tx.query(
+              "SELECT * FROM sales_price_rows WHERE report_id=$1 AND source_part=$2 FOR UPDATE",
+              [id, targetRow.source_part],
+            )
+          ).rows
+        : [targetRow];
+
+    for (const r of targetRows as any[]) {
+      let sale: Decimal | null = null;
+      try {
+        if (r.sales_price) sale = new Decimal(r.sales_price);
+      } catch {}
+
+      let discount: Decimal | null = null;
+      let listTotal: Decimal | null = null;
+      let actualTotal: Decimal | null = null;
+      if (sale && sale.isFinite()) {
+        listTotal = listPriceNum.toDecimalPlaces(2);
+        actualTotal = sale.toDecimalPlaces(2);
+        discount = listPriceNum
+          .sub(sale)
+          .div(listPriceNum)
+          .mul(100)
+          .toDecimalPlaces(6);
+      }
+
+      await tx.query(
+        `UPDATE sales_price_rows
+         SET product_id=$2,
+             product_version=$3,
+             matched_part=$4,
+             description=$5,
+             list_price=$6,
+             list_total=$7,
+             actual_total=$8,
+             discount_percent=$9,
+             match_type='ALIAS',
+             status='MATCHED',
+             error=NULL
+         WHERE id=$1`,
+        [
+          r.id,
+          product.id,
+          product.version,
+          product.part_number,
+          product.description,
+          listPriceNum.toString(),
+          listTotal?.toFixed(2) ?? null,
+          actualTotal?.toFixed(2) ?? null,
+          discount?.toString() ?? null,
+        ],
+      );
+    }
+
+    if (data.remember && targetRow.source_part) {
+      const normalized = normalizePart(targetRow.source_part);
+      const existing = await one(
+        tx,
+        "SELECT * FROM product_aliases WHERE normalized=$1 FOR UPDATE",
+        [normalized],
+      );
+      if (!existing) {
+        await tx.query(
+          "INSERT INTO product_aliases(normalized,product_id,label,kind,created_by,updated_by) VALUES($1,$2,$3,'DELIVERY_NOTE',$4,$4)",
+          [normalized, product.id, targetRow.source_part, actor.id],
+        );
+        await audit(
+          tx,
+          actor.id,
+          "PRODUCT_ALIAS_ADD",
+          "products",
+          product.id,
+          null,
+          {
+            alias: targetRow.source_part,
+            kind: "DELIVERY_NOTE",
+            partNumber: product.part_number,
+            source: "SALES_PRICE_CHECK",
+          },
+        );
+      } else if (existing.product_id !== product.id) {
+        await tx.query(
+          "UPDATE product_aliases SET product_id=$2,label=$3,updated_by=$4,updated_at=now(),version=version+1 WHERE normalized=$1",
+          [normalized, product.id, targetRow.source_part, actor.id],
+        );
+        await audit(
+          tx,
+          actor.id,
+          "PRODUCT_ALIAS_REASSIGN",
+          "products",
+          product.id,
+          existing,
+          {
+            alias: targetRow.source_part,
+            productId: product.id,
+            source: "SALES_PRICE_CHECK",
+          },
+        );
+      }
+    }
+
+    const summary = {
+      totalRows: Number(
+        (
+          await one(
+            tx,
+            "SELECT count(*)::int AS c FROM sales_price_rows WHERE report_id=$1",
+            [id],
+          )
+        )?.c || 0,
+      ),
+      matchedRows: Number(
+        (
+          await one(
+            tx,
+            "SELECT count(*)::int AS c FROM sales_price_rows WHERE report_id=$1 AND status='MATCHED'",
+            [id],
+          )
+        )?.c || 0,
+      ),
+      unmatchedRows: Number(
+        (
+          await one(
+            tx,
+            "SELECT count(*)::int AS c FROM sales_price_rows WHERE report_id=$1 AND status='UNMATCHED'",
+            [id],
+          )
+        )?.c || 0,
+      ),
+      ambiguousRows: Number(
+        (
+          await one(
+            tx,
+            "SELECT count(*)::int AS c FROM sales_price_rows WHERE report_id=$1 AND status='AMBIGUOUS'",
+            [id],
+          )
+        )?.c || 0,
+      ),
+      invalidRows: Number(
+        (
+          await one(
+            tx,
+            "SELECT count(*)::int AS c FROM sales_price_rows WHERE report_id=$1 AND status='INVALID'",
+            [id],
+          )
+        )?.c || 0,
+      ),
+    };
+
+    await tx.query(
+      "UPDATE sales_price_reports SET summary=$2,version=version+1,updated_at=now() WHERE id=$1",
+      [id, json(summary)],
+    );
+
+    await audit(
+      tx,
+      actor.id,
+      "SALES_PRICE_CHECK_MAP_ROW",
+      "sales_price_reports",
+      id,
+      null,
+      {
+        rowId: data.rowId,
+        productId: product.id,
+        partNumber: product.part_number,
+        sourcePart: targetRow.source_part,
+        updatedCount: targetRows.length,
+        scope: data.scope,
+        remember: data.remember,
+      },
+    );
+
+    return {
+      ok: true,
+      updatedCount: targetRows.length,
+      matchedPart: product.part_number,
+      summary,
+    };
+  });
 }

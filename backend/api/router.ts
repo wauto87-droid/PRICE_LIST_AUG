@@ -1596,6 +1596,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await salesChecks.analyze(db, actor, id, await body(req)),
           );
+        if (action === "map-row" && method === "POST")
+          return response(
+            await salesChecks.mapRow(db, actor, id, await body(req)),
+          );
         if (action === "excel" && method === "POST")
           return response(await salesChecks.queueExport(db, actor, id, "XLSX"));
         if (action === "pdf" && method === "POST")

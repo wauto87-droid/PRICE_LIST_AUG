@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
 import { salesCheckMatchLabel, salesCheckReasonLabel, salesCheckStatusLabel } from "../shared/sales-check-labels";
+import SalesCheckCatalogResolver from "./SalesCheckCatalogResolver";
 
 const autoMap = (columns: string[], names: string[]) =>
   columns.find((c) =>
@@ -24,7 +25,19 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
   const [sort, setSort] = useState("ROW_ASC");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [mappingRow, setMappingRow] = useState<any>(null);
   const [exports, setExports] = useState<any[]>([]);
+
+  const identicalCount = useMemo(() => {
+    if (!mappingRow || !report?.rows) return 1;
+    const target = String(mappingRow.source_part || "").trim().toLowerCase();
+    if (!target) return 1;
+    const matching = report.rows.filter(
+      (r: any) => String(r.source_part || "").trim().toLowerCase() === target,
+    );
+    return Math.max(1, matching.length);
+  }, [mappingRow, report?.rows]);
 
   const load = () => {
     api("historical-prices").then(setHistoricalLists);
@@ -236,6 +249,32 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
       </div>
 
       {error && <div className="notice error">{error}</div>}
+      {notice && (
+        <div
+          className="notice success"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            style={{
+              minHeight: "auto",
+              padding: "2px 8px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "14px",
+            }}
+            onClick={() => setNotice("")}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {tab === "CHECKS" && (
         <>
@@ -257,34 +296,114 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
           </form>
 
       <div className="job-list sales-check-report-list">
-        {reports.map((item) => (
-          <button
-            key={item.id}
-            className={[
-              report?.id === item.id ? "active" : "",
-              processingStates.has(item.status) ? "processing" : "",
-              item.status === "READY" ? "ready" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={() => open(item.id)}
-          >
-            <div className="sales-check-report-list-head">
-              <strong>{item.filename}</strong>
-              <span
-                className={`pill sales-check-status-pill ${reportStatusTone(item.status)}`}
-              >
-                {item.status}
-              </span>
+        {reports.map((item) => {
+          const isActive = report?.id === item.id;
+          const isProcessing = processingStates.has(item.status);
+          const isReady = item.status === "READY";
+          const isAwaiting = item.status === "AWAITING_MAPPING";
+          const isFailed = item.status === "FAILED";
+
+          const pillClass = isReady
+            ? "sales-check-pill-ready"
+            : isAwaiting
+            ? "sales-check-pill-awaiting_mapping"
+            : isProcessing
+            ? "sales-check-pill-processing"
+            : isFailed
+            ? "sales-check-pill-failed"
+            : "";
+
+          return (
+            <div
+              key={item.id}
+              role="button"
+              tabIndex={0}
+              className={[
+                "sales-check-report-card",
+                isActive ? "active" : "",
+                isProcessing ? "processing" : "",
+                isReady ? "ready" : "",
+                isAwaiting ? "awaiting-mapping" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => open(item.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  open(item.id);
+                }
+              }}
+            >
+              {isActive && (
+                <div className="sales-check-card-active-indicator">
+                  {t("Active", "نشط")}
+                </div>
+              )}
+              <div className="sales-check-card-header">
+                <div className="sales-check-card-title">
+                  <span className="sales-check-card-icon" aria-hidden="true">
+                    📊
+                  </span>
+                  <span
+                    className="sales-check-card-filename"
+                    title={item.filename}
+                  >
+                    {item.filename}
+                  </span>
+                </div>
+                <span className={`sales-check-card-pill ${pillClass}`}>
+                  {item.status}
+                </span>
+              </div>
+
+              <div className="sales-check-card-body">
+                <span className="sales-check-card-date">
+                  📅 {new Date(item.created_at).toLocaleDateString()}
+                </span>
+                {item.summary?.totalRows !== undefined && (
+                  <span className="sales-check-card-stats">
+                    {t(
+                      `${item.summary.matchedRows ?? 0}/${item.summary.totalRows} matched`,
+                      `مطابق ${item.summary.matchedRows ?? 0}/${item.summary.totalRows}`,
+                    )}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="sales-check-card-delete-btn"
+                  title={t("Delete report", "حذف التقرير")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (
+                      window.confirm(
+                        t(
+                          `Delete report "${item.filename}"?`,
+                          `هل تريد حذف تقرير "${item.filename}"؟`,
+                        ),
+                      )
+                    ) {
+                      run(async () => {
+                        await api(`sales-price-checks/${item.id}`, "DELETE");
+                        if (report?.id === item.id) {
+                          setReport(null);
+                        }
+                      });
+                    }
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {isProcessing && (
+                <small className="sales-check-report-list-meta">
+                  ⏳ {phaseLabel(item.progress?.phase)}
+                </small>
+              )}
             </div>
-            <small>{new Date(item.created_at).toLocaleString()}</small>
-            {processingStates.has(item.status) && (
-              <small className="sales-check-report-list-meta">
-                {phaseLabel(item.progress?.phase)}
-              </small>
-            )}
-          </button>
-        ))}
+          );
+        })}
       </div>
 
       {report && (
@@ -673,6 +792,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                       <th className="status-cell">
                         {t("Status / reason", "الحالة / السبب")}
                       </th>
+                      <th className="action-cell">{t("Action", "الإجراء")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -734,6 +854,27 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                             </details>
                           </div>
                         </td>
+                        <td data-label={t("Action", "الإجراء")} className="action-cell">
+                          {row.product_id ? (
+                            <button
+                              type="button"
+                              className="sales-check-remap-btn"
+                              title={t("Remap or change product", "تغيير الصنف المرتبط")}
+                              onClick={() => setMappingRow(row)}
+                            >
+                              ✏️ {t("Change", "تعديل")}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="sales-check-map-btn"
+                              title={t("Map to catalog product", "ربط بصنف من الكتالوج")}
+                              onClick={() => setMappingRow(row)}
+                            >
+                              🔍 {t("Map item", "ربط الصنف")}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -773,6 +914,25 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
 
       {tab === "HISTORICAL" && (
         <HistoricalPrices t={t} run={run} busy={busy} />
+      )}
+
+      {mappingRow && report && (
+        <SalesCheckCatalogResolver
+          t={t}
+          reportId={report.id}
+          row={mappingRow}
+          identicalCount={identicalCount}
+          onClose={() => setMappingRow(null)}
+          onSuccess={(count, matchedPart) => {
+            setNotice(
+              t(
+                `Successfully mapped ${count} item(s) to "${matchedPart}".`,
+                `تم ربط ${count} صنف بالصنف "${matchedPart}" بنجاح.`,
+              ),
+            );
+            open(report.id, page, filter, query, minDiscount, sort);
+          }}
+        />
       )}
     </div>
   );
