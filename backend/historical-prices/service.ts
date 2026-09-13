@@ -23,7 +23,7 @@ export async function upload(db: DB, actor: Actor, file: File) {
   // We parse the file synchronously since it's just to get columns and row count
   const book = new ExcelJS.Workbook();
   if (ext === ".csv") await book.csv.read(Buffer.from(bytes) as any);
-  else await book.xlsx.load(Buffer.from(bytes));
+  else await book.xlsx.load(Buffer.from(bytes) as any);
   
   const sheet = book.worksheets[0];
   assert(sheet, 400, "Workbook is empty");
@@ -41,8 +41,14 @@ export async function upload(db: DB, actor: Actor, file: File) {
   const id = randomUUID();
   const name = path.basename(file.name, ext);
   
+  const dir = path.resolve(
+    process.env.UPLOAD_DIR || ".data/uploads",
+    "historical-prices"
+  );
+  await fs.mkdir(dir, { recursive: true });
+
   const target = path.join(dir, id + ext);
-  await fs.writeFile(target, Buffer.from(bytes), {
+  await fs.writeFile(target, Buffer.from(bytes) as any, {
     flag: "wx",
     mode: 0o600,
   });

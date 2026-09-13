@@ -509,7 +509,7 @@ export default function DeliveryQuoteImport({
                     if (!await showConfirm(t("Delete this file?", "حذف هذا الملف؟"))) return;
                     await api(`delivery-quote-imports/${item.id}`, "DELETE");
                     if (job?.id === item.id) setJob(null);
-                    setActiveJobs((curr) => curr.filter((j) => j.id !== item.id));
+                    setJobs((curr: any[]) => curr.filter((j: any) => j.id !== item.id));
                   })
                 }
               >
