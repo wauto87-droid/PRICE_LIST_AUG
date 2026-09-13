@@ -1,7 +1,7 @@
 CREATE TABLE historical_price_lists (
   id uuid PRIMARY KEY,
   name text NOT NULL,
-  owner_id uuid NOT NULL REFERENCES auth_users(id),
+  owner_id uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
