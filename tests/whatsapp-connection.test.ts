@@ -168,3 +168,8 @@ test("handleBotMessage responds with menu and options", async () => {
   assert.equal(sent.length, 5);
   assert.match(sent[4].text, /خدمة العملاء/);
 });
+
+test("isEntrypoint is false when imported as a module in tests", () => {
+  const { isEntrypoint } = createRequire(import.meta.url)("../scripts/whatsapp-service.cjs");
+  assert.equal(isEntrypoint, false);
+});

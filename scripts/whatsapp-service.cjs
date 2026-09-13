@@ -6,8 +6,13 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const sessionDirectory = path.resolve(process.env.WHATSAPP_SESSION_DIR || "/data/whatsapp");
 
+const isEntrypoint =
+  require.main === module ||
+  Boolean(process.env.pm_id || process.env.pm_exec_path) ||
+  Boolean(require.main && /pm2|ProcessContainer/i.test(require.main.filename));
+
 const secret = process.env.WHATSAPP_SERVICE_TOKEN;
-if ((!secret || secret.length < 32) && require.main === module)
+if ((!secret || secret.length < 32) && isEntrypoint)
   throw new Error(
     "Set WHATSAPP_SERVICE_TOKEN to at least 32 random characters",
   );
@@ -377,7 +382,11 @@ const connection = createConnection({
     puppeteer: {
       headless: true,
       executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || require("playwright").chromium.executablePath(),
-      args: process.env.WHATSAPP_NO_SANDBOX === "true" ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
+      args: [
+        ...(process.env.WHATSAPP_NO_SANDBOX === "true" ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
     },
   }),
 });
@@ -452,7 +461,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (require.main === module) {
+if (isEntrypoint) {
   server.listen(Number(process.env.WHATSAPP_PORT || 3010), process.env.WHATSAPP_BIND_HOST || "127.0.0.1");
   void connection.connect();
   const shutdown = async () => {
@@ -469,4 +478,5 @@ module.exports = {
   translateOrderStatus,
   handleBotMessage,
   getStoreUrl,
+  isEntrypoint,
 };
