@@ -157,11 +157,15 @@ export function StoreAccount({
   changed,
   close,
   t,
+  navigate,
+  config,
 }: {
   account: any;
   changed: (a: any) => void;
   close: () => void;
   t: Translate;
+  navigate?: (panel: string) => void;
+  config?: any;
 }) {
   const [mode, setMode] = useState("login"),
     [email, setEmail] = useState(""),
@@ -257,7 +261,6 @@ export function StoreAccount({
           <div className="sf-tabs" style={{ marginBottom: "1rem" }}>
             <button onClick={() => setAccountTab("overview")} className={accountTab === "overview" ? "active" : ""}>{t("Overview", "نظرة عامة")}</button>
             <button onClick={() => setAccountTab("orders")} className={accountTab === "orders" ? "active" : ""}>{t("Orders", "الطلبات")}</button>
-            <button onClick={() => setAccountTab("security")} className={accountTab === "security" ? "active" : ""}>{t("Security", "الأمان")}</button>
           </div>
           
           {accountTab === "overview" && (
@@ -272,6 +275,19 @@ export function StoreAccount({
                   ? t("Credit terms enabled", "شروط الائتمان مفعّلة")
                   : t("Pay per order", "الدفع لكل طلب")}
               </p>
+              <div style={{ margin: "2rem 0", display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-start" }}>
+                <button className="sf-text-button" onClick={() => { close(); navigate?.("receipts"); }}>
+                  {t("Track your orders (Receipts)", "تتبع طلباتك (الإيصالات)")}
+                </button>
+                {config?.businessEnabled && (
+                  <button className="sf-text-button" onClick={() => { close(); navigate?.("business"); }}>
+                    {t(
+                      "Company portal · Request our best price",
+                      "بوابة الشركات · اطلب أفضل أسعارنا",
+                    )}
+                  </button>
+                )}
+              </div>
               <button
                 onClick={async () => {
                   try {
@@ -315,11 +331,8 @@ export function StoreAccount({
                   </tbody>
                 </table>
               )}
-            </div>
-          )}
-
-          {accountTab === "security" && (
-            <div>
+              
+              <hr style={{ margin: "2rem 0", borderColor: "var(--border)" }} />
               <h3>{t("Change Password", "تغيير كلمة المرور")}</h3>
               <form className="sf-form" onSubmit={async (e) => {
                 e.preventDefault();

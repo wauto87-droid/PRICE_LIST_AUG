@@ -360,19 +360,7 @@ export default function Storefront() {
           </button>
         </nav>
       </header>
-      <div className="sf-business-bar">
-        <button onClick={() => setPanel("receipts")}>
-          {t("Your orders", "طلباتك")}
-        </button>
-        {config?.businessEnabled && (
-          <button onClick={() => setPanel(account ? "business" : "account")}>
-            {t(
-              "Company portal · Request our best price",
-              "بوابة الشركات · اطلب أفضل أسعارنا",
-            )}
-          </button>
-        )}
-      </div>
+
       <datalist id="store-search-suggestions">
         {suggestions.map((p) => (
           <option key={p.id} value={p.part_number}>
@@ -905,6 +893,8 @@ export default function Storefront() {
           }}
           t={t}
           close={() => setPanel("")}
+          navigate={(p) => setPanel(p)}
+          config={config}
         />
       )}
       {panel === "payment" && (
