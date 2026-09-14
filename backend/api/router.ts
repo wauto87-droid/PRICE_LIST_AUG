@@ -179,9 +179,11 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           });
         }
         if (action === "orders" && method === "GET") {
+          if (!account) throw new AppError(401, "Unauthenticated");
           return response(await storefront.customerOrders(db, account));
         }
         if (action === "password" && method === "POST") {
+          if (!account) throw new AppError(401, "Unauthenticated");
           return response(await storefront.changePassword(db, account, await body(req)));
         }
       }
