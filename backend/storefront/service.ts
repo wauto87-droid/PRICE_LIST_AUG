@@ -1432,8 +1432,8 @@ export async function updateAccount(
   });
 }
 
-export async function customerOrders(db: DB, account: Actor) {
-  requirePermission(account, "storefront:self");
+export async function customerOrders(db: DB, account: any) {
+  assert(account?.id, 401, "Unauthenticated");
   return (
     await db.query(
       "SELECT id, number, status, totals, created_at FROM ecommerce_orders WHERE customer_account_id=$1 ORDER BY created_at DESC LIMIT 50",
@@ -1442,8 +1442,8 @@ export async function customerOrders(db: DB, account: Actor) {
   ).rows;
 }
 
-export async function changePassword(db: DB, account: Actor, raw: unknown) {
-  requirePermission(account, "storefront:self");
+export async function changePassword(db: DB, account: any, raw: unknown) {
+  assert(account?.id, 401, "Unauthenticated");
   const data = z
     .object({
       currentPassword: z.string().max(128),
