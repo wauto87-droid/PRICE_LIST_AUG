@@ -291,6 +291,7 @@ const userSchema = z
     maxDiscount: percent.nullable().default(null),
     disabled: z.boolean().default(false),
     password: passwordSchema.optional(),
+    phone: z.string().trim().max(30).nullable().optional(),
   })
   .strict();
 export async function saveUser(
@@ -317,7 +318,7 @@ export async function saveUser(
     const before = id
       ? await one(
           tx,
-          "SELECT id,username,name,role_id,permissions,max_discount,disabled FROM users WHERE id=$1",
+          "SELECT id,username,name,role_id,permissions,max_discount,disabled,phone FROM users WHERE id=$1",
           [id],
         )
       : null;
@@ -326,7 +327,7 @@ export async function saveUser(
     const uid = id ?? randomUUID();
     if (id) {
       await tx.query(
-        "UPDATE users SET username=$2,name=$3,role_id=$4,permissions=$5,max_discount=$6,disabled=$7 WHERE id=$1",
+        "UPDATE users SET username=$2,name=$3,role_id=$4,permissions=$5,max_discount=$6,disabled=$7,phone=$8 WHERE id=$1",
         [
           id,
           data.username,
@@ -335,6 +336,7 @@ export async function saveUser(
           data.permissions,
           data.maxDiscount,
           data.disabled,
+          data.phone || null,
         ],
       );
       if (data.password)
@@ -345,7 +347,7 @@ export async function saveUser(
       await tx.query("DELETE FROM sessions WHERE user_id=$1", [id]);
     } else
       await tx.query(
-        "INSERT INTO users(id,username,name,role_id,permissions,max_discount,disabled,password_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+        "INSERT INTO users(id,username,name,role_id,permissions,max_discount,disabled,password_hash,phone) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         [
           uid,
           data.username,
@@ -355,6 +357,7 @@ export async function saveUser(
           data.maxDiscount,
           data.disabled,
           await hash(data.password!),
+          data.phone || null,
         ],
       );
     const { password, ...safe } = data;

@@ -1769,6 +1769,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       maxDiscount: null,
                       disabled: false,
                       password: "",
+                      phone: "",
                     })
                   }
                 >
@@ -1778,6 +1779,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   <thead>
                     <tr>
                       <th>{t("Name", "الاسم")}</th>
+                      <th>{t("Phone / WhatsApp", "الجوال / الواتساب")}</th>
                       <th>{t("Role", "الدور")}</th>
                       <th>{t("Status", "الحالة")}</th>
                       <th></th>
@@ -1789,6 +1791,15 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         <td>
                           {u.name}
                           <small>{u.username}</small>
+                        </td>
+                        <td>
+                          {u.phone ? (
+                            <span style={{ direction: "ltr", display: "inline-block" }}>
+                              {u.phone}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--muted, #888)" }}>—</span>
+                          )}
                         </td>
                         <td>{u.role_id}</td>
                         <td>
@@ -1807,6 +1818,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                 permissions: u.permissions,
                                 maxDiscount: u.max_discount,
                                 disabled: u.disabled,
+                                phone: u.phone || "",
                               })
                             }
                           >
@@ -2088,6 +2100,10 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 {section === "users" && (
                   <>
                     {editField("username", t("Username", "اسم المستخدم"))}
+                    {editField(
+                      "phone",
+                      t("Phone / Mobile (WhatsApp)", "رقم الجوال / الواتساب"),
+                    )}
                     {editField(
                       "password",
                       t(

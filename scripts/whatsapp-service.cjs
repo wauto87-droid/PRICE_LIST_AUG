@@ -103,6 +103,54 @@ function translateOrderStatus(status) {
   }
 }
 
+function getMainMenu(isEn, storeUrl) {
+  return isEn ? `⚡ *Welcome to AMT Electrical Supplies* ⚡
+────────────────────────────
+We are happy to serve you! Your trusted destination for electrical equipment, breakers, cables, and project solutions in KSA 🇸🇦
+
+How can we assist you today? Please select a service number:
+
+1️⃣  🛒 *Store & Catalog*
+2️⃣  🔍 *Search Products & Prices*
+3️⃣  📦 *Track Your Order*
+4️⃣  📋 *Request Quotation / RFQ*
+5️⃣  📍 *Location & Hours*
+6️⃣  💬 *Contact Sales / Support*
+
+────────────────────────────
+💡 *Send a number (1 - 6) or type any product name or order number.*
+🌐 *Language: Send 'lang' or '00' to change language.*` : `⚡ *أهلاً بك في شركة إيه إم تي للمواد الكهربائية* ⚡
+────────────────────────────
+يسعدنا خدمتك! وجهتك الموثوقة للمعدات الكهربائية، القواطع، الكابلات، وحلول المشاريع المعتمدة في المملكة العربية السعودية 🇸🇦
+
+الرجاء اختيار رقم الخدمة المطلوبة:
+
+1️⃣  🛒 *المتجر وتصفح المنتجات*
+2️⃣  🔍 *البحث عن صنف وسعر*
+3️⃣  📦 *تتبع حالة طلبك*
+4️⃣  📋 *طلب تسعيرة كميات / مشاريع*
+5️⃣  📍 *موقعنا ومواعيد العمل*
+6️⃣  💬 *التواصل مع خدمة العملاء*
+
+────────────────────────────
+💡 *أرسل رقم الخيار (1 - 6) أو اكتب اسم الصنف أو رقم الطلب مباشرة!*
+🌐 *لتغيير اللغة: أرسل 'lang' أو '00'*`;
+}
+
+function getLanguagePrompt() {
+  return `⚡ *شركة إيه إم تي للمواد الكهربائية*
+*AMT Electrical Supplies*
+────────────────────────────
+🌐 *الرجاء اختيار اللغة / Please select your language:*
+
+1️⃣  العربية (Arabic) 🇸🇦
+2️⃣  English 🇬🇧
+
+💡 *أرسل 1 للغة العربية أو 2 للإنجليزية*
+💡 *Reply 1 for Arabic or 2 for English*
+────────────────────────────`;
+}
+
 async function handleBotMessage(msg, client) {
   try {
     if (!msg || msg.fromMe) return;
@@ -116,60 +164,143 @@ async function handleBotMessage(msg, client) {
     const storeUrl = getStoreUrl();
     const appInternalUrl = process.env.APP_INTERNAL_URL || "http://127.0.0.1:18180/amt_price_list/api/v1";
 
-    // STAFF PRICING COMMAND
+    // STAFF PRICING COMMAND (!partNumber [discount%])
     if (bodyText.startsWith("!")) {
-      const parts = bodyText.slice(1).split(" ");
-      const partNumber = parts[0];
-      const discountStr = parts.length > 1 ? parts[1].replace("%", "") : "0";
-      const discount = parseFloat(discountStr) || 0;
-      
+      let rawCmd = bodyText.slice(1).trim();
+      let discount = 0;
+      const discMatch = rawCmd.match(/(?:[\s%]+)(\d+(?:\.\d+)?)\s*%?$/);
+      if (discMatch) {
+        discount = parseFloat(discMatch[1]) || 0;
+        rawCmd = rawCmd.slice(0, discMatch.index).trim();
+      } else if (rawCmd.includes("%")) {
+        const p = rawCmd.split("%");
+        rawCmd = p[0].trim();
+        discount = parseFloat(p[1]) || 0;
+      }
+      const partNumber = rawCmd;
+
+      if (!partNumber) {
+        await client.sendMessage(sender, `⚠️ *صيغة أمر التسعير غير مكتملة | Incomplete Command*
+يرجى إرسال رقم الصنف مع نسبة الخصم الاختيارية، مثال:
+\`!LC1D09M7\`
+\`!LC1D09M7 10%\`
+\`!004701060 15%\``);
+        return;
+      }
+
+      const senderPhone = sender.replace(/@.*$/, "");
+
       try {
         const res = await fetch(`${appInternalUrl}/storefront/bot/price`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: partNumber })
+          body: JSON.stringify({ query: partNumber, senderPhone, discount })
         });
         const data = await res.json();
-        if (data.found) {
-          const price = parseFloat(data.priceExcl);
-          const discountedPrice = price * (1 - discount / 100);
-          const vat = parseFloat(data.vat) / 100;
-          const finalPrice = discountedPrice * (1 + vat);
-          const msgResponse = `*Price details for ${data.partNumber}*
-Original Price: ${price.toFixed(2)} SAR (excl. VAT)
-Discount Applied: ${discount}%
-Discounted Price: ${discountedPrice.toFixed(2)} SAR (excl. VAT)
-Final Price with ${data.vat}% VAT: ${finalPrice.toFixed(2)} SAR`;
-          await client.sendMessage(sender, msgResponse);
-        } else {
-          await client.sendMessage(sender, `Part number ${partNumber} not found.`);
+
+        if (data.authorized === false) {
+          await client.sendMessage(sender, `🔒 *أمر خاص بموظفي شركة إيه إم تي | AMT Staff Only*
+────────────────────────────
+⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) غير مسجل كموظف في نظام إيه إم تي.
+لإضافة رقمك وتفعيل صلاحية تسعير الموظفين، يرجى التواصل مع مدير النظام (Admin) لإضافة رقم جوالك في ملف المستخدم الخاص بك.
+
+⚠️ Your WhatsApp phone number (*+${senderPhone}*) is not registered in the AMT staff directory. Please contact your administrator to add your phone number in user management.`);
+          return;
         }
+
+        if (!data.found) {
+          await client.sendMessage(sender, `🔍 *بحث تسعيرة الموظفين | Staff Price Check*
+────────────────────────────
+❌ الصنف *${partNumber}* غير موجود في قاعدة بيانات المتجر أو غير نشط.
+يرجى التأكد من كتابة رقم الصنف أو البديل بشكل صحيح.
+Part number *${partNumber}* was not found.`);
+          return;
+        }
+
+        const staffName = data.staff ? data.staff.name : "AMT Staff";
+        const stockStr = (data.stock > 0) ? `✅ ${data.stock} ${data.unit || "حبة"}` : "⚠️ غير متوفر حالياً في المستودع";
+        const discAlert = !data.discountAllowed ? `\n⚠️ *تنبيه:* الخصم المطلوب (${discount}%) يتجاوز الحد المسموح لك (${data.staff?.maxDiscount}%).` : "";
+
+        const staffCard = `🏷️ *تفاصيل تسعيرة الصنف | Staff Price Details*
+────────────────────────────
+👤 *الموظف:* ${staffName}
+🔹 *رقم الصنف (Part No):* *${data.partNumber}*
+📌 *الوصف:* ${data.description || "—"}
+🏢 *الماركة:* ${data.brand || "—"}
+📦 *المخزون المتوفر:* ${stockStr}
+
+💵 *السعر الأساسي:* ${data.priceExcl} ريال (غير شامل)
+🏷️ *الخصم المُدخل:* ${discount}%${discAlert}
+💰 *السعر بعد الخصم:* ${data.discountedPrice} ريال (غير شامل)
+📑 *ضريبة القيمة المضافة (${data.vat}%):* ${data.vatAmount} ريال
+✨ *السعر النهائي للعميل:* *${data.finalPrice} ريال* (شامل الضريبة)
+${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريال` : ""}
+────────────────────────────
+💡 *للطلب أو الحجز أو إضافة تسعيرة، استخدم لوحة تحكم إيه إم تي الداخلية.*`;
+
+        await client.sendMessage(sender, staffCard);
       } catch (err) {
-        await client.sendMessage(sender, `Error fetching price for ${partNumber}.`);
+        console.error("Bot price command error:", err);
+        await client.sendMessage(sender, `❌ حدث خطأ أثناء جلب تسعيرة الصنف: ${partNumber}. يرجى المحاولة لاحقاً.`);
       }
       return;
     }
 
-    // LANGUAGE SELECTION LOGIC
-    if (lower === "english" || lower === "en") {
-      userLanguages[sender] = "en";
+    // LANGUAGE SWITCH COMMAND (ANYTIME)
+    if (["lang", "language", "لغة", "اللغة", "00", "تغيير اللغة"].includes(lower)) {
+      delete userLanguages[sender];
       saveLanguages();
-      await client.sendMessage(sender, "Language has been set to English. Send 'menu' to see options.");
-      return;
-    }
-    if (lower === "عربي" || lower === "ar" || lower === "arabic") {
-      userLanguages[sender] = "ar";
-      saveLanguages();
-      await client.sendMessage(sender, "تم اختيار اللغة العربية بنجاح. أرسل 'القائمة' لعرض الخيارات.");
+      await client.sendMessage(sender, getLanguagePrompt());
       return;
     }
 
-    const lang = userLanguages[sender];
+    // LANGUAGE SELECTION LOGIC
+    let lang = userLanguages[sender];
+
     if (!lang) {
-      await client.sendMessage(sender, `Please choose your language to continue / الرجاء اختيار اللغة للمتابعة\nType *English* for English\nاكتب *عربي* للغة العربية`);
+      if (["1", "١", "عربي", "ar", "arabic", "العربية"].includes(lower)) {
+        userLanguages[sender] = "ar";
+        saveLanguages();
+        await client.sendMessage(sender, "تم اختيار اللغة العربية بنجاح 🇸🇦");
+        await client.sendMessage(sender, getMainMenu(false, storeUrl));
+        return;
+      }
+      if (["2", "٢", "english", "en", "eng"].includes(lower)) {
+        userLanguages[sender] = "en";
+        saveLanguages();
+        await client.sendMessage(sender, "Language has been set to English 🇬🇧");
+        await client.sendMessage(sender, getMainMenu(true, storeUrl));
+        return;
+      }
+
+      // Check if it's an Arabic greeting, auto-set Arabic and show menu
+      const isArabicGreeting = ["مرحبا", "مرحباً", "اهلا", "أهلا", "هلا", "السلام عليكم", "سلام"].includes(lower);
+      if (isArabicGreeting) {
+        userLanguages[sender] = "ar";
+        saveLanguages();
+        await client.sendMessage(sender, getMainMenu(false, storeUrl));
+        return;
+      }
+
+      // Otherwise, show language prompt
+      await client.sendMessage(sender, getLanguagePrompt());
       return;
     }
-    
+
+    // Explicit language switch while already set
+    if (lower === "english" || lower === "en") {
+      userLanguages[sender] = "en";
+      saveLanguages();
+      await client.sendMessage(sender, "Language has been set to English 🇬🇧\n\n" + getMainMenu(true, storeUrl));
+      return;
+    }
+    if (lower === "عربي" || lower === "ar" || lower === "arabic" || lower === "العربية") {
+      userLanguages[sender] = "ar";
+      saveLanguages();
+      await client.sendMessage(sender, "تم اختيار اللغة العربية بنجاح 🇸🇦\n\n" + getMainMenu(false, storeUrl));
+      return;
+    }
+
     const isEn = lang === "en";
 
     // Handle document / media without text
@@ -188,36 +319,7 @@ ${storeUrl}/requirements
     const isGreeting = ["hi", "hello", "hey", "start", "menu", "مرحبا", "مرحباً", "اهلا", "أهلا", "هلا", "السلام عليكم", "سلام", "قائمة", "الرئيسية", "مساعدة", "help", "0"].includes(lower);
 
     if (isGreeting || !bodyText) {
-      const menu = isEn ? `⚡ *Welcome to AMT Electrical Supplies* ⚡
-────────────────────────────
-We are happy to serve you! Your trusted destination for electrical equipment, breakers, cables, and project solutions in KSA 🇸🇦
-
-How can we assist you today? Please select a service number:
-
-1️⃣  🛒 *Store & Catalog*
-2️⃣  🔍 *Search Products & Prices*
-3️⃣  📦 *Track Your Order*
-4️⃣  📋 *Request Quotation / RFQ*
-5️⃣  📍 *Location & Hours*
-6️⃣  💬 *Contact Sales / Support*
-
-────────────────────────────
-💡 *Send a number (1 - 6) or type any product name or order number.*` : `⚡ *أهلاً بك في شركة إيه إم تي للمواد الكهربائية* ⚡
-────────────────────────────
-يسعدنا خدمتك! وجهتك الموثوقة للمعدات الكهربائية، القواطع، الكابلات، وحلول المشاريع المعتمدة في المملكة العربية السعودية 🇸🇦
-
-الرجاء اختيار رقم الخدمة المطلوبة:
-
-1️⃣  🛒 *المتجر وتصفح المنتجات*
-2️⃣  🔍 *البحث عن صنف وسعر*
-3️⃣  📦 *تتبع حالة طلبك*
-4️⃣  📋 *طلب تسعيرة كميات / مشاريع*
-5️⃣  📍 *موقعنا ومواعيد العمل*
-6️⃣  💬 *التواصل مع خدمة العملاء*
-
-────────────────────────────
-💡 *أرسل رقم الخيار (1 - 6) أو اكتب اسم الصنف أو رقم الطلب مباشرة!*`;
-      await client.sendMessage(sender, menu);
+      await client.sendMessage(sender, getMainMenu(isEn, storeUrl));
       return;
     }
 
@@ -496,7 +598,9 @@ support@amtelectric.com | sales@amtelectric.com
                 const desc = item.description || item.part_number;
                 const part = item.part_number;
                 const itemSlug = item.slug || item.id;
-                searchResults += `${num} *${part}*\n📌 ${desc}\n🔗 ${storeUrl}/products/${itemSlug}\n\n`;
+                const price = item.priceIncl ? `${item.priceIncl} SAR` : (item.priceExcl ? `${item.priceExcl} SAR` : "");
+                const priceLine = price ? `💰 *${isEn ? "Price:" : "السعر:"}* ${price}\n` : "";
+                searchResults += `${num} *${part}*\n📌 ${desc}\n${priceLine}🔗 ${storeUrl}/products/${itemSlug}\n\n`;
               });
               searchResults += isEn ? `────────────────────────────
 🌐 *To browse all results and checkout:*

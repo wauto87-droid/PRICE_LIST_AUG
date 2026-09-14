@@ -34,6 +34,8 @@ import {
   calculate,
   calculateTargetPrice,
   lineInput,
+  normalizeLookupPart,
+  normalizePart,
   productInput,
   targetLineInput,
 } from "../pricing/engine";
@@ -258,19 +260,134 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         });
       }
       if (id === "bot" && action === "price" && method === "POST") {
-        const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
+        const d = z.object({
+          query: z.string().trim().min(1).max(100),
+          senderPhone: z.string().trim().optional(),
+          discount: z.coerce.number().min(0).max(100).optional().default(0),
+        }).parse(await body(req));
+
+        let staff: any = null;
+        if (d.senderPhone) {
+          const rawDigits = d.senderPhone.replace(/\D/g, "");
+          const last9 = rawDigits.slice(-9);
+          staff = await one(db, `
+            SELECT id, username, name, role_id, max_discount, phone
+            FROM users
+            WHERE NOT disabled AND phone IS NOT NULL AND (
+              phone = $1
+              OR regexp_replace(phone, '\\D', '', 'g') = $2
+              OR RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $3
+            )
+            LIMIT 1
+          `, [d.senderPhone, rawDigits, last9]);
+
+          if (!staff) {
+            return response({
+              authorized: false,
+              error: "UNAUTHORIZED_STAFF",
+              message: "Sender phone number is not registered to an active staff account."
+            });
+          }
+        }
+
+        const normalized = normalizePart(d.query);
+        const stripped = normalizeLookupPart(d.query);
+
         const product = await one(db, `
-          SELECT id, part_number, price_excl, vat 
-          FROM products 
-          WHERE part_number ILIKE $1 AND active = true
+          SELECT 
+            p.id, 
+            p.part_number, 
+            p.description,
+            p.unit,
+            b.name as brand,
+            pp.vat::text as vat,
+            pp.cost::text as cost,
+            COALESCE(
+              (SELECT CASE 
+                 WHEN l.method = 'FIXED' THEN l.fixed_price 
+                 WHEN l.method = 'COST_MARKUP' THEN pp.cost * (100 + l.markup) / 100 
+                 ELSE l.list_price * (100 - l.base_discount) / 100 
+               END 
+               FROM product_selling_levels l 
+               WHERE l.product_id = p.id AND l.active AND (l.code = pp.default_level OR l.code = 'RETAIL' OR l.code = 'END_CUSTOMER')
+               ORDER BY CASE WHEN l.code = pp.default_level THEN 0 WHEN l.code = 'RETAIL' THEN 1 ELSE 2 END 
+               LIMIT 1),
+              CASE 
+                WHEN pp.method = 'COST_MARKUP' THEN pp.cost * (100 + pp.markup) / 100 
+                ELSE pp.list_price * (100 - pp.base_discount) / 100 
+              END,
+              0
+            )::numeric(12,2) as price_excl,
+            COALESCE(
+              (SELECT sum(quantity) FROM inventory_movements m JOIN warehouses w ON w.id = m.warehouse_id WHERE m.product_id = p.id AND w.active AND m.kind NOT IN ('RESERVE','RELEASE')),
+              0
+            ) - COALESCE(
+              (SELECT sum(quantity) FROM stock_reservations r WHERE r.product_id = p.id AND r.status = 'ACTIVE'),
+              0
+            ) - COALESCE(
+              (SELECT sum(quantity) FROM commerce_holds h WHERE h.product_id = p.id AND h.status = 'ACTIVE'),
+              0
+            ) as stock_available
+          FROM products p
+          JOIN product_pricing pp ON pp.product_id = p.id
+          LEFT JOIN brands b ON b.id = p.brand_id
+          WHERE p.active AND (
+            lower(p.part_number) = lower($1)
+            OR p.normalized_part = $2
+            OR regexp_replace(p.normalized_part, '[\\s./_-]+', '', 'g') = $3
+            OR p.part_number ILIKE $1
+            OR p.part_number ILIKE $1 || '%'
+            OR p.part_number ILIKE '%' || $1 || '%'
+            OR EXISTS (
+              SELECT 1 FROM product_aliases a 
+              WHERE a.product_id = p.id 
+              AND (lower(a.label) = lower($1) OR a.normalized = $2 OR regexp_replace(a.normalized, '[\\s./_-]+', '', 'g') = $3)
+            )
+          )
+          ORDER BY 
+            CASE 
+              WHEN lower(p.part_number) = lower($1) THEN 0
+              WHEN p.normalized_part = $2 THEN 1
+              WHEN regexp_replace(p.normalized_part, '[\\s./_-]+', '', 'g') = $3 THEN 2
+              WHEN p.part_number ILIKE $1 || '%' THEN 3
+              ELSE 4
+            END
           LIMIT 1
-        `, [d.query]);
-        if (!product) return response({ found: false });
+        `, [d.query, normalized, stripped]);
+
+        if (!product) return response({ found: false, authorized: true, partNumber: d.query });
+
+        const priceExcl = Number(product.price_excl) || 0;
+        const discount = Math.min(100, Math.max(0, Number(d.discount) || 0));
+        const discountedPrice = priceExcl * (1 - discount / 100);
+        const vatRate = Number(product.vat) || 15;
+        const vatAmount = discountedPrice * (vatRate / 100);
+        const finalPrice = discountedPrice + vatAmount;
+        const maxDisc = staff?.max_discount != null ? Number(staff.max_discount) : null;
+        const discountAllowed = maxDisc == null || discount <= maxDisc;
+
         return response({
+          authorized: true,
           found: true,
+          staff: staff ? {
+            name: staff.name,
+            username: staff.username,
+            role: staff.role_id,
+            maxDiscount: staff.max_discount,
+          } : null,
           partNumber: product.part_number,
-          priceExcl: product.price_excl,
-          vat: product.vat
+          description: product.description,
+          brand: product.brand,
+          unit: product.unit,
+          priceExcl: priceExcl.toFixed(2),
+          cost: product.cost ? Number(product.cost).toFixed(2) : null,
+          requestedDiscount: discount,
+          discountAllowed,
+          discountedPrice: discountedPrice.toFixed(2),
+          vat: vatRate,
+          vatAmount: vatAmount.toFixed(2),
+          finalPrice: finalPrice.toFixed(2),
+          stock: Number(product.stock_available) || 0,
         });
       }
     }
@@ -2005,7 +2122,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           method === "GET"
             ? (
                 await db.query(
-                  "SELECT id,username,name,role_id,permissions,max_discount,disabled FROM users ORDER BY username",
+                  "SELECT id,username,name,role_id,permissions,max_discount,disabled,phone FROM users ORDER BY username",
                 )
               ).rows
             : await admin.saveUser(
