@@ -178,6 +178,12 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             "Set-Cookie": storefront.accountSessionCookie(""),
           });
         }
+        if (action === "orders" && method === "GET") {
+          return response(await storefront.customerOrders(db, account));
+        }
+        if (action === "password" && method === "POST") {
+          return response(await storefront.changePassword(db, account, await body(req)));
+        }
       }
       if (id === "products" && action && method === "GET")
         return response(
@@ -247,6 +253,21 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           fulfillmentMethod: order.fulfillment_method,
           itemCount: Number(order.item_count) || 0,
           createdAt: order.created_at,
+        });
+      if (id === "bot" && action === "price" && method === "POST") {
+        const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
+        const product = await one(db, `
+          SELECT id, part_number, price_excl, vat 
+          FROM products 
+          WHERE part_number ILIKE $1 AND active = true
+          LIMIT 1
+        `, [d.query]);
+        if (!product) return response({ found: false });
+        return response({
+          found: true,
+          partNumber: product.part_number,
+          priceExcl: product.price_excl,
+          vat: product.vat
         });
       }
     }

@@ -171,7 +171,22 @@ export function StoreAccount({
     [verification, setVerification] = useState<any>(),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [accountTab, setAccountTab] = useState("overview"),
+    [orders, setOrders] = useState<any[]>([]),
+    [ordersLoaded, setOrdersLoaded] = useState(false),
+    [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
+
+  useEffect(() => {
+    if (accountTab === "orders" && !ordersLoaded) {
+      api("storefront/account/orders", "GET")
+        .then((res) => {
+          setOrders(res || []);
+          setOrdersLoaded(true);
+        })
+        .catch((e) => setError(e.message));
+    }
+  }, [accountTab, ordersLoaded]);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -239,29 +254,98 @@ export function StoreAccount({
       {message && <p role="status">{message}</p>}
       {account ? (
         <div className="sf-account">
-          <h3>{account.name || account.email}</h3>
-          <p>{account.email}</p>
-          <p>
-            {t("Price level", "مستوى السعر")}: {account.price_level || "RETAIL"}
-          </p>
-          <p>
-            {account.credit_enabled
-              ? t("Credit terms enabled", "شروط الائتمان مفعّلة")
-              : t("Pay per order", "الدفع لكل طلب")}
-          </p>
-          <button
-            onClick={async () => {
-              try {
-                await api("storefront/account/logout", "POST", {});
-                changed(null);
-                close();
-              } catch (e) {
-                setError((e as Error).message);
-              }
-            }}
-          >
-            {t("Sign out", "تسجيل الخروج")}
-          </button>
+          <div className="sf-tabs" style={{ marginBottom: "1rem" }}>
+            <button onClick={() => setAccountTab("overview")} className={accountTab === "overview" ? "active" : ""}>{t("Overview", "نظرة عامة")}</button>
+            <button onClick={() => setAccountTab("orders")} className={accountTab === "orders" ? "active" : ""}>{t("Orders", "الطلبات")}</button>
+            <button onClick={() => setAccountTab("security")} className={accountTab === "security" ? "active" : ""}>{t("Security", "الأمان")}</button>
+          </div>
+          
+          {accountTab === "overview" && (
+            <div>
+              <h3>{account.name || account.email}</h3>
+              <p>{account.email}</p>
+              <p>
+                {t("Price level", "مستوى السعر")}: {account.price_level || "RETAIL"}
+              </p>
+              <p>
+                {account.credit_enabled
+                  ? t("Credit terms enabled", "شروط الائتمان مفعّلة")
+                  : t("Pay per order", "الدفع لكل طلب")}
+              </p>
+              <button
+                onClick={async () => {
+                  try {
+                    await api("storefront/account/logout", "POST", {});
+                    changed(null);
+                    close();
+                  } catch (e) {
+                    setError((e as Error).message);
+                  }
+                }}
+              >
+                {t("Sign out", "تسجيل الخروج")}
+              </button>
+            </div>
+          )}
+
+          {accountTab === "orders" && (
+            <div>
+              <h3>{t("Recent Orders", "أحدث الطلبات")}</h3>
+              {orders.length === 0 ? (
+                <p>{ordersLoaded ? t("No orders found.", "لا توجد طلبات.") : t("Loading...", "جاري التحميل...")}</p>
+              ) : (
+                <table className="sf-table">
+                  <thead>
+                    <tr>
+                      <th>{t("Order #", "رقم الطلب")}</th>
+                      <th>{t("Date", "التاريخ")}</th>
+                      <th>{t("Status", "الحالة")}</th>
+                      <th>{t("Total", "الإجمالي")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((o) => (
+                      <tr key={o.id}>
+                        <td>{o.number}</td>
+                        <td>{new Date(o.created_at).toLocaleDateString()}</td>
+                        <td>{o.status}</td>
+                        <td>{o.totals?.total} {o.totals?.currency}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {accountTab === "security" && (
+            <div>
+              <h3>{t("Change Password", "تغيير كلمة المرور")}</h3>
+              <form className="sf-form" onSubmit={async (e) => {
+                e.preventDefault();
+                setError(""); setMessage(""); setBusy(true);
+                try {
+                  await api("storefront/account/password", "POST", passwordForm);
+                  setMessage(t("Password changed successfully.", "تم تغيير كلمة المرور بنجاح."));
+                  setPasswordForm({ currentPassword: "", newPassword: "" });
+                } catch (err: any) {
+                  setError(err.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}>
+                <label>
+                  {t("Current Password", "كلمة المرور الحالية")}
+                  <input type="password" required value={passwordForm.currentPassword} onChange={e => setPasswordForm(f => ({ ...f, currentPassword: e.target.value }))} />
+                </label>
+                <label>
+                  {t("New Password", "كلمة المرور الجديدة")}
+                  <input type="password" required minLength={8} value={passwordForm.newPassword} onChange={e => setPasswordForm(f => ({ ...f, newPassword: e.target.value }))} />
+                </label>
+                <button type="submit" disabled={busy}>{t("Change Password", "تغيير كلمة المرور")}</button>
+              </form>
+            </div>
+          )}
         </div>
       ) : (
         <>

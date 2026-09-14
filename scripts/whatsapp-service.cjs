@@ -6,6 +6,13 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const sessionDirectory = path.resolve(process.env.WHATSAPP_SESSION_DIR || "/data/whatsapp");
 
+let userLanguages = {};
+const langFilePath = path.join(sessionDirectory, "languages.json");
+fs.readFile(langFilePath, "utf8").then(data => {
+  try { userLanguages = JSON.parse(data); } catch(e){}
+}).catch(()=>{});
+const saveLanguages = () => fs.writeFile(langFilePath, JSON.stringify(userLanguages)).catch(()=>{});
+
 const isEntrypoint =
   require.main === module ||
   Boolean(process.env.pm_id || process.env.pm_exec_path) ||
@@ -109,6 +116,62 @@ async function handleBotMessage(msg, client) {
     const storeUrl = getStoreUrl();
     const appInternalUrl = process.env.APP_INTERNAL_URL || "http://127.0.0.1:18180/amt_price_list/api/v1";
 
+    // STAFF PRICING COMMAND
+    if (bodyText.startsWith("!")) {
+      const parts = bodyText.slice(1).split(" ");
+      const partNumber = parts[0];
+      const discountStr = parts.length > 1 ? parts[1].replace("%", "") : "0";
+      const discount = parseFloat(discountStr) || 0;
+      
+      try {
+        const res = await fetch(`${appInternalUrl}/storefront/bot/price`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: partNumber })
+        });
+        const data = await res.json();
+        if (data.found) {
+          const price = parseFloat(data.priceExcl);
+          const discountedPrice = price * (1 - discount / 100);
+          const vat = parseFloat(data.vat) / 100;
+          const finalPrice = discountedPrice * (1 + vat);
+          const msgResponse = `*Price details for ${data.partNumber}*
+Original Price: ${price.toFixed(2)} SAR (excl. VAT)
+Discount Applied: ${discount}%
+Discounted Price: ${discountedPrice.toFixed(2)} SAR (excl. VAT)
+Final Price with ${data.vat}% VAT: ${finalPrice.toFixed(2)} SAR`;
+          await client.sendMessage(sender, msgResponse);
+        } else {
+          await client.sendMessage(sender, `Part number ${partNumber} not found.`);
+        }
+      } catch (err) {
+        await client.sendMessage(sender, `Error fetching price for ${partNumber}.`);
+      }
+      return;
+    }
+
+    // LANGUAGE SELECTION LOGIC
+    if (lower === "english" || lower === "en") {
+      userLanguages[sender] = "en";
+      saveLanguages();
+      await client.sendMessage(sender, "Language has been set to English. Send 'menu' to see options.");
+      return;
+    }
+    if (lower === "عربي" || lower === "ar" || lower === "arabic") {
+      userLanguages[sender] = "ar";
+      saveLanguages();
+      await client.sendMessage(sender, "تم اختيار اللغة العربية بنجاح. أرسل 'القائمة' لعرض الخيارات.");
+      return;
+    }
+
+    const lang = userLanguages[sender];
+    if (!lang) {
+      await client.sendMessage(sender, `Please choose your language to continue / الرجاء اختيار اللغة للمتابعة\nType *English* for English\nاكتب *عربي* للغة العربية`);
+      return;
+    }
+    
+    const isEn = lang === "en";
+
     // Handle document / media without text
     if (msg.hasMedia && !bodyText) {
       await client.sendMessage(sender, `📄 *شكراً لإرسال الملف! | Document Received*
@@ -125,30 +188,60 @@ ${storeUrl}/requirements
     const isGreeting = ["hi", "hello", "hey", "start", "menu", "مرحبا", "مرحباً", "اهلا", "أهلا", "هلا", "السلام عليكم", "سلام", "قائمة", "الرئيسية", "مساعدة", "help", "0"].includes(lower);
 
     if (isGreeting || !bodyText) {
-      const menu = `⚡ *أهلاً بك في شركة إيه إم تي للمواد الكهربائية*
-*Welcome to AMT Electrical Supplies* ⚡
+      const menu = isEn ? `⚡ *Welcome to AMT Electrical Supplies* ⚡
+────────────────────────────
+We are happy to serve you! Your trusted destination for electrical equipment, breakers, cables, and project solutions in KSA 🇸🇦
+
+How can we assist you today? Please select a service number:
+
+1️⃣  🛒 *Store & Catalog*
+2️⃣  🔍 *Search Products & Prices*
+3️⃣  📦 *Track Your Order*
+4️⃣  📋 *Request Quotation / RFQ*
+5️⃣  📍 *Location & Hours*
+6️⃣  💬 *Contact Sales / Support*
+
+────────────────────────────
+💡 *Send a number (1 - 6) or type any product name or order number.*` : `⚡ *أهلاً بك في شركة إيه إم تي للمواد الكهربائية* ⚡
 ────────────────────────────
 يسعدنا خدمتك! وجهتك الموثوقة للمعدات الكهربائية، القواطع، الكابلات، وحلول المشاريع المعتمدة في المملكة العربية السعودية 🇸🇦
 
-How can we assist you today? الرجاء اختيار رقم الخدمة المطلوبة:
+الرجاء اختيار رقم الخدمة المطلوبة:
 
-1️⃣  🛒 *المتجر وتصفح المنتجات | Store & Catalog*
-2️⃣  🔍 *البحث عن صنف وسعر | Search Products & Prices*
-3️⃣  📦 *تتبع حالة طلبك | Track Your Order*
-4️⃣  📋 *طلب تسعيرة كميات / مشاريع | Request Quotation / RFQ*
-5️⃣  📍 *موقعنا ومواعيد العمل | Location & Hours*
-6️⃣  💬 *التواصل مع خدمة العملاء | Contact Sales / Support*
+1️⃣  🛒 *المتجر وتصفح المنتجات*
+2️⃣  🔍 *البحث عن صنف وسعر*
+3️⃣  📦 *تتبع حالة طلبك*
+4️⃣  📋 *طلب تسعيرة كميات / مشاريع*
+5️⃣  📍 *موقعنا ومواعيد العمل*
+6️⃣  💬 *التواصل مع خدمة العملاء*
 
 ────────────────────────────
-💡 *أرسل رقم الخيار (1 - 6) أو اكتب اسم الصنف أو رقم الطلب مباشرة!*
-💡 *Send a number (1 - 6) or type any product name or order number.*`;
+💡 *أرسل رقم الخيار (1 - 6) أو اكتب اسم الصنف أو رقم الطلب مباشرة!*`;
       await client.sendMessage(sender, menu);
       return;
     }
 
     // 2. OPTION 1: Store & Catalog
     if (["1", "متجر", "المتجر", "كتالوج", "الكتالوج", "منتجات", "المنتجات", "store", "catalog", "shop", "products", "رابط"].includes(lower)) {
-      const catalogMsg = `🛒 *متجر إيه إم تي الإلكتروني | AMT Online Store*
+      const catalogMsg = isEn ? `🛒 *AMT Online Store*
+────────────────────────────
+Browse over 40,000 certified electrical products with competitive prices and fast delivery to all KSA regions:
+
+🔗 *Direct Store Link:*
+${storeUrl}
+
+✨ *Main Categories:*
+🔹 *Circuit Breakers & Switches*
+🔹 *Cables & Wires*
+🔹 *Distribution Boards & Panels*
+🔹 *Industrial & Architectural Lighting*
+🔹 *Conduits & Accessories*
+🔹 *Transformers & Power Supplies*
+
+🏷️ *Certified Brands:*
+Schneider Electric, ABB, Legrand, Al-Fanar, Siemens, Riyadh Cables.
+
+💡 *To search for any product by name or part number, send it here directly!*` : `🛒 *متجر إيه إم تي الإلكتروني*
 ────────────────────────────
 تصفح أكثر من 40,000 صنف كهربائي معتمد بأسعار منافسة وتوصيل سريع لجميع مدن ومناطق المملكة:
 
@@ -156,12 +249,12 @@ How can we assist you today? الرجاء اختيار رقم الخدمة ال�
 ${storeUrl}
 
 ✨ *أبرز الأقسام المتوفرة:*
-🔹 *القواطع والمفاتيح الكهربائية* (Circuit Breakers, Contactors, Isolators)
-🔹 *الكابلات والأسلاك النحاسية* (Riyadh Cables, Bahra, Al Fanar)
-🔹 *لوحات التوزيع وأنظمة التحكم* (Distribution Boards & Panels)
-🔹 *الإنارة الصناعية والمعمارية* (LED, Floodlights, Panels)
-🔹 *مواسير التمديدات والإكسسوارات* (PVC & EMT Conduits, Trunks)
-🔹 *محولات ومولدات ومغذيات طاقة* (Transformers & Power Supplies)
+🔹 *القواطع والمفاتيح الكهربائية*
+🔹 *الكابلات والأسلاك النحاسية*
+🔹 *لوحات التوزيع وأنظمة التحكم*
+🔹 *الإنارة الصناعية والمعمارية*
+🔹 *مواسير التمديدات والإكسسوارات*
+🔹 *محولات ومولدات ومغذيات طاقة*
 
 🏷️ *علامات تجارية عالمية ومحلية معتمدة:*
 Schneider Electric, ABB, Legrand, Al-Fanar, Siemens, Riyadh Cables.
@@ -173,10 +266,18 @@ Schneider Electric, ABB, Legrand, Al-Fanar, Siemens, Riyadh Cables.
 
     // 3. OPTION 2: Search prompt
     if (["2", "بحث", "البحث", "search", "ابحث"].includes(lower)) {
-      const searchPrompt = `🔍 *البحث عن المنتجات والأسعار | Search Catalog*
+      const searchPrompt = isEn ? `🔍 *Search Catalog & Prices*
+────────────────────────────
+Send the product name, part number, or brand to search our database instantly!
+
+💡 *Examples:*
+• \`Schneider MCB 16A\`
+• \`ABB 32A\`
+• \`Al-Fanar 4mm wire\`
+• \`100A breaker\`
+• \`004701060\`` : `🔍 *البحث عن المنتجات والأسعار*
 ────────────────────────────
 أرسل اسم المنتج، رقم القطعة، أو الماركة للبحث الفوري في قاعدة بيانات المتجر!
-Type the product name, part number, or brand to search live products and prices.
 
 💡 *أمثلة على البحث:*
 • \`Schneider MCB 16A\`
@@ -190,10 +291,11 @@ Type the product name, part number, or brand to search live products and prices.
 
     // 4. OPTION 3: Track order prompt
     if (["3", "تتبع", "طلب", "طلبي", "حالة الطلب", "track", "order", "status"].includes(lower)) {
-      const trackPrompt = `📦 *تتبع حالة الطلب | Track Your Order*
+      const trackPrompt = isEn ? `📦 *Track Your Order*
 ────────────────────────────
-لمعرفة تفاصيل وحالة طلبك، يرجى إرسال رقم الطلب (مثال: \`ORD-...\` أو رقم طلبك في المتجر).
-Please reply with your Order Number to check its status and fulfillment details.`;
+To check the status of your order, please reply with your Order Number (e.g., \`ORD-...\` or your web order number).` : `📦 *تتبع حالة الطلب*
+────────────────────────────
+لمعرفة تفاصيل وحالة طلبك، يرجى إرسال رقم الطلب (مثال: \`ORD-...\` أو رقم طلبك في المتجر).`;
       await client.sendMessage(sender, trackPrompt);
       return;
     }
@@ -214,17 +316,28 @@ Please reply with your Order Number to check its status and fulfillment details.
           const data = await fetchRes.json();
           if (data.found) {
             const statusText = translateOrderStatus(data.status);
-            const dateStr = data.createdAt ? new Date(data.createdAt).toLocaleDateString("ar-SA") : "حديثاً";
-            const methodStr = data.fulfillmentMethod === "DELIVERY" ? "توصيل إلى الموقع (Delivery)" : "استلام من المستودع (Pickup)";
-            const totalStr = data.totals?.total ? `${data.totals.total} ر.س` : "غير محدد";
+            const dateStr = data.createdAt ? new Date(data.createdAt).toLocaleDateString(isEn ? "en-US" : "ar-SA") : (isEn ? "Recently" : "حديثاً");
+            const methodStr = data.fulfillmentMethod === "DELIVERY" ? (isEn ? "Delivery" : "توصيل إلى الموقع") : (isEn ? "Pickup" : "استلام من المستودع");
+            const totalStr = data.totals?.total ? `${data.totals.total} SAR` : (isEn ? "Unknown" : "غير محدد");
 
-            const orderCard = `📦 *تفاصيل الطلب: ${data.number}*
+            const orderCard = isEn ? `📦 *Order Details: ${data.number}*
 ────────────────────────────
-🔹 *الحالة | Status:* ${statusText}
-📅 *تاريخ الطلب | Date:* ${dateStr}
-🚚 *طريقة الاستلام | Method:* ${methodStr}
-💵 *المبلغ الإجمالي | Total:* ${totalStr}
-📦 *عدد الأصناف | Items:* ${data.itemCount || 1}
+🔹 *Status:* ${statusText}
+📅 *Date:* ${dateStr}
+🚚 *Fulfillment:* ${methodStr}
+💵 *Total:* ${totalStr}
+📦 *Items:* ${data.itemCount || 1}
+
+🔗 *To track the order and view invoice on your account:*
+${storeUrl}/account
+────────────────────────────
+If you have any questions, reply with 6 to contact support.` : `📦 *تفاصيل الطلب: ${data.number}*
+────────────────────────────
+🔹 *الحالة:* ${statusText}
+📅 *تاريخ الطلب:* ${dateStr}
+🚚 *طريقة الاستلام:* ${methodStr}
+💵 *المبلغ الإجمالي:* ${totalStr}
+📦 *عدد الأصناف:* ${data.itemCount || 1}
 
 🔗 *لمتابعة الطلب وتفاصيل الفاتورة عبر حسابك:*
 ${storeUrl}/account
@@ -238,7 +351,12 @@ ${storeUrl}/account
         console.error("Order tracking API error in bot:", err);
       }
 
-      await client.sendMessage(sender, `📦 *تتبع الطلب | Order Tracking*
+      await client.sendMessage(sender, isEn ? `📦 *Order Tracking*
+────────────────────────────
+Sorry, we could not find an order with number: *${queryNumber}*.
+Please ensure you typed the order number exactly as it appears on your confirmation.
+
+💬 For further assistance, send *6* to contact support.` : `📦 *تتبع الطلب*
 ────────────────────────────
 عذراً، لم نتمكن من العثور على طلب برقم: *${queryNumber}*.
 يرجى التأكد من كتابة رقم الطلب كما هو مدون في رسالة التأكيد أو الفاتورة.
@@ -249,7 +367,21 @@ ${storeUrl}/account
 
     // 5. OPTION 4: Quotation / RFQ
     if (["4", "تسعيرة", "عرض سعر", "مشروع", "مشاريع", "quote", "rfq", "quotation", "project"].includes(lower) || lower.includes("تسعير")) {
-      const rfqMsg = `📋 *طلب تسعيرة كميات ومشاريع | RFQ & Quotations*
+      const rfqMsg = isEn ? `📋 *RFQ & Quotations*
+────────────────────────────
+We offer special pricing for contractors, companies, and projects:
+
+1️⃣ *Via Corporate Portal (Fastest):*
+Upload your BOQ (Excel / PDF) directly to get a detailed quote:
+🔗 ${storeUrl}/requirements
+
+2️⃣ *Via Email:*
+✉️ sales@amtelectric.com
+
+3️⃣ *Via WhatsApp:*
+Send your BOQ document here, and our pricing engineers will review it and prepare an offer.
+────────────────────────────
+💡 *To return to the main menu, send 0.*` : `📋 *طلب تسعيرة كميات ومشاريع*
 ────────────────────────────
 نقدم في شركة إيه إم تي عروض أسعار تفضيلية للمقاولين، الشركات، والمشاريع الإنشائية والصناعية:
 
@@ -270,11 +402,26 @@ ${storeUrl}/account
 
     // 6. OPTION 5: Location & Hours
     if (["5", "موقع", "الموقع", "عنوان", "دوام", "ساعات", "location", "address", "hours", "فروع", "مستودع", "وينكم"].includes(lower)) {
-      const locationMsg = `📍 *موقعنا ومواعيد العمل | Location & Hours*
+      const locationMsg = isEn ? `📍 *Location & Hours*
+────────────────────────────
+🏢 *AMT Electrical Supplies*
+📍 *Head Office & Central Warehouse:* Riyadh, KSA.
+
+⏰ *Business Hours:*
+• Saturday - Thursday: 8:00 AM - 6:00 PM
+• Friday: Closed
+
+🚚 *Shipping & Delivery:*
+• Instant delivery inside Riyadh.
+• 24-48h shipping to all KSA regions.
+
+🌐 *Store is available 24/7 for direct ordering:*
+${storeUrl}
+────────────────────────────
+💡 *To return to the main menu, send 0.*` : `📍 *موقعنا ومواعيد العمل*
 ────────────────────────────
 🏢 *شركة إيه إم تي للمواد الكهربائية (AMT Electric)*
 📍 *المقر الرئيسي والمستودعات المركزية:* الرياض، المملكة العربية السعودية.
-Riyadh, Kingdom of Saudi Arabia.
 
 ⏰ *أوقات العمل الرسمية:*
 • من السبت إلى الخميس: من 8:00 صباحاً حتى 6:00 مساءً
@@ -294,7 +441,22 @@ ${storeUrl}
 
     // 7. OPTION 6: Customer Support
     if (["6", "دعم", "مساعدة", "خدمة العملاء", "مبيعات", "موظف", "support", "agent", "human", "contact"].includes(lower)) {
-      const supportMsg = `💬 *خدمة العملاء وفريق المبيعات | Customer Support*
+      const supportMsg = isEn ? `💬 *Customer Support & Sales*
+────────────────────────────
+Our team is happy to assist you:
+
+📞 *Phone / Sales:*
++966 11 000 0000
+
+✉️ *Email:*
+support@amtelectric.com | sales@amtelectric.com
+
+🕒 *Working Hours:*
+Sat - Thu: 8:00 AM - 6:00 PM
+
+💡 *You can also write your inquiry directly here, and a representative will reply shortly.*
+────────────────────────────
+💡 *To return to the main menu, send 0.*` : `💬 *خدمة العملاء وفريق المبيعات*
 ────────────────────────────
 فريقنا يسعد بخدمتكم والإجابة على كافة استفساراتكم الفنية والشرائية:
 
@@ -326,7 +488,8 @@ support@amtelectric.com | sales@amtelectric.com
             const catData = await catRes.json();
             const items = catData.items || [];
             if (items.length > 0) {
-              let searchResults = `🔍 *نتائج البحث عن:* "${cleanQuery}"
+              let searchResults = isEn ? `🔍 *Search Results for:* "${cleanQuery}"
+────────────────────────────\n` : `🔍 *نتائج البحث عن:* "${cleanQuery}"
 ────────────────────────────\n`;
               items.slice(0, 4).forEach((item, idx) => {
                 const num = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"][idx];
@@ -335,7 +498,11 @@ support@amtelectric.com | sales@amtelectric.com
                 const itemSlug = item.slug || item.id;
                 searchResults += `${num} *${part}*\n📌 ${desc}\n🔗 ${storeUrl}/products/${itemSlug}\n\n`;
               });
-              searchResults += `────────────────────────────
+              searchResults += isEn ? `────────────────────────────
+🌐 *To browse all results and checkout:*
+${storeUrl}?q=${encodeURIComponent(cleanQuery)}
+
+💡 *Send 0 to return to the main menu.*` : `────────────────────────────
 🌐 *لتصفح كافة النتائج وإتمام الطلب:*
 ${storeUrl}?q=${encodeURIComponent(cleanQuery)}
 
@@ -351,7 +518,19 @@ ${storeUrl}?q=${encodeURIComponent(cleanQuery)}
     }
 
     // 9. DEFAULT FALLBACK
-    const defaultReply = `مرحباً بك في *إيه إم تي للمواد الكهربائية* ⚡
+    const defaultReply = isEn ? `Welcome to *AMT Electrical Supplies* ⚡
+We couldn't quite understand your request.
+
+You can send:
+• *1* Store & Catalog
+• *2* Search for a product
+• *3* Track your order
+• *4* Request a quotation
+• *5* Location & Hours
+• *6* Contact Support
+
+🌐 Or visit our store directly:
+${storeUrl}` : `مرحباً بك في *إيه إم تي للمواد الكهربائية* ⚡
 لم نتمكن من فهم طلبك بدقة.
 
 يمكنك إرسال:

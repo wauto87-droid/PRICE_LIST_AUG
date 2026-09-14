@@ -1306,10 +1306,16 @@ export async function loginAccount(db: DB, raw: unknown) {
       password: z.string().max(128),
     })
     .parse(raw);
+  let normalizedPhone = data.login;
+  try {
+    normalizedPhone = normalizePhone(data.login);
+  } catch (e) {
+    // Ignore, maybe it's not a phone number or invalid
+  }
   const account = await one(
     db,
-    "SELECT * FROM customer_accounts WHERE lower(email)=lower($1) OR mobile=$1",
-    [data.login],
+    "SELECT * FROM customer_accounts WHERE lower(email)=lower($1) OR mobile=$1 OR mobile=$2",
+    [data.login, normalizedPhone],
   );
   const valid = account
     ? await verifyPassword(account.password_hash, data.password)
@@ -1424,4 +1430,36 @@ export async function updateAccount(
     );
     return saved;
   });
+}
+
+export async function customerOrders(db: DB, account: Actor) {
+  requirePermission(account, "storefront:self");
+  return (
+    await db.query(
+      "SELECT id, number, status, totals, created_at FROM ecommerce_orders WHERE customer_account_id=$1 ORDER BY created_at DESC LIMIT 50",
+      [account.id],
+    )
+  ).rows;
+}
+
+export async function changePassword(db: DB, account: Actor, raw: unknown) {
+  requirePermission(account, "storefront:self");
+  const data = z
+    .object({
+      currentPassword: z.string().max(128),
+      newPassword: z.string().min(8).max(128),
+    })
+    .parse(raw);
+  
+  const current = await one(db, "SELECT password_hash FROM customer_accounts WHERE id=$1", [account.id]);
+  assert(current, 401, "Account not found");
+  
+  const valid = await verifyPassword(current.password_hash, data.currentPassword);
+  assert(valid, 400, "Invalid current password");
+  
+  const newHash = await hashPassword(data.newPassword);
+  await db.query("UPDATE customer_accounts SET password_hash=$2 WHERE id=$1", [account.id, newHash]);
+  
+  // Invalidate other sessions except current if we wanted to, but simple update is fine
+  return { success: true };
 }
