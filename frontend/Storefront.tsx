@@ -5,8 +5,8 @@ import { api } from "./api";
 import { appPath } from "../shared/paths";
 import StorefrontCheckout, {
   StoreDialog,
-  StoreAccount,
 } from "./StorefrontCheckout";
+import { StoreAccount } from "./StoreAccount";
 import "./storefront.css";
 import BusinessPortal from "./BusinessPortal";
 import StoreMerchandising from "./StoreMerchandising";

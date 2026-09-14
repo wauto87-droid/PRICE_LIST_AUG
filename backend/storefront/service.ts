@@ -1125,7 +1125,7 @@ export async function authenticateAccount(db: DB, req: Request) {
   if (!raw) return undefined;
   return one(
     db,
-    `SELECT a.id,a.customer_id,a.email,a.mobile,a.status,COALESCE(co.price_level,a.price_level) price_level,COALESCE(co.credit_enabled,a.credit_enabled) credit_enabled,COALESCE(co.credit_limit,a.credit_limit) credit_limit,a.company_id,a.company_role,c.name,c.number
+    `SELECT a.id,a.customer_id,a.email,a.mobile,a.status,COALESCE(co.price_level,a.price_level) price_level,COALESCE(co.credit_enabled,a.credit_enabled) credit_enabled,COALESCE(co.credit_limit,a.credit_limit) credit_limit,a.company_id,a.company_role,c.name,c.number,co.name company_name,co.profile company_profile,a.created_at
     FROM customer_account_sessions s JOIN customer_accounts a ON a.id=s.account_id LEFT JOIN customers c ON c.id=a.customer_id LEFT JOIN commerce_companies co ON co.id=a.company_id
     WHERE s.token_hash=$1 AND s.expires_at>now() AND a.status='ACTIVE' AND (a.company_id IS NULL OR EXISTS(SELECT 1 FROM commerce_companies co WHERE co.id=a.company_id AND co.status IN ('ACTIVE','PENDING')))`,
     [sha(decodeURIComponent(raw))],
@@ -1436,7 +1436,7 @@ export async function customerOrders(db: DB, account: any) {
   assert(account?.id, 401, "Unauthenticated");
   return (
     await db.query(
-      "SELECT id, number, status, totals, created_at FROM ecommerce_orders WHERE customer_account_id=$1 ORDER BY created_at DESC LIMIT 50",
+      "SELECT id, number, status, totals, payment_method, fulfillment_method, lines, created_at FROM ecommerce_orders WHERE customer_account_id=$1 ORDER BY created_at DESC LIMIT 50",
       [account.id],
     )
   ).rows;
