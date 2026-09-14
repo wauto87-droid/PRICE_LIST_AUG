@@ -254,6 +254,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           itemCount: Number(order.item_count) || 0,
           createdAt: order.created_at,
         });
+      }
       if (id === "bot" && action === "price" && method === "POST") {
         const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
         const product = await one(db, `
