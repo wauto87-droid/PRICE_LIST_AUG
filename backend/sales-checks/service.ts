@@ -22,8 +22,8 @@ const exact = (value: unknown) =>
     .trim()
     .toUpperCase();
 const decimal = (value: unknown, label: string, positive = false) => {
-  const text = String(value ?? "").trim();
-  assert(/^\d+(?:\.\d+)?$/.test(text), 400, `${label} is not a valid decimal`);
+  const text = String(value ?? "").replace(/[,\s]/g, "");
+  assert(/^-?\d+(?:\.\d+)?$/.test(text), 400, `${label} is not a valid decimal`);
   const number = new Decimal(text);
   assert(
     number.isFinite() && (!positive || number.gt(0)),
