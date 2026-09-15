@@ -136,15 +136,194 @@ test("staff phone management, bot price search and numbered language selection",
   assert.equal(missingData.authorized, true);
   assert.equal(missingData.found, false);
 
-  // 7. Test WhatsApp Bot Numbered Language Selection
-  const { handleBotMessage } = createRequire(import.meta.url)("../scripts/whatsapp-service.cjs");
-  
-  // Test User A: selects Option 1 (Arabic)
-  const sentA: { to: string; text: string }[] = [];
-  const clientA = {
-    sendMessage: async (to: string, text: string) => { sentA.push({ to, text }); },
-  };
-  const senderA = "966599000001@c.us";
+  // 7. Test Session Preservation: Updating phone number does NOT invalidate session
+  const fakeSessionToken = "session-token-staff-123";
+  await db.query(
+    "INSERT INTO sessions(token_hash, user_id, csrf, expires_at) VALUES($1, $2, 'csrf-secret-123', now() + interval '1 day')",
+    [fakeSessionToken, staffSave.id]
+  );
+  const sessionBefore = await one(db, "SELECT token_hash FROM sessions WHERE user_id=$1", [staffSave.id]);
+  assert.ok(sessionBefore, "Session should exist before phone update");
+
+  // Admin updates staff user's phone number
+  await admin.saveUser(db, adminActor, {
+    username: "salesstaff",
+    name: "Ahmed Sales",
+    role: "STAFF",
+    permissions: ["PRODUCT_VIEW"],
+    maxDiscount: "20",
+    disabled: false,
+    phone: "+966509876543", // updated phone
+  }, staffSave.id);
+
+  // Session MUST still exist (no session logout on phone/name edit)
+  const sessionAfterPhoneUpdate = await one(db, "SELECT token_hash FROM sessions WHERE user_id=$1", [staffSave.id]);
+  assert.ok(sessionAfterPhoneUpdate, "Active session MUST remain valid when updating phone number");
+
+  // Admin changes password -> session MUST be invalidated
+  await admin.saveUser(db, adminActor, {
+    username: "salesstaff",
+    name: "Ahmed Sales",
+    role: "STAFF",
+    permissions: ["PRODUCT_VIEW"],
+    maxDiscount: "20",
+    disabled: false,
+    password: "NewPassword12345!", // password change
+    phone: "+966509876543",
+  }, staffSave.id);
+  const sessionAfterPasswordChange = await one(db, "SELECT token_hash FROM sessions WHERE user_id=$1", [staffSave.id]);
+  assert.equal(sessionAfterPasswordChange, undefined, "Session MUST be deleted when password changes");
+
+  // 8. Test Cost Markup vs List Discount Price Calculations from App Database
+  // Create a LIST_DISCOUNT product
+  const discProduct = await db.transaction((tx) =>
+    saveProduct(tx, adminActor, {
+      partNumber: "ABB-32A-MCB",
+      description: "ABB Miniature Circuit Breaker 32A",
+      brand: "ABB",
+      category: "Breakers",
+      method: "LIST_DISCOUNT",
+      listPrice: "200",
+      baseDiscount: "20",
+      cost: "120",
+      minimumEnabled: false,
+      minimum: "0",
+    })
+  );
+  assert(discProduct.id);
+
+  // 8a. Cost Markup item (LC1D09M7) with custom markup % (e.g. 30%)
+  const markupReq = new Request("http://localhost/amt_price_list/api/v1/storefront/bot/price", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "LC1D09M7",
+      senderPhone: "+966509876543",
+      percent: 30,
+      percentType: "MARKUP",
+    }),
+  });
+  const markupRes = await handle(markupReq, db);
+  const markupData = await markupRes.json();
+  assert.equal(markupData.authorized, true);
+  assert.equal(markupData.found, true);
+  assert.equal(markupData.method, "COST_MARKUP");
+  assert.equal(markupData.cost, "100.00");
+  assert.equal(markupData.markupPercent, 30);
+  assert.equal(markupData.priceExcl, "130.00"); // 100 * 1.30
+  assert.equal(markupData.vatAmount, "19.50"); // 130 * 0.15
+  assert.equal(markupData.finalPrice, "149.50");
+
+  // 8b. Cost Markup item (LC1D09M7) with stored markup % (no % number passed, e.g. LC1D09M7 %)
+  const storedMarkupReq = new Request("http://localhost/amt_price_list/api/v1/storefront/bot/price", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "LC1D09M7 %",
+      senderPhone: "+966509876543",
+    }),
+  });
+  const storedMarkupRes = await handle(storedMarkupReq, db);
+  const storedMarkupData = await storedMarkupRes.json();
+  assert.equal(storedMarkupData.authorized, true);
+  assert.equal(storedMarkupData.found, true);
+  assert.equal(storedMarkupData.method, "COST_MARKUP");
+  assert.equal(storedMarkupData.markupPercent, 25); // stored database markup
+  assert.equal(storedMarkupData.priceExcl, "125.00"); // 100 * 1.25
+  assert.equal(storedMarkupData.vatAmount, "18.75");
+  assert.equal(storedMarkupData.finalPrice, "143.75");
+
+  // 8c. List Discount item (ABB-32A-MCB) with custom discount % (e.g. 15%)
+  const discReq = new Request("http://localhost/amt_price_list/api/v1/storefront/bot/price", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "ABB-32A-MCB",
+      senderPhone: "+966509876543",
+      percent: 15,
+      percentType: "DISCOUNT",
+    }),
+  });
+  const discRes = await handle(discReq, db);
+  const discData = await discRes.json();
+  assert.equal(discData.authorized, true);
+  assert.equal(discData.found, true);
+  assert.equal(discData.method, "LIST_DISCOUNT");
+  assert.equal(discData.listPrice, "200.00");
+  assert.equal(discData.discountPercent, 15);
+  assert.equal(discData.discountedPrice, "170.00"); // 200 * 0.85
+  assert.equal(discData.vatAmount, "25.50");
+  assert.equal(discData.finalPrice, "195.50");
+
+  // 8d. List Discount item with stored discount % (e.g. ABB-32A-MCB %)
+  const storedDiscReq = new Request("http://localhost/amt_price_list/api/v1/storefront/bot/price", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "ABB-32A-MCB %",
+      senderPhone: "+966509876543",
+    }),
+  });
+  const storedDiscRes = await handle(storedDiscReq, db);
+  const storedDiscData = await storedDiscRes.json();
+  assert.equal(storedDiscData.authorized, true);
+  assert.equal(storedDiscData.found, true);
+  assert.equal(storedDiscData.method, "LIST_DISCOUNT");
+  assert.equal(storedDiscData.discountPercent, 20); // stored database discount
+  assert.equal(storedDiscData.discountedPrice, "160.00"); // 200 * 0.80
+  assert.equal(storedDiscData.vatAmount, "24.00");
+  assert.equal(storedDiscData.finalPrice, "184.00");
+
+  // 9. Test Order Tracking Endpoint: WEB-... and carrier/tracking details
+  await db.query(`
+    INSERT INTO ecommerce_orders(
+      id, number, status, fulfillment_method, payment_method, totals, lines, fulfillment_data
+    ) VALUES (
+      'e1111111-2222-3333-4444-555555555555',
+      'WEB-20260915-A1B2C3D4',
+      'CONFIRMED',
+      'DELIVERY',
+      'CASH_ON_DELIVERY',
+      '{"total":"345.00","subtotal":"300.00","vat":"45.00"}'::jsonb,
+      '[{"productId":"${product.id}","quantity":"2"}]'::jsonb,
+      '{"fulfillmentStatus":"SHIPPED","carrier":"SMSA Express","tracking":"SMSA-99887766","shippedAt":"2026-09-15T10:00:00Z"}'::jsonb
+    )
+  `);
+
+  const trackReq = new Request("http://localhost/amt_price_list/api/v1/storefront/bot/track-order", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "#WEB-20260915-A1B2C3D4" }),
+  });
+  const trackRes = await handle(trackReq, db);
+  const trackData = await trackRes.json();
+  assert.equal(trackData.found, true);
+  assert.equal(trackData.number, "WEB-20260915-A1B2C3D4");
+  assert.equal(trackData.fulfillmentStatus, "SHIPPED");
+  assert.equal(trackData.carrier, "SMSA Express");
+  assert.equal(trackData.tracking, "SMSA-99887766");
+  assert.equal(trackData.totals.total, "345.00");
+
+  // 10. Test WhatsApp Bot Numbered Language Selection and Message Flow
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const urlStr = typeof input === "string" ? input : input.url;
+    if (urlStr.includes("/storefront/bot/")) {
+      const req = new Request(urlStr, init);
+      return handle(req, db);
+    }
+    return originalFetch(input, init);
+  }) as any;
+
+  try {
+    const { handleBotMessage } = createRequire(import.meta.url)("../scripts/whatsapp-service.cjs");
+    
+    // Test User A: selects Option 1 (Arabic)
+    const sentA: { to: string; text: string }[] = [];
+    const clientA = {
+      sendMessage: async (to: string, text: string) => { sentA.push({ to, text }); },
+    };
+    const senderA = "966599000001@c.us";
 
   // First message with unknown text -> should prompt with Option 1 & 2
   await handleBotMessage({ from: senderA, body: "hello", fromMe: false }, clientA);
@@ -158,6 +337,19 @@ test("staff phone management, bot price search and numbered language selection",
   assert(sentA.length >= 3);
   assert.match(sentA[1].text, /تم اختيار اللغة العربية/);
   assert.match(sentA[2].text, /أهلاً بك في شركة إيه إم تي للمواد الكهربائية/);
+
+  // User A selects Option 3 (Track Order) -> bot prompts for order number
+  await handleBotMessage({ from: senderA, body: "3", fromMe: false }, clientA);
+  assert.match(sentA[sentA.length - 1].text, /تتبع حالة الطلب/);
+  assert.match(sentA[sentA.length - 1].text, /يرجى إرسال رقم الطلب/);
+
+  // User A replies with their order number WEB-20260915-A1B2C3D4
+  await handleBotMessage({ from: senderA, body: "WEB-20260915-A1B2C3D4", fromMe: false }, clientA);
+  const trackReply = sentA[sentA.length - 1].text;
+  assert.match(trackReply, /تفاصيل الطلب: WEB-20260915-A1B2C3D4/);
+  assert.match(trackReply, /SMSA Express/);
+  assert.match(trackReply, /SMSA-99887766/);
+  assert.match(trackReply, /345\.00 SAR/);
 
   // Test User B: selects Option 2 (English)
   const sentB: { to: string; text: string }[] = [];
@@ -178,5 +370,8 @@ test("staff phone management, bot price search and numbered language selection",
 
   // Switching language via "lang"
   await handleBotMessage({ from: senderB, body: "lang", fromMe: false }, clientB);
-  assert.match(sentB[3].text, /Please select your language/);
+  assert.match(sentB[sentB.length - 1].text, /Please select your language/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

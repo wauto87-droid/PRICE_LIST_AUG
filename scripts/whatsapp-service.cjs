@@ -1,7 +1,15 @@
 const http = require("node:http");
 const { timingSafeEqual } = require("node:crypto");
-const { Client, LocalAuth } = require("whatsapp-web.js");
-const QRCode = require("qrcode");
+let Client, LocalAuth;
+try {
+  ({ Client, LocalAuth } = require("whatsapp-web.js"));
+} catch (e) {
+  // Optional in test runner or minimal headless environments
+}
+let QRCode;
+try {
+  QRCode = require("qrcode");
+} catch (e) {}
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const sessionDirectory = path.resolve(process.env.WHATSAPP_SESSION_DIR || "/data/whatsapp");
@@ -12,6 +20,58 @@ fs.readFile(langFilePath, "utf8").then(data => {
   try { userLanguages = JSON.parse(data); } catch(e){}
 }).catch(()=>{});
 const saveLanguages = () => fs.writeFile(langFilePath, JSON.stringify(userLanguages)).catch(()=>{});
+
+let userStates = {};
+
+function parseStaffPricingQuery(raw) {
+  let text = (raw || "").trim();
+  if (text.startsWith("!")) text = text.slice(1).trim();
+
+  let percent = undefined;
+  let percentType = "AUTO";
+
+  // 1. Explicit positive markup (+10% or +10)
+  const plusMatch = text.match(/(?:[\s]+|^)\+(\d+(?:\.\d+)?)\s*%?$/);
+  if (plusMatch) {
+    percent = parseFloat(plusMatch[1]);
+    percentType = "MARKUP";
+    text = text.slice(0, plusMatch.index).trim();
+  } else {
+    // 2. Explicit discount (-10% or -10)
+    const minusMatch = text.match(/(?:[\s]+|^)\-(\d+(?:\.\d+)?)\s*%?$/);
+    if (minusMatch) {
+      percent = parseFloat(minusMatch[1]);
+      percentType = "DISCOUNT";
+      text = text.slice(0, minusMatch.index).trim();
+    } else {
+      // 3. Trailing percentage (%10 or % 10 or 10% or space 10)
+      const numMatch = text.match(/(?:[\s%]+)(\d+(?:\.\d+)?)\s*%?$/);
+      if (numMatch) {
+        percent = parseFloat(numMatch[1]);
+        percentType = "AUTO";
+        text = text.slice(0, numMatch.index).trim();
+      } else {
+        // 4. Has % symbol without number (e.g. LC1D09M7 % or % LC1D09M7)
+        const pctIdx = text.indexOf("%");
+        if (pctIdx !== -1) {
+          const before = text.slice(0, pctIdx).trim();
+          const after = text.slice(pctIdx + 1).trim();
+          const afterNum = parseFloat(after);
+          if (!isNaN(afterNum) && after.length > 0) {
+            percent = afterNum;
+            percentType = "AUTO";
+            text = before;
+          } else {
+            text = before || after;
+          }
+        }
+      }
+    }
+  }
+
+  text = text.replace(/^[!%\s]+|[!%\s]+$/g, "").trim();
+  return { partNumber: text, percent, percentType };
+}
 
 const isEntrypoint =
   require.main === module ||
@@ -164,27 +224,21 @@ async function handleBotMessage(msg, client) {
     const storeUrl = getStoreUrl();
     const appInternalUrl = process.env.APP_INTERNAL_URL || "http://127.0.0.1:18180/amt_price_list/api/v1";
 
-    // STAFF PRICING COMMAND (!partNumber [discount%])
-    if (bodyText.startsWith("!")) {
-      let rawCmd = bodyText.slice(1).trim();
-      let discount = 0;
-      const discMatch = rawCmd.match(/(?:[\s%]+)(\d+(?:\.\d+)?)\s*%?$/);
-      if (discMatch) {
-        discount = parseFloat(discMatch[1]) || 0;
-        rawCmd = rawCmd.slice(0, discMatch.index).trim();
-      } else if (rawCmd.includes("%")) {
-        const p = rawCmd.split("%");
-        rawCmd = p[0].trim();
-        discount = parseFloat(p[1]) || 0;
-      }
-      const partNumber = rawCmd;
+    // STAFF PRICING COMMAND (!partNumber or partNumber % or %partNumber)
+    const isPricingCmd = bodyText.startsWith("!") || bodyText.includes("%");
+    if (isPricingCmd) {
+      const parsed = parseStaffPricingQuery(bodyText);
+      const partNumber = parsed.partNumber;
+      const percent = parsed.percent;
+      const percentType = parsed.percentType;
 
       if (!partNumber) {
         await client.sendMessage(sender, `⚠️ *صيغة أمر التسعير غير مكتملة | Incomplete Command*
-يرجى إرسال رقم الصنف مع نسبة الخصم الاختيارية، مثال:
+يرجى إرسال رقم الصنف مع نسبة الخصم أو هامش الربح الاختياري، مثال:
 \`!LC1D09M7\`
+\`!LC1D09M7 %\`
 \`!LC1D09M7 10%\`
-\`!004701060 15%\``);
+\`LC1D09M7 % 20\``);
         return;
       }
 
@@ -194,7 +248,13 @@ async function handleBotMessage(msg, client) {
         const res = await fetch(`${appInternalUrl}/storefront/bot/price`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: partNumber, senderPhone, discount })
+          body: JSON.stringify({ 
+            query: partNumber, 
+            senderPhone, 
+            discount: percent, 
+            percent, 
+            percentType 
+          })
         });
         const data = await res.json();
 
@@ -202,7 +262,7 @@ async function handleBotMessage(msg, client) {
           await client.sendMessage(sender, `🔒 *أمر خاص بموظفي شركة إيه إم تي | AMT Staff Only*
 ────────────────────────────
 ⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) غير مسجل كموظف في نظام إيه إم تي.
-لإضافة رقمك وتفعيل صلاحية تسعير الموظفين، يرجى التواصل مع مدير النظام (Admin) لإضافة رقم جوالك في ملف المستخدم الخاص بك.
+لتفعيل صلاحية تسعير الموظفين، يرجى التواصل مع مدير النظام (Admin) لإضافة رقم جوالك في ملف المستخدم الخاص بك.
 
 ⚠️ Your WhatsApp phone number (*+${senderPhone}*) is not registered in the AMT staff directory. Please contact your administrator to add your phone number in user management.`);
           return;
@@ -213,15 +273,17 @@ async function handleBotMessage(msg, client) {
 ────────────────────────────
 ❌ الصنف *${partNumber}* غير موجود في قاعدة بيانات المتجر أو غير نشط.
 يرجى التأكد من كتابة رقم الصنف أو البديل بشكل صحيح.
-Part number *${partNumber}* was not found.`);
+Part number *${partNumber}* was not found in active products.`);
           return;
         }
 
         const staffName = data.staff ? data.staff.name : "AMT Staff";
         const stockStr = (data.stock > 0) ? `✅ ${data.stock} ${data.unit || "حبة"}` : "⚠️ غير متوفر حالياً في المستودع";
-        const discAlert = !data.discountAllowed ? `\n⚠️ *تنبيه:* الخصم المطلوب (${discount}%) يتجاوز الحد المسموح لك (${data.staff?.maxDiscount}%).` : "";
+        const discAlert = !data.discountAllowed ? `\n⚠️ *تنبيه:* النسبة المطلوبة تتجاوز الحد المسموح لك (${data.staff?.maxDiscount}%).` : "";
 
-        const staffCard = `🏷️ *تفاصيل تسعيرة الصنف | Staff Price Details*
+        let staffCard = "";
+        if (data.method === "COST_MARKUP") {
+          staffCard = `🏷️ *تفاصيل تسعيرة الصنف (تكلفة + هامش ربح) | Staff Price Details*
 ────────────────────────────
 👤 *الموظف:* ${staffName}
 🔹 *رقم الصنف (Part No):* *${data.partNumber}*
@@ -229,14 +291,33 @@ Part number *${partNumber}* was not found.`);
 🏢 *الماركة:* ${data.brand || "—"}
 📦 *المخزون المتوفر:* ${stockStr}
 
-💵 *السعر الأساسي:* ${data.priceExcl} ريال (غير شامل)
-🏷️ *الخصم المُدخل:* ${discount}%${discAlert}
-💰 *السعر بعد الخصم:* ${data.discountedPrice} ريال (غير شامل)
+⚙️ *نظام التسعير:* تكلفة + هامش ربح (Cost + Markup)
+🔒 *سعر التكلفة:* ${data.cost} ريال
+📈 *نسبة هامش الربح:* ${data.markupPercent}%
+💵 *السعر الأساسي (قبل الضريبة):* ${data.priceExcl} ريال
+📑 *ضريبة القيمة المضافة (${data.vat}%):* ${data.vatAmount} ريال
+✨ *السعر النهائي للعميل:* *${data.finalPrice} ريال* (شامل الضريبة)
+────────────────────────────
+💡 *للطلب أو الحجز أو إضافة تسعيرة، استخدم لوحة تحكم إيه إم تي الداخلية.*`;
+        } else {
+          staffCard = `🏷️ *تفاصيل تسعيرة الصنف (سعر قائمة - خصم) | Staff Price Details*
+────────────────────────────
+👤 *الموظف:* ${staffName}
+🔹 *رقم الصنف (Part No):* *${data.partNumber}*
+📌 *الوصف:* ${data.description || "—"}
+🏢 *الماركة:* ${data.brand || "—"}
+📦 *المخزون المتوفر:* ${stockStr}
+
+⚙️ *نظام التسعير:* سعر القائمة - خصم (List - Discount)
+📋 *سعر القائمة:* ${data.listPrice} ريال
+📉 *نسبة الخصم:* ${data.discountPercent}%${discAlert}
+💵 *السعر بعد الخصم (قبل الضريبة):* ${data.priceExcl} ريال
 📑 *ضريبة القيمة المضافة (${data.vat}%):* ${data.vatAmount} ريال
 ✨ *السعر النهائي للعميل:* *${data.finalPrice} ريال* (شامل الضريبة)
 ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريال` : ""}
 ────────────────────────────
 💡 *للطلب أو الحجز أو إضافة تسعيرة، استخدم لوحة تحكم إيه إم تي الداخلية.*`;
+        }
 
         await client.sendMessage(sender, staffCard);
       } catch (err) {
@@ -282,9 +363,10 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
         return;
       }
 
-      // Otherwise, show language prompt
-      await client.sendMessage(sender, getLanguagePrompt());
-      return;
+      // Default to English
+      userLanguages[sender] = "en";
+      saveLanguages();
+      lang = "en";
     }
 
     // Explicit language switch while already set
@@ -366,46 +448,42 @@ Schneider Electric, ABB, Legrand, Al-Fanar, Siemens, Riyadh Cables.
       return;
     }
 
-    // 3. OPTION 2: Search prompt
-    if (["2", "بحث", "البحث", "search", "ابحث"].includes(lower)) {
-      const searchPrompt = isEn ? `🔍 *Search Catalog & Prices*
+    // 3. OPTION 2: Search prompt (Direct to Store Catalog)
+    if (["2", "٢", "بحث", "البحث", "search", "ابحث"].includes(lower)) {
+      const searchPrompt = isEn ? `🔍 *Browse Store Catalog & Search*
 ────────────────────────────
-Send the product name, part number, or brand to search our database instantly!
+To search products, check live prices, and order directly online:
+🔗 ${storeUrl}
 
-💡 *Examples:*
-• \`Schneider MCB 16A\`
-• \`ABB 32A\`
-• \`Al-Fanar 4mm wire\`
-• \`100A breaker\`
-• \`004701060\`` : `🔍 *البحث عن المنتجات والأسعار*
+💡 Or send any product name or part number here to get direct links!` : `🔍 *تصفح متجر ومنتجات إيه إم تي*
 ────────────────────────────
-أرسل اسم المنتج، رقم القطعة، أو الماركة للبحث الفوري في قاعدة بيانات المتجر!
+للبحث عن المنتجات، الاطلاع على الأسعار المعتمدة، وإتمام الطلب مباشرة:
+🔗 ${storeUrl}
 
-💡 *أمثلة على البحث:*
-• \`Schneider MCB 16A\`
-• \`ABB 32A\`
-• \`سلك 4 ملم الفنار\`
-• \`قاطع 100 امبير\`
-• \`004701060\``;
+💡 أو اكتب اسم الصنف أو رقم القطعة هنا للحصول على روابط مباشرة في المتجر!`;
       await client.sendMessage(sender, searchPrompt);
       return;
     }
 
     // 4. OPTION 3: Track order prompt
-    if (["3", "تتبع", "طلب", "طلبي", "حالة الطلب", "track", "order", "status"].includes(lower)) {
+    if (["3", "٣", "تتبع", "طلب", "طلبي", "حالة الطلب", "track", "order", "status"].includes(lower)) {
+      userStates[sender] = { action: "AWAITING_ORDER_NUMBER", time: Date.now() };
       const trackPrompt = isEn ? `📦 *Track Your Order*
 ────────────────────────────
-To check the status of your order, please reply with your Order Number (e.g., \`ORD-...\` or your web order number).` : `📦 *تتبع حالة الطلب*
+To check the status of your order, please reply with your Order Number (e.g., \`WEB-...\` or \`ORD-...\` or your web order number).` : `📦 *تتبع حالة الطلب*
 ────────────────────────────
-لمعرفة تفاصيل وحالة طلبك، يرجى إرسال رقم الطلب (مثال: \`ORD-...\` أو رقم طلبك في المتجر).`;
+لمعرفة تفاصيل وحالة طلبك، يرجى إرسال رقم الطلب (مثال: \`WEB-...\` أو \`ORD-...\` أو رقم طلبك في المتجر).`;
       await client.sendMessage(sender, trackPrompt);
       return;
     }
 
-    // Check if input looks like an order number (e.g. starts with ORD, or contains ORD- or digits)
-    const orderMatch = bodyText.match(/(?:ord|amt)[-_]?[a-z0-9\-]+/i);
-    const isLikelyOrderNumber = orderMatch || (lower.startsWith("ord") || lower.startsWith("amt"));
-    if (isLikelyOrderNumber) {
+    // Check if input looks like an order number or user was awaiting order number
+    const isAwaitingOrder = userStates[sender]?.action === "AWAITING_ORDER_NUMBER" && (Date.now() - userStates[sender].time < 900000);
+    const orderMatch = bodyText.match(/(?:(?:web|ord|amt)[-_]?[a-z0-9\-]+)|(?:#[a-z0-9\-]+)/i);
+    const hasOrderKeywords = lower.startsWith("web") || lower.startsWith("ord") || lower.startsWith("amt") || bodyText.startsWith("#");
+
+    if (orderMatch || hasOrderKeywords || (isAwaitingOrder && bodyText.length >= 3 && !bodyText.startsWith("!"))) {
+      delete userStates[sender];
       const queryNumber = (orderMatch ? orderMatch[0] : bodyText).trim();
       try {
         const fetchRes = await fetch(`${appInternalUrl}/storefront/bot/track-order`, {
@@ -422,9 +500,22 @@ To check the status of your order, please reply with your Order Number (e.g., \`
             const methodStr = data.fulfillmentMethod === "DELIVERY" ? (isEn ? "Delivery" : "توصيل إلى الموقع") : (isEn ? "Pickup" : "استلام من المستودع");
             const totalStr = data.totals?.total ? `${data.totals.total} SAR` : (isEn ? "Unknown" : "غير محدد");
 
+            let trackingDetails = "";
+            if (data.tracking) {
+              trackingDetails = isEn 
+                ? `\n🚚 *Carrier:* ${data.carrier || "Courier Service"}\n🔢 *Tracking Number:* *${data.tracking}*`
+                : `\n🚚 *شركة الشحن الناقلة:* ${data.carrier || "خدمة التوصيل"}\n🔢 *رقم بوليصة الشحن (التتبع):* *${data.tracking}*`;
+            }
+            if (data.fulfillmentStatus) {
+              const fText = data.fulfillmentStatus === "SHIPPED" 
+                ? (isEn ? "Shipped (In Transit)" : "تم الشحن وهي في طريقها إليك")
+                : (data.fulfillmentStatus === "PROCESSING" ? (isEn ? "Preparing in Warehouse" : "جارٍ التجهيز في المستودع") : statusText);
+              trackingDetails += isEn ? `\n📍 *Fulfillment Status:* ${fText}` : `\n📍 *حالة التجهيز والشحن:* ${fText}`;
+            }
+
             const orderCard = isEn ? `📦 *Order Details: ${data.number}*
 ────────────────────────────
-🔹 *Status:* ${statusText}
+🔹 *Status:* ${statusText}${trackingDetails}
 📅 *Date:* ${dateStr}
 🚚 *Fulfillment:* ${methodStr}
 💵 *Total:* ${totalStr}
@@ -435,7 +526,7 @@ ${storeUrl}/account
 ────────────────────────────
 If you have any questions, reply with 6 to contact support.` : `📦 *تفاصيل الطلب: ${data.number}*
 ────────────────────────────
-🔹 *الحالة:* ${statusText}
+🔹 *الحالة:* ${statusText}${trackingDetails}
 📅 *تاريخ الطلب:* ${dateStr}
 🚚 *طريقة الاستلام:* ${methodStr}
 💵 *المبلغ الإجمالي:* ${totalStr}
@@ -456,12 +547,12 @@ ${storeUrl}/account
       await client.sendMessage(sender, isEn ? `📦 *Order Tracking*
 ────────────────────────────
 Sorry, we could not find an order with number: *${queryNumber}*.
-Please ensure you typed the order number exactly as it appears on your confirmation.
+Please ensure you typed the order number exactly as it appears on your confirmation (e.g. \`WEB-...\` or \`ORD-...\`).
 
 💬 For further assistance, send *6* to contact support.` : `📦 *تتبع الطلب*
 ────────────────────────────
 عذراً، لم نتمكن من العثور على طلب برقم: *${queryNumber}*.
-يرجى التأكد من كتابة رقم الطلب كما هو مدون في رسالة التأكيد أو الفاتورة.
+يرجى التأكد من كتابة رقم الطلب كما هو مدون في رسالة التأكيد أو الفاتورة (مثال: \`WEB-...\` أو \`ORD-...\`).
 
 💬 للاستفسار المباشر، أرسل *6* للتحدث مع خدمة العملاء.`);
       return;
@@ -578,7 +669,7 @@ support@amtelectric.com | sales@amtelectric.com
       return;
     }
 
-    // 8. PRODUCT SEARCH FALLBACK
+    // 8. PRODUCT SEARCH FALLBACK (Directs customers to Storefront, avoids exposing internal prices)
     if (bodyText.length >= 2) {
       const cleanQuery = bodyText.replace(/^(?:ابحث عن|بحث عن|سعر|كم سعر|اسعار|اريد|أريد|ابغى|أبغى|search|price of)\s+/i, "").trim();
       if (cleanQuery.length >= 2) {
@@ -590,24 +681,22 @@ support@amtelectric.com | sales@amtelectric.com
             const catData = await catRes.json();
             const items = catData.items || [];
             if (items.length > 0) {
-              let searchResults = isEn ? `🔍 *Search Results for:* "${cleanQuery}"
-────────────────────────────\n` : `🔍 *نتائج البحث عن:* "${cleanQuery}"
+              let searchResults = isEn ? `🔍 *Catalog Search Results:* "${cleanQuery}"
+────────────────────────────\n` : `🔍 *نتائج البحث في المتجر:* "${cleanQuery}"
 ────────────────────────────\n`;
               items.slice(0, 4).forEach((item, idx) => {
                 const num = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"][idx];
                 const desc = item.description || item.part_number;
                 const part = item.part_number;
                 const itemSlug = item.slug || item.id;
-                const price = item.priceIncl ? `${item.priceIncl} SAR` : (item.priceExcl ? `${item.priceExcl} SAR` : "");
-                const priceLine = price ? `💰 *${isEn ? "Price:" : "السعر:"}* ${price}\n` : "";
-                searchResults += `${num} *${part}*\n📌 ${desc}\n${priceLine}🔗 ${storeUrl}/products/${itemSlug}\n\n`;
+                searchResults += `${num} *${part}*\n📌 ${desc}\n🔗 ${storeUrl}/products/${itemSlug}\n\n`;
               });
               searchResults += isEn ? `────────────────────────────
-🌐 *To browse all results and checkout:*
+🌐 *To view pricing, check stock, and checkout:*
 ${storeUrl}?q=${encodeURIComponent(cleanQuery)}
 
 💡 *Send 0 to return to the main menu.*` : `────────────────────────────
-🌐 *لتصفح كافة النتائج وإتمام الطلب:*
+🌐 *للاطلاع على الأسعار وتوفر المخزون والطلب أونلاين:*
 ${storeUrl}?q=${encodeURIComponent(cleanQuery)}
 
 💡 *أرسل 0 للعودة إلى القائمة الرئيسية.*`;

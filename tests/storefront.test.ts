@@ -479,4 +479,31 @@ test("storefront routing, publication, pricing, verification and reliable checko
       );
     },
   );
+  await t.test("storefront suggestions returns live search dropdown matches", async () => {
+    // 1. Partial part search
+    const sug1 = await store.suggestions(db, { q: "TEST" });
+    assert(sug1.items.length >= 2);
+    assert(sug1.items.some((i: any) => i.part_number === "TEST-1"));
+    assert(sug1.items.some((i: any) => i.part_number === "TEST-2"));
+    assert.equal(sug1.items[0].inStock, true);
+    assert(typeof sug1.items[0].priceIncl === "string");
+
+    // 2. Exact / normalized part search
+    const sug2 = await store.suggestions(db, { q: "test1" });
+    assert.equal(sug2.items[0].part_number, "TEST-1");
+
+    // 3. API endpoint integration check via router handle()
+    const req = new Request("http://localhost:18180/amt_price_list/api/v1/storefront/suggestions?q=TEST-1", {
+      method: "GET",
+    });
+    const res = await handle(req, db);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.items.length, 1);
+    assert.equal(data.items[0].part_number, "TEST-1");
+
+    // 4. Empty query returns empty list
+    const emptySug = await store.suggestions(db, { q: "" });
+    assert.equal(emptySug.items.length, 0);
+  });
 });

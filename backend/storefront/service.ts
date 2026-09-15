@@ -260,6 +260,69 @@ export async function catalog(db: DB, raw: unknown, account?: any) {
     ].sort(),
   };
 }
+export async function suggestions(db: DB, raw: unknown, account?: any) {
+  const input = z
+    .object({
+      q: z.string().trim().max(100).default(""),
+      limit: z.coerce.number().int().min(1).max(20).default(8),
+    })
+    .parse(raw);
+  if (!input.q || input.q.length < 1) return { items: [] };
+
+  await openStore(db);
+  const cleanQ = input.q.replace(/[\\%_]/g, "\\$&");
+  const normalized = cleanQ.replace(/[^a-zA-Z0-9]/g, "");
+
+  const rows = (
+    await db.query(
+      `WITH catalog AS (${catalogBase})
+       SELECT 
+         id, part_number, description, brand, category, price_excl, vat, available,
+         (SELECT id FROM product_images WHERE product_id = catalog.id ORDER BY display_order, id LIMIT 1) as image_id
+       FROM catalog
+       WHERE 
+         part_number ILIKE '%' || $2 || '%'
+         OR description ILIKE '%' || $2 || '%'
+         OR (brand IS NOT NULL AND brand ILIKE '%' || $2 || '%')
+         OR (category IS NOT NULL AND category ILIKE '%' || $2 || '%')
+         OR (length($3) > 1 AND regexp_replace(lower(part_number), '[^a-z0-9]', '', 'g') ILIKE '%' || lower($3) || '%')
+         OR EXISTS (
+           SELECT 1 FROM product_aliases a 
+           WHERE a.product_id = catalog.id 
+           AND (a.label ILIKE '%' || $2 || '%' OR (length($3) > 1 AND a.normalized ILIKE '%' || lower($3) || '%'))
+         )
+       ORDER BY 
+         CASE 
+           WHEN lower(part_number) = lower($2) THEN 0
+           WHEN lower(part_number) LIKE lower($2) || '%' THEN 1
+           WHEN regexp_replace(lower(part_number), '[^a-z0-9]', '', 'g') = lower($3) THEN 2
+           WHEN description ILIKE '%' || $2 || '%' THEN 3
+           ELSE 4
+         END,
+         part_number
+       LIMIT $4`,
+      [account?.company_id || null, cleanQ, normalized, input.limit],
+    )
+  ).rows;
+
+  const items = rows.map((r: any) => ({
+    id: r.id,
+    part_number: r.part_number,
+    description: r.description,
+    brand: r.brand,
+    category: r.category,
+    priceExcl: r.price_excl !== null ? money(r.price_excl).toFixed(2) : null,
+    priceIncl:
+      r.price_excl !== null
+        ? money(r.price_excl).mul(money(r.vat).add(100)).div(100).toFixed(2)
+        : null,
+    available: Number(r.available) || 0,
+    inStock: (Number(r.available) || 0) > 0,
+    imageUrl: r.image_id ? appPath(`/api/v1/storefront/images/${r.image_id}`) : null,
+  }));
+
+  return { items };
+}
 export async function productDetail(db: DB, id: string, account?: any) {
   await openStore(db);
   const row = await one(

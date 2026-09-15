@@ -44,7 +44,7 @@ export default function CommercialLists({
                   <td>{row.warehouse_code || "—"}</td>
                   <td>
                     <span className="pill">
-                      {row.status.replaceAll("_", " ")}
+                      {(row.status || "").replaceAll("_", " ")}
                     </span>
                   </td>
                   <td>SAR {row.totals?.total}</td>
@@ -116,7 +116,7 @@ export default function CommercialLists({
                   <td>{row.warehouse_code}</td>
                   <td>
                     <span className="pill">
-                      {row.status.replaceAll("_", " ")}
+                      {(row.status || "").replaceAll("_", " ")}
                     </span>
                   </td>
                   <td>
@@ -185,7 +185,7 @@ export default function CommercialLists({
                   <td>{row.payment_method}</td>
                   <td>
                     <span className="pill">
-                      {row.status.replaceAll("_", " ")}
+                      {(row.status || "").replaceAll("_", " ")}
                     </span>
                   </td>
                   <td>

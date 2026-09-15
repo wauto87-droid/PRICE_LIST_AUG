@@ -28,7 +28,7 @@ export type StoreProduct = {
 };
 export type StoreCart = Record<string, StoreProduct & { quantity: string }>;
 const storageKey = "amt-store-cart-v1";
-function StoreIcon({ kind }: { kind: "search" | "user" | "cart" }) {
+function StoreIcon({ kind }: { kind: "search" | "user" | "cart" | "clear" }) {
   return (
     <svg
       width="23"
@@ -50,6 +50,11 @@ function StoreIcon({ kind }: { kind: "search" | "user" | "cart" }) {
         <>
           <circle cx="12" cy="7" r="4" />
           <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+        </>
+      ) : kind === "clear" ? (
+        <>
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
         </>
       ) : (
         <>
@@ -85,21 +90,52 @@ export default function Storefront() {
     [payment, setPayment] = useState<any>();
   const [customBanner, setCustomBanner] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   useEffect(() => {
     let active = true;
-    const timer = setTimeout(() => {
-      if (q.trim().length >= 2)
-        api("storefront/suggestions?q=" + encodeURIComponent(q))
+    const trimmed = q.trim();
+    if (trimmed.length >= 1) {
+      setIsSearchingSuggestions(true);
+      const timer = setTimeout(() => {
+        api("storefront/suggestions?q=" + encodeURIComponent(trimmed))
           .then((r) => {
-            if (active) setSuggestions(r.items);
+            if (active) {
+              setSuggestions(r.items || []);
+              setShowDropdown(true);
+            }
           })
-          .catch(() => {});
-      else setSuggestions([]);
-    }, 250);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
+          .catch(() => {
+            if (active) setSuggestions([]);
+          })
+          .finally(() => {
+            if (active) setIsSearchingSuggestions(false);
+          });
+      }, 180);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    } else {
+      setSuggestions([]);
+      setShowDropdown(false);
+      setIsSearchingSuggestions(false);
+    }
   }, [q]);
   const search = useRef<HTMLInputElement>(null),
     request = useRef(0);
@@ -317,30 +353,167 @@ export default function Storefront() {
             </small>
           </span>
         </a>
-        <form
-          className="sf-search"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault();
-            filter(() => setQuery(q));
-          }}
-        >
-          <input
-            list="store-search-suggestions"
-            ref={search}
-            value={q}
-            maxLength={100}
-            onChange={(e) => setQ(e.target.value)}
-            aria-label={t("Search products", "بحث المنتجات")}
-            placeholder={t(
-              "Search products, part numbers and more…",
-              "ابحث عن المنتجات وأرقام الأصناف…",
+        <div className="sf-search-container" ref={searchContainerRef}>
+          <form
+            className="sf-search"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setShowDropdown(false);
+              filter(() => setQuery(q));
+            }}
+          >
+            <input
+              ref={search}
+              value={q}
+              maxLength={100}
+              onFocus={() => {
+                if (q.trim().length >= 1) setShowDropdown(true);
+              }}
+              onChange={(e) => {
+                const val = e.target.value;
+                setQ(val);
+                if (val.trim() === "") {
+                  // If cleared, immediately reset query so the catalog returns to main page
+                  filter(() => setQuery(""));
+                  setShowDropdown(false);
+                } else {
+                  setShowDropdown(true);
+                }
+              }}
+              aria-label={t("Search products", "بحث المنتجات")}
+              placeholder={t(
+                "Search products, part numbers (e.g. 56116)…",
+                "ابحث عن المنتجات وأرقام الأصناف (مثال: 56116)…",
+              )}
+            />
+            {q.length > 0 && (
+              <button
+                type="button"
+                className="sf-search-clear-btn"
+                onClick={() => {
+                  setQ("");
+                  filter(() => setQuery(""));
+                  setShowDropdown(false);
+                  search.current?.focus();
+                }}
+                aria-label={t("Clear search", "مسح البحث")}
+              >
+                <StoreIcon kind="clear" />
+              </button>
             )}
-          />
-          <button type="submit" aria-label={t("Search", "بحث")}>
-            <StoreIcon kind="search" />
-          </button>
-        </form>
+            <button type="submit" aria-label={t("Search", "بحث")}>
+              <StoreIcon kind="search" />
+            </button>
+          </form>
+
+          {showDropdown && q.trim().length >= 1 && (
+            <div className="sf-search-engine-dropdown">
+              <div className="sf-dropdown-header">
+                <span>
+                  {t("Suggested Products", "المنتجات المطابقة")}
+                  {suggestions.length > 0 && (
+                    <span className="sf-dropdown-count">
+                      ({suggestions.length})
+                    </span>
+                  )}
+                </span>
+                {isSearchingSuggestions && (
+                  <span className="sf-dropdown-loading">
+                    {t("Searching…", "جارٍ البحث…")}
+                  </span>
+                )}
+              </div>
+
+              {suggestions.length > 0 ? (
+                <div className="sf-dropdown-list">
+                  {suggestions.map((item) => (
+                    <div
+                      key={item.id}
+                      className="sf-dropdown-item"
+                      onClick={() => {
+                        setShowDropdown(false);
+                        setQ(item.part_number);
+                        openProduct(item);
+                      }}
+                    >
+                      <div className="sf-dropdown-item-thumb">
+                        {item.imageUrl ? (
+                          <img src={item.imageUrl} alt={item.part_number} />
+                        ) : (
+                          <div className="sf-dropdown-thumb-placeholder">⚡</div>
+                        )}
+                      </div>
+                      <div className="sf-dropdown-item-info">
+                        <div className="sf-dropdown-item-header">
+                          <span className="sf-dropdown-part">
+                            {item.part_number}
+                          </span>
+                          {item.brand && (
+                            <span className="sf-dropdown-brand">
+                              {item.brand}
+                            </span>
+                          )}
+                          <span
+                            className={`sf-dropdown-badge ${
+                              item.inStock ? "in-stock" : "out-stock"
+                            }`}
+                          >
+                            {item.inStock
+                              ? t("In Stock", "متوفر")
+                              : t("Backorder", "طلب مسبق")}
+                          </span>
+                        </div>
+                        <div className="sf-dropdown-desc">{item.description}</div>
+                      </div>
+                      <div className="sf-dropdown-item-price">
+                        {item.priceIncl ? (
+                          <span className="sf-price-val">
+                            {item.priceIncl} <small>{t("SAR", "ريال")}</small>
+                          </span>
+                        ) : (
+                          <span className="sf-price-inquire">
+                            {t("Business price", "سعر الشركات")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : !isSearchingSuggestions ? (
+                <div className="sf-dropdown-empty">
+                  <p>
+                    {t(
+                      `No direct matches for "${q}"`,
+                      `لا توجد نتائج مطابقة لـ "${q}"`,
+                    )}
+                  </p>
+                  <small>
+                    {t(
+                      "Press Enter to search full catalog",
+                      "اضغط Enter للبحث الشامل في الكتالوج",
+                    )}
+                  </small>
+                </div>
+              ) : null}
+
+              <div
+                className="sf-dropdown-footer"
+                onClick={() => {
+                  setShowDropdown(false);
+                  filter(() => setQuery(q));
+                }}
+              >
+                <span>
+                  {t(
+                    `View all results for "${q}" →`,
+                    `عرض جميع النتائج لـ "${q}" ←`,
+                  )}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
         <nav className="sf-header-actions">
           <button onClick={() => setLang((l) => (l === "en" ? "ar" : "en"))}>
             {lang === "en" ? "العربية" : "English"}
@@ -360,14 +533,6 @@ export default function Storefront() {
           </button>
         </nav>
       </header>
-
-      <datalist id="store-search-suggestions">
-        {suggestions.map((p) => (
-          <option key={p.id} value={p.part_number}>
-            {p.description}
-          </option>
-        ))}
-      </datalist>
       <nav className="sf-categories" aria-label={t("Categories", "الفئات")}>
         <button
           className={!category ? "selected" : ""}
@@ -699,16 +864,39 @@ export default function Storefront() {
                       ))}
                 </div>
                 {!loading && catalog?.total === 0 && (
-                  <div className="sf-state">
+                  <div className="sf-state sf-empty-search-state">
+                    <div className="sf-empty-icon">🔍</div>
                     <h3>
                       {t("No products found", "لم يتم العثور على منتجات")}
                     </h3>
                     <p>
-                      {t(
-                        "Try another part number or clear your filters.",
-                        "جرّب رقم صنف آخر أو امسح التصفية.",
-                      )}
+                      {query
+                        ? (lang === "ar"
+                            ? `لم نتمكن من العثور على أي صنف مطابق لـ "${query}".`
+                            : `No products matching "${query}" were found.`)
+                        : t(
+                            "Try another part number or clear your filters.",
+                            "جرّب رقم صنف آخر أو امسح التصفية.",
+                          )}
                     </p>
+                    <div className="sf-empty-actions">
+                      <button
+                        type="button"
+                        className="sf-btn-clear-search"
+                        onClick={() => {
+                          setQ("");
+                          filter(() => {
+                            setQuery("");
+                            setCategory("");
+                            setBrand("");
+                            setAvailability("");
+                          });
+                          search.current?.focus();
+                        }}
+                      >
+                        {t("Clear Search & View All Products", "مسح البحث والعودة لجميع المنتجات")}
+                      </button>
+                    </div>
                   </div>
                 )}
                 <nav

@@ -498,7 +498,19 @@ export default function StoreOrders({
         <button
           type="button"
           className="refresh-btn"
-          onClick={() => onRefresh()}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await onRefresh();
+              setNotice(t("Orders list refreshed", "تم تحديث قائمة الطلبات"));
+              setTimeout(() => setNotice(""), 3000);
+            } catch (err: any) {
+              setError(err.message || "Failed to refresh");
+            } finally {
+              setBusy(false);
+            }
+          }}
           disabled={busy}
           title={t("Refresh orders list", "تحديث قائمة الطلبات")}
         >

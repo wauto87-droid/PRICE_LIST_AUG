@@ -121,7 +121,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     if (root === "storefront") {
       const account = await storefront.authenticateAccount(db, req);
-      if (!["GET", "HEAD"].includes(method)) auth.checkOrigin(req);
+      if (!["GET", "HEAD"].includes(method) && id !== "bot") auth.checkOrigin(req);
       if(id==='homepage'&&method==='GET'){
         const campaigns=await commerce.activeCampaigns(db,account);
         const sections=[];
@@ -224,6 +224,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             account,
           ),
         );
+      if (id === "suggestions" && method === "GET")
+        return response(
+          await storefront.suggestions(
+            db,
+            Object.fromEntries(url.searchParams),
+            account,
+          ),
+        );
       if (id === "otp" && action === "request" && method === "POST")
         return response(await storefront.requestOtp(db, await body(req)));
       if (id === "otp" && action === "verify" && method === "POST")
@@ -242,28 +250,53 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         );
       if (id === "bot" && action === "track-order" && method === "POST") {
         const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
+        const cleanQuery = d.query.replace(/^[#\s]+/, "").trim();
         const order = await one(db, `
-          SELECT o.number, o.status, o.totals, o.fulfillment_method, o.created_at, jsonb_array_length(o.lines) as item_count
+          SELECT 
+            o.id,
+            o.number, 
+            o.status, 
+            o.totals, 
+            o.fulfillment_method, 
+            o.fulfillment_data,
+            o.address,
+            o.created_at, 
+            jsonb_array_length(o.lines) as item_count,
+            o.lines
           FROM ecommerce_orders o
-          WHERE lower(o.number) = lower($1) OR o.number ILIKE '%' || $1
+          LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
+          WHERE lower(o.number) = lower($1) 
+            OR lower(o.number) = lower($2)
+            OR o.number ILIKE '%' || $2 || '%'
+            OR o.id::text ILIKE $2 || '%'
+            OR (o.guest_contact->>'phone' IS NOT NULL AND regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g'))
+            OR (ca.mobile IS NOT NULL AND regexp_replace(ca.mobile, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g'))
           ORDER BY o.created_at DESC LIMIT 1
-        `, [d.query]);
+        `, [d.query, cleanQuery]);
         if (!order) return response({ found: false });
         return response({
           found: true,
           number: order.number,
           status: order.status,
+          fulfillmentStatus: order.fulfillment_data?.fulfillmentStatus || order.status,
+          carrier: order.fulfillment_data?.carrier || null,
+          tracking: order.fulfillment_data?.tracking || null,
+          shippedAt: order.fulfillment_data?.shippedAt || null,
+          deliveredAt: order.fulfillment_data?.deliveredAt || null,
           totals: order.totals,
           fulfillmentMethod: order.fulfillment_method,
           itemCount: Number(order.item_count) || 0,
           createdAt: order.created_at,
+          address: order.address,
         });
       }
       if (id === "bot" && action === "price" && method === "POST") {
         const d = z.object({
           query: z.string().trim().min(1).max(100),
           senderPhone: z.string().trim().optional(),
-          discount: z.coerce.number().min(0).max(100).optional().default(0),
+          discount: z.coerce.number().min(0).max(100).optional(),
+          percent: z.coerce.number().min(0).max(1000).optional(),
+          percentType: z.enum(["AUTO", "MARKUP", "DISCOUNT"]).optional().default("AUTO"),
         }).parse(await body(req));
 
         let staff: any = null;
@@ -290,8 +323,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           }
         }
 
-        const normalized = normalizePart(d.query);
-        const stripped = normalizeLookupPart(d.query);
+        const cleanPart = d.query.replace(/^[!%\s]+|[%\s]+$/g, "").trim();
+        const lookupQuery = cleanPart.length > 0 ? cleanPart : d.query;
+        const normalized = normalizePart(lookupQuery);
+        const stripped = normalizeLookupPart(lookupQuery);
 
         const product = await one(db, `
           SELECT 
@@ -300,24 +335,19 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             p.description,
             p.unit,
             b.name as brand,
+            c.name as category,
             pp.vat::text as vat,
             pp.cost::text as cost,
-            COALESCE(
-              (SELECT CASE 
-                 WHEN l.method = 'FIXED' THEN l.fixed_price 
-                 WHEN l.method = 'COST_MARKUP' THEN pp.cost * (100 + l.markup) / 100 
-                 ELSE l.list_price * (100 - l.base_discount) / 100 
-               END 
-               FROM product_selling_levels l 
-               WHERE l.product_id = p.id AND l.active AND (l.code = pp.default_level OR l.code = 'RETAIL' OR l.code = 'END_CUSTOMER')
-               ORDER BY CASE WHEN l.code = pp.default_level THEN 0 WHEN l.code = 'RETAIL' THEN 1 ELSE 2 END 
-               LIMIT 1),
-              CASE 
-                WHEN pp.method = 'COST_MARKUP' THEN pp.cost * (100 + pp.markup) / 100 
-                ELSE pp.list_price * (100 - pp.base_discount) / 100 
-              END,
-              0
-            )::numeric(12,2) as price_excl,
+            pp.method as base_method,
+            pp.markup::text as base_markup,
+            pp.list_price::text as base_list_price,
+            pp.base_discount::text as base_discount,
+            pp.default_level,
+            sl.method as level_method,
+            sl.markup::text as level_markup,
+            sl.list_price::text as level_list_price,
+            sl.base_discount::text as level_base_discount,
+            sl.fixed_price::text as level_fixed_price,
             COALESCE(
               (SELECT sum(quantity) FROM inventory_movements m JOIN warehouses w ON w.id = m.warehouse_id WHERE m.product_id = p.id AND w.active AND m.kind NOT IN ('RESERVE','RELEASE')),
               0
@@ -331,6 +361,13 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           FROM products p
           JOIN product_pricing pp ON pp.product_id = p.id
           LEFT JOIN brands b ON b.id = p.brand_id
+          LEFT JOIN categories c ON c.id = p.category_id
+          LEFT JOIN LATERAL (
+            SELECT * FROM product_selling_levels l
+            WHERE l.product_id = p.id AND l.active AND (l.code = pp.default_level OR l.code = 'RETAIL' OR l.code = 'END_CUSTOMER')
+            ORDER BY CASE WHEN l.code = pp.default_level THEN 0 WHEN l.code = 'RETAIL' THEN 1 ELSE 2 END
+            LIMIT 1
+          ) sl ON true
           WHERE p.active AND (
             lower(p.part_number) = lower($1)
             OR p.normalized_part = $2
@@ -353,18 +390,62 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               ELSE 4
             END
           LIMIT 1
-        `, [d.query, normalized, stripped]);
+        `, [lookupQuery, normalized, stripped]);
 
-        if (!product) return response({ found: false, authorized: true, partNumber: d.query });
+        if (!product) return response({ found: false, authorized: true, partNumber: lookupQuery });
 
-        const priceExcl = Number(product.price_excl) || 0;
-        const discount = Math.min(100, Math.max(0, Number(d.discount) || 0));
-        const discountedPrice = priceExcl * (1 - discount / 100);
+        const effectiveMethod = product.level_method || product.base_method || "COST_MARKUP";
         const vatRate = Number(product.vat) || 15;
+        const maxDisc = staff?.max_discount != null ? Number(staff.max_discount) : null;
+
+        let cost = product.cost ? Number(product.cost) : 0;
+        let listPrice = product.level_list_price ? Number(product.level_list_price) : (product.base_list_price ? Number(product.base_list_price) : 0);
+        let storedMarkup = product.level_markup ? Number(product.level_markup) : (product.base_markup ? Number(product.base_markup) : 0);
+        let storedDiscount = product.level_base_discount ? Number(product.level_base_discount) : (product.base_discount ? Number(product.base_discount) : 0);
+
+        let basePriceExcl = 0;
+        let discountedPrice = 0;
+        let appliedMarkup = storedMarkup;
+        let appliedDiscount = storedDiscount;
+        let discountAllowed = true;
+
+        if (effectiveMethod === "COST_MARKUP") {
+          // If staff explicitly passed percent (or percentType is MARKUP or AUTO)
+          if (d.percent !== undefined && (d.percentType === "MARKUP" || d.percentType === "AUTO")) {
+            appliedMarkup = d.percent;
+          }
+          basePriceExcl = cost * (1 + appliedMarkup / 100);
+          discountedPrice = basePriceExcl;
+
+          // If a discount on the marked-up price is also requested
+          if (d.discount !== undefined && d.discount > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+            discountedPrice = basePriceExcl * (1 - appliedDiscount / 100);
+            discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
+          }
+        } else if (effectiveMethod === "LIST_DISCOUNT") {
+          basePriceExcl = listPrice;
+          // If staff explicitly passed percent (or percentType is DISCOUNT or AUTO)
+          if (d.percent !== undefined && (d.percentType === "DISCOUNT" || d.percentType === "AUTO")) {
+            appliedDiscount = d.percent;
+          } else if (d.discount !== undefined && d.discount > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+          }
+          discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
+          discountedPrice = listPrice * (1 - appliedDiscount / 100);
+        } else {
+          // FIXED price
+          basePriceExcl = Number(product.level_fixed_price) || 0;
+          discountedPrice = basePriceExcl;
+          if (d.discount !== undefined && d.discount > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+            discountedPrice = basePriceExcl * (1 - appliedDiscount / 100);
+            discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
+          }
+        }
+
         const vatAmount = discountedPrice * (vatRate / 100);
         const finalPrice = discountedPrice + vatAmount;
-        const maxDisc = staff?.max_discount != null ? Number(staff.max_discount) : null;
-        const discountAllowed = maxDisc == null || discount <= maxDisc;
 
         return response({
           authorized: true,
@@ -378,12 +459,17 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           partNumber: product.part_number,
           description: product.description,
           brand: product.brand,
+          category: product.category,
           unit: product.unit,
-          priceExcl: priceExcl.toFixed(2),
-          cost: product.cost ? Number(product.cost).toFixed(2) : null,
-          requestedDiscount: discount,
-          discountAllowed,
+          method: effectiveMethod,
+          cost: cost > 0 ? cost.toFixed(2) : null,
+          markupPercent: appliedMarkup,
+          listPrice: listPrice > 0 ? listPrice.toFixed(2) : null,
+          discountPercent: appliedDiscount,
+          priceExcl: basePriceExcl.toFixed(2),
           discountedPrice: discountedPrice.toFixed(2),
+          requestedDiscount: d.discount ?? (effectiveMethod === "LIST_DISCOUNT" ? appliedDiscount : 0),
+          discountAllowed,
           vat: vatRate,
           vatAmount: vatAmount.toFixed(2),
           finalPrice: finalPrice.toFixed(2),

@@ -344,7 +344,17 @@ export async function saveUser(
           id,
           await hash(data.password),
         ]);
-      await tx.query("DELETE FROM sessions WHERE user_id=$1", [id]);
+      const needsSessionInvalidation =
+        Boolean(data.password) ||
+        data.disabled ||
+        (before &&
+          (before.role_id !== data.role ||
+            before.username !== data.username ||
+            JSON.stringify(before.permissions) !==
+              JSON.stringify(data.permissions)));
+      if (needsSessionInvalidation) {
+        await tx.query("DELETE FROM sessions WHERE user_id=$1", [id]);
+      }
     } else
       await tx.query(
         "INSERT INTO users(id,username,name,role_id,permissions,max_discount,disabled,password_hash,phone) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
