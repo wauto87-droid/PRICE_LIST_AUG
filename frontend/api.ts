@@ -72,6 +72,14 @@ export async function api<T = any>(
   if (result.status === 401 && path !== "auth/login" && path !== "auth/me")
     window.dispatchEvent(new Event("amt-session-expired"));
   const data = await readApiResponse(result);
+  if (
+    data?.error === "MAINTENANCE_MODE" ||
+    (result.status === 503 && data?.maintenance)
+  ) {
+    window.dispatchEvent(
+      new CustomEvent("amt-maintenance-active", { detail: data.maintenance }),
+    );
+  }
   if (!result.ok) {
     const details = Array.isArray(data?.details)
       ? data?.details

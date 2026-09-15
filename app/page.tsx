@@ -119,14 +119,26 @@ export default function App() {
   useEffect(() => {
     const lost = () => setOnline(false);
     window.addEventListener("amt-connection-lost", lost);
+    const onMaintenanceActive = (e: any) => {
+      if (e.detail) {
+        setMaintenance((prev: any) => ({
+          ...prev,
+          workspace: e.detail,
+        }));
+      }
+    };
+    window.addEventListener("amt-maintenance-active", onMaintenanceActive);
     const timer = setInterval(async () => {
       try {
         const r = await fetch(appPath("/api/v1/health"), {
           cache: "no-store",
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(4000),
         });
         setOnline(r.ok && navigator.onLine);
         const data = await r.json().catch(() => null);
+        if (data?.maintenance) {
+          setMaintenance(data.maintenance);
+        }
         const nextRelease =
           data && typeof data.release === "string" ? data.release : "";
         if (nextRelease && !releaseRef.current) {
@@ -137,9 +149,10 @@ export default function App() {
       } catch {
         setOnline(false);
       }
-    }, 10000);
+    }, 2500);
     return () => {
       window.removeEventListener("amt-connection-lost", lost);
+      window.removeEventListener("amt-maintenance-active", onMaintenanceActive);
       clearInterval(timer);
     };
   }, []);
@@ -218,13 +231,15 @@ export default function App() {
   if (
     maintenance?.workspace?.enabled &&
     !bypassMaintenance &&
-    !session?.user?.permissions?.includes("ADMIN_VIEW")
+    !session?.user?.permissions?.includes("ADMIN_VIEW") &&
+    !session?.user?.permissions?.includes("SETTINGS_MANAGE")
   ) {
     return (
       <MaintenanceBanner
         title={t("System Maintenance", "صيانة النظام")}
         text={maintenance.workspace.text}
         image={maintenance.workspace.image}
+        supportMobile={session?.settings?.supportMobile}
         onBypass={() => setBypassMaintenance(true)}
       />
     );

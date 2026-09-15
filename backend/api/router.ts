@@ -98,24 +98,25 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       [root, id, action] = parts,
       method = req.method;
     if (root === "health") {
+      const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
+      const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+      const maintenance = {
+        workspace: {
+          enabled: Boolean(workspace?.data?.workspaceMaintenance),
+          text: workspace?.data?.workspaceMaintenanceText ?? "",
+          image: workspace?.data?.workspaceMaintenanceImage ?? null,
+        },
+        storefront: {
+          enabled: Boolean(storefrontSettings?.data?.maintenanceEnabled),
+          text: storefrontSettings?.data?.maintenanceText ?? "",
+          image: storefrontSettings?.data?.maintenanceImage ?? null,
+        },
+      };
       if (id === "maintenance") {
-        const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
-        const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
-        return response({
-          workspace: {
-            enabled: workspace?.data.workspaceMaintenance ?? false,
-            text: workspace?.data.workspaceMaintenanceText ?? "",
-            image: workspace?.data.workspaceMaintenanceImage ?? null
-          },
-          storefront: {
-            enabled: storefrontSettings?.data.maintenanceEnabled ?? false,
-            text: storefrontSettings?.data.maintenanceText ?? "",
-            image: storefrontSettings?.data.maintenanceImage ?? null
-          }
-        });
+        return response(maintenance);
       }
       await db.query("SELECT 1");
-      return response({ ok: true, release });
+      return response({ ok: true, release, maintenance });
     }
     if (root === "setup" && method === "GET")
       return response({
@@ -136,6 +137,22 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       });
     }
     if (root === "storefront") {
+      const sfRow = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+      const sfMaintenanceEnabled = Boolean(sfRow?.data?.maintenanceEnabled);
+      if (sfMaintenanceEnabled && id !== "configuration" && !(id === "media" && method === "GET")) {
+        return response(
+          {
+            error: "MAINTENANCE_MODE",
+            message: sfRow?.data?.maintenanceText || "Store is currently undergoing maintenance",
+            maintenance: {
+              enabled: true,
+              text: sfRow?.data?.maintenanceText || "",
+              image: sfRow?.data?.maintenanceImage || null,
+            },
+          },
+          503,
+        );
+      }
       const account = await storefront.authenticateAccount(db, req);
       if (!["GET", "HEAD"].includes(method) && id !== "bot") auth.checkOrigin(req);
       if(id==='homepage'&&method==='GET'){
@@ -593,6 +610,30 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
     const settings = await admin.settings(db);
+    const isMaintenanceAdmin =
+      actor.permissions.includes("ADMIN_VIEW") ||
+      actor.permissions.includes("SETTINGS_MANAGE") ||
+      actor.role === "ADMIN";
+    if (
+      settings.workspaceMaintenance &&
+      !isMaintenanceAdmin &&
+      !(root === "auth" && ["me", "logout"].includes(id))
+    ) {
+      return response(
+        {
+          error: "MAINTENANCE_MODE",
+          message:
+            settings.workspaceMaintenanceText ||
+            "Workspace is currently undergoing maintenance",
+          maintenance: {
+            enabled: true,
+            text: settings.workspaceMaintenanceText || "",
+            image: settings.workspaceMaintenanceImage || null,
+          },
+        },
+        503,
+      );
+    }
     if (root === "storefront-admin") {
       if(id==='catalog-options'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({ids:z.array(z.string().uuid()).max(200)}).parse(await body(req));return response({products:(await db.query('SELECT id,part_number,description FROM products WHERE id=ANY($1::uuid[]) ORDER BY part_number',[d.ids])).rows});}
 

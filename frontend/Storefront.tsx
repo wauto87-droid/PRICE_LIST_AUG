@@ -208,6 +208,57 @@ export default function Storefront() {
       document.documentElement.lang = oldLang;
     };
   }, [lang]);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkMaintenance = async () => {
+      try {
+        const res = await fetch(appPath("/api/v1/health/maintenance"), {
+          cache: "no-store",
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!mounted || !d?.storefront) return;
+        setConfig((prev: any) => {
+          if (!prev) return prev;
+          if (
+            prev.maintenanceEnabled !== d.storefront.enabled ||
+            prev.maintenanceText !== d.storefront.text ||
+            prev.maintenanceImage !== d.storefront.image
+          ) {
+            return {
+              ...prev,
+              maintenanceEnabled: d.storefront.enabled,
+              maintenanceText: d.storefront.text,
+              maintenanceImage: d.storefront.image,
+            };
+          }
+          return prev;
+        });
+      } catch {}
+    };
+
+    const timer = setInterval(checkMaintenance, 2500);
+
+    const onMaintenanceActive = (e: any) => {
+      if (e.detail) {
+        setConfig((prev: any) => ({
+          ...prev,
+          maintenanceEnabled: true,
+          maintenanceText: e.detail.text ?? prev?.maintenanceText,
+          maintenanceImage: e.detail.image ?? prev?.maintenanceImage,
+        }));
+      }
+    };
+    window.addEventListener("amt-maintenance-active", onMaintenanceActive);
+
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+      window.removeEventListener("amt-maintenance-active", onMaintenanceActive);
+    };
+  }, []);
   useEffect(() => {
     if (!config?.enabled) return;
     let active = true;
@@ -337,6 +388,7 @@ export default function Storefront() {
         title={t("Store Maintenance", "صيانة المتجر")}
         text={config.maintenanceText}
         image={config.maintenanceImage}
+        supportMobile={config.supportMobile}
         onBypass={() => setBypassMaintenance(true)}
       />
     );
