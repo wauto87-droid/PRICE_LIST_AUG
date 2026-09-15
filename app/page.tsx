@@ -28,8 +28,7 @@ export default function App() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [updateReady, setUpdateReady] = useState(false),
-    [maintenance, setMaintenance] = useState<any>(null),
-    [bypassMaintenance, setBypassMaintenance] = useState(false);
+    [maintenance, setMaintenance] = useState<any>(null);
   const releaseRef = useRef("");
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
   useEffect(() => {
@@ -228,12 +227,11 @@ export default function App() {
   }
   const compactWorkspace = !!session && tab === "workspace";
 
-  if (
-    maintenance?.workspace?.enabled &&
-    !bypassMaintenance &&
-    !session?.user?.permissions?.includes("ADMIN_VIEW") &&
-    !session?.user?.permissions?.includes("SETTINGS_MANAGE")
-  ) {
+  const isMaintenanceAdmin =
+    session?.user?.permissions?.includes("ADMIN_VIEW") ||
+    session?.user?.permissions?.includes("SETTINGS_MANAGE");
+
+  if (session && maintenance?.workspace?.enabled && !isMaintenanceAdmin) {
     return (
       <MaintenanceBanner
         title={t("System Maintenance", "صيانة النظام")}
@@ -241,7 +239,6 @@ export default function App() {
         image={maintenance.workspace.image}
         whatsappNumber={maintenance.workspace.whatsappNumber}
         supportMobile={maintenance.workspace.supportMobile || session?.settings?.supportMobile}
-        onBypass={() => setBypassMaintenance(true)}
       />
     );
   }
@@ -371,6 +368,23 @@ export default function App() {
                 ? t("Set up AMT Electric", "إعداد AMT Electric")
                 : t("Sign in to your workspace", "تسجيل الدخول")}
             </h2>
+            {maintenance?.workspace?.enabled && (
+              <div className="notice" role="alert" style={{ marginBottom: 16 }}>
+                <strong>
+                  {t(
+                    "System Maintenance Active",
+                    "وضع صيانة النظام قيد التشغيل",
+                  )}
+                </strong>
+                <p style={{ margin: "4px 0 0 0", fontSize: 13 }}>
+                  {maintenance?.workspace?.text ||
+                    t(
+                      "Staff catalog and quotation operations are temporarily suspended. Only system administrators can sign in to manage settings.",
+                      "عمليات الكتالوج وعروض الأسعار معلقة مؤقتاً. تسجيل الدخول متاح للمسؤولين فقط لإدارة النظام.",
+                    )}
+                </p>
+              </div>
+            )}
             {setup && (
               <>
                 <label>

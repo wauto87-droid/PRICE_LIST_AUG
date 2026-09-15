@@ -9,14 +9,12 @@ export default function MaintenanceBanner({
   title,
   whatsappNumber,
   supportMobile,
-  onBypass,
 }: {
   text?: string;
   image?: string | null;
   title?: string;
   whatsappNumber?: string | null;
   supportMobile?: string | null;
-  onBypass?: () => void;
 }) {
   const [lang, setLang] = useState<"en" | "ar">(() => {
     if (typeof window !== "undefined") {
@@ -112,16 +110,10 @@ export default function MaintenanceBanner({
                 src={image}
                 alt="System Maintenance"
                 className="maintenance-custom-image"
-                onDoubleClick={onBypass}
-                title={onBypass ? t("Double click for staff access", "انقر مرتين لدخول الموظفين") : undefined}
               />
             </div>
           ) : (
-            <div 
-              className="maintenance-hero-icon" 
-              onDoubleClick={onBypass} 
-              title={onBypass ? t("Double click for staff access", "انقر مرتين لدخول الموظفين") : undefined}
-            >
+            <div className="maintenance-hero-icon">
               <div className="maintenance-icon-halo" aria-hidden="true" />
               <div className="maintenance-icon-core">
                 <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -190,18 +182,6 @@ export default function MaintenanceBanner({
                   <span>{rawPhone}</span>
                 </a>
               )}
-            </div>
-          )}
-
-          {onBypass && (
-            <div className="maintenance-bypass-section">
-              <button 
-                type="button" 
-                onClick={onBypass}
-                className="maintenance-bypass-link"
-              >
-                {t("Staff / Admin Portal Sign In", "تسجيل دخول بوابة الإدارة والموظفين")} &rarr;
-              </button>
             </div>
           )}
         </div>

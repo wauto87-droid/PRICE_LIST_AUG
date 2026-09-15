@@ -90,7 +90,6 @@ export default function Storefront() {
     [revision, setRevision] = useState(0),
     [payment, setPayment] = useState<any>();
   const [customBanner, setCustomBanner] = useState(false);
-  const [bypassMaintenance, setBypassMaintenance] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
@@ -388,7 +387,7 @@ export default function Storefront() {
         ? t("Limited stock", "كمية محدودة")
         : t("Available on backorder", "متاح بالطلب المسبق");
 
-  if (config?.maintenanceEnabled && !bypassMaintenance) {
+  if (config?.maintenanceEnabled) {
     return (
       <MaintenanceBanner
         title={t("Store Maintenance", "صيانة المتجر")}
@@ -396,7 +395,6 @@ export default function Storefront() {
         image={config.maintenanceImage}
         whatsappNumber={config.whatsappNumber}
         supportMobile={config.supportMobile}
-        onBypass={() => setBypassMaintenance(true)}
       />
     );
   }
