@@ -364,15 +364,16 @@ def resource_internal(resource):
     require(not candidates or all(value is candidates[0] for value in candidates), 'Conflicting network internal schemas')
     return candidates[0] if candidates else None
 
-def check_memory(available_kib, command):
+def check_memory(available_kib, command, swap_free_kib=0):
     # Status/stop/recovery inspection must remain usable under memory pressure.
     minimum = (
-        3 * 1024**2 if command == 'install' else
-        2 * 1024**2 if command == 'upgrade' else
+        2 * 1024**2 if command == 'install' else
+        1024 * 1024 if command == 'upgrade' else
         512 * 1024 if command in ('start', 'restore-check') else
         0
     )
-    require(available_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available RAM; no other service will be stopped')
+    effective_kib = available_kib + swap_free_kib
+    require(effective_kib >= minimum, f'{command} needs at least {minimum / 1024**2:g} GiB available memory (RAM + swap); found {effective_kib / 1024**2:.2f} GiB')
 
 def limited_command(args, cpu_quota='100%', memory_max='2G'):
     """Bound maintenance to one core and low I/O priority on a systemd host."""
@@ -725,7 +726,9 @@ class Deployment:
             require(node_version >= MIN_PM2_NODE,
                     f'PM2 runtime requires Node.js {MIN_PM2_NODE[0]}+; found v{".".join(str(part) for part in node_version)}')
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
-        check_memory(int(memory['MemAvailable'].split()[0]), self.args.command)
+        available_kib = int(memory.get('MemAvailable', '0').split()[0])
+        swap_free_kib = int(memory.get('SwapFree', '0').split()[0]) if 'SwapFree' in memory else 0
+        check_memory(available_kib, self.args.command, swap_free_kib)
         legacy_recovery = (self.args.command == 'install' and self.args.resume and
                            (self.args.replace_failed_release or self.args.recover_install))
         self.ownership(first=not self.root.exists(), allow_legacy_db=legacy_recovery)
