@@ -11,6 +11,7 @@ import "./storefront.css";
 import BusinessPortal from "./BusinessPortal";
 import StoreMerchandising from "./StoreMerchandising";
 import StoreReceipts from "./StoreReceipts";
+import MaintenanceBanner from "./MaintenanceBanner";
 export type StoreProduct = {
   id: string;
   part_number: string;
@@ -89,6 +90,7 @@ export default function Storefront() {
     [revision, setRevision] = useState(0),
     [payment, setPayment] = useState<any>();
   const [customBanner, setCustomBanner] = useState(false);
+  const [bypassMaintenance, setBypassMaintenance] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
@@ -328,6 +330,18 @@ export default function Storefront() {
       : value === "LIMITED"
         ? t("Limited stock", "كمية محدودة")
         : t("Available on backorder", "متاح بالطلب المسبق");
+
+  if (config?.maintenanceEnabled && !bypassMaintenance) {
+    return (
+      <MaintenanceBanner
+        title={t("Store Maintenance", "صيانة المتجر")}
+        text={config.maintenanceText}
+        image={config.maintenanceImage}
+        onBypass={() => setBypassMaintenance(true)}
+      />
+    );
+  }
+
   return (
     <main className="sf" dir={lang === "ar" ? "rtl" : "ltr"}>
       <div className="sf-top">

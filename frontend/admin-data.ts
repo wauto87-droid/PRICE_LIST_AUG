@@ -9,6 +9,7 @@ export const selfLoadingAdminSections = [
   "price-watcher",
   "reusable-custom-items",
   "learned-delivery-matches",
+  "maintenance",
 ] as const;
 export function sectionData(result: AdminResult, section: string) {
   return result?.section === section ? result.payload : null;

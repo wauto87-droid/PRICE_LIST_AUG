@@ -62,6 +62,9 @@ const settingsSchema = z
     allowOfflineCache: z.boolean(),
     pdfUnitPrices: z.enum(["BOTH", "EXCL", "INCL"]),
     backupRetentionDays: z.number().int().min(3).max(365),
+    workspaceMaintenance: z.boolean().default(false).optional(),
+    workspaceMaintenanceText: z.string().optional(),
+    workspaceMaintenanceImage: z.string().nullable().optional(),
   })
   .strict();
 export async function saveSettings(db: DB, actor: Actor, input: unknown) {
@@ -350,8 +353,8 @@ export async function saveUser(
         (before &&
           (before.role_id !== data.role ||
             before.username !== data.username ||
-            JSON.stringify(before.permissions) !==
-              JSON.stringify(data.permissions)));
+            JSON.stringify([...(before.permissions || [])].sort()) !==
+              JSON.stringify([...(data.permissions || [])].sort())));
       if (needsSessionInvalidation) {
         await tx.query("DELETE FROM sessions WHERE user_id=$1", [id]);
       }

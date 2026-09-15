@@ -83,7 +83,7 @@ export async function lockActor(db: DB, actor: Actor) {
   assert(
     JSON.stringify(permissions) ===
       JSON.stringify([...actor.permissions].sort()) &&
-      current.max_discount === actor.maxDiscount,
+      Number(current.max_discount) === Number(actor.maxDiscount),
     409,
     "Your permissions changed. Reload and review again",
   );

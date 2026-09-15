@@ -98,6 +98,22 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       [root, id, action] = parts,
       method = req.method;
     if (root === "health") {
+      if (id === "maintenance") {
+        const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
+        const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+        return response({
+          workspace: {
+            enabled: workspace?.data.workspaceMaintenance ?? false,
+            text: workspace?.data.workspaceMaintenanceText ?? "",
+            image: workspace?.data.workspaceMaintenanceImage ?? null
+          },
+          storefront: {
+            enabled: storefrontSettings?.data.maintenanceEnabled ?? false,
+            text: storefrontSettings?.data.maintenanceText ?? "",
+            image: storefrontSettings?.data.maintenanceImage ?? null
+          }
+        });
+      }
       await db.query("SELECT 1");
       return response({ ok: true, release });
     }
@@ -249,7 +265,75 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           ),
         );
       if (id === "bot" && action === "track-order" && method === "POST") {
-        const d = z.object({ query: z.string().trim().min(1).max(100), senderPhone: z.string().optional() }).parse(await body(req));
+        const d = z.object({ query: z.string().trim().min(1).max(100).optional(), senderPhone: z.string().optional(), fetchLatest: z.boolean().optional() }).parse(await body(req));
+        
+        let senderLast9 = null;
+        let isStaff = false;
+        
+        if (d.senderPhone) {
+            const cleanSenderPhone = d.senderPhone.replace(/\D/g, "");
+            senderLast9 = cleanSenderPhone.length >= 9 ? cleanSenderPhone.slice(-9) : null;
+        }
+
+        if (senderLast9) {
+            const staff = await one(db, `
+              SELECT id FROM users 
+              WHERE NOT disabled AND phone IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $1
+              LIMIT 1
+            `, [senderLast9]);
+            if (staff) isStaff = true;
+        }
+
+        // Check if they have ANY orders or are registered to give a better error message
+        let hasAnyOrders = false;
+        let isRegistered = false;
+        if (senderLast9) {
+             const userOrders = await db.any(`
+                SELECT o.id FROM ecommerce_orders o
+                LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
+                WHERE 
+                  (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), 9) = $1)
+                  OR
+                  (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), 9) = $1)
+                LIMIT 1
+             `, [senderLast9]);
+             hasAnyOrders = userOrders.length > 0;
+             
+             const account = await one(db, `
+                SELECT id FROM customer_accounts 
+                WHERE mobile IS NOT NULL AND RIGHT(regexp_replace(mobile, '\\D', '', 'g'), 9) = $1
+                LIMIT 1
+             `, [senderLast9]);
+             isRegistered = !!account;
+        }
+
+        // If they just want their latest order (e.g. from the menu without providing ID)
+        if (d.fetchLatest && senderLast9) {
+             if (hasAnyOrders) {
+                 const latestOrder = await one(db, `
+                      SELECT 
+                        o.id, o.number, o.status, o.totals, o.fulfillment_method, o.fulfillment_data, o.address, o.created_at, jsonb_array_length(o.lines) as item_count, o.lines,
+                        o.guest_contact->>'phone' as guest_phone, ca.mobile as account_phone
+                      FROM ecommerce_orders o
+                      LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
+                      WHERE 
+                        (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), 9) = $1)
+                        OR
+                        (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), 9) = $1)
+                      ORDER BY o.created_at DESC LIMIT 1
+                 `, [senderLast9]);
+                 if (latestOrder) {
+                     return response({ found: true, authorized: true, ...latestOrder });
+                 }
+             } else if (!isStaff) {
+                 return response({ found: false, hasAnyOrders: false, isRegistered });
+             }
+        }
+
+        if (!d.query) {
+             return response({ found: false, hasAnyOrders: hasAnyOrders || isStaff, isRegistered: isRegistered || isStaff });
+        }
+
         const cleanQuery = d.query.replace(/^[#\s]+/, "").trim();
         const order = await one(db, `
           SELECT 
@@ -275,37 +359,25 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             OR (ca.mobile IS NOT NULL AND regexp_replace(ca.mobile, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g'))
           ORDER BY o.created_at DESC LIMIT 1
         `, [d.query, cleanQuery]);
-        if (!order) return response({ found: false });
         
-        if (d.senderPhone) {
-            const cleanSenderPhone = d.senderPhone.replace(/\D/g, "");
-            const senderLast9 = cleanSenderPhone.slice(-9);
-
+        if (!order) return response({ found: false, hasAnyOrders: hasAnyOrders || isStaff });
+        
+        let isAuthorized = isStaff;
+        if (!isAuthorized && senderLast9) {
             const orderGuestPhone = order.guest_phone ? order.guest_phone.replace(/\D/g, "") : "";
             const orderAccountPhone = order.account_phone ? order.account_phone.replace(/\D/g, "") : "";
             
-            let isAuthorized = false;
-
-            if (senderLast9) {
-                if ((orderGuestPhone && orderGuestPhone.slice(-9) === senderLast9) || 
-                    (orderAccountPhone && orderAccountPhone.slice(-9) === senderLast9)) {
-                    isAuthorized = true;
-                } else {
-                    const staff = await one(db, `
-                      SELECT id FROM users 
-                      WHERE NOT disabled AND phone IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $1
-                      LIMIT 1
-                    `, [senderLast9]);
-                    if (staff) {
-                        isAuthorized = true;
-                    }
-                }
-            }
-            
-            if (!isAuthorized) {
-                return response({ found: false, unauthorized: true });
+            if ((orderGuestPhone && orderGuestPhone.slice(-9) === senderLast9) || 
+                (orderAccountPhone && orderAccountPhone.slice(-9) === senderLast9)) {
+                isAuthorized = true;
             }
         }
+        
+        // Return a generic not found to prevent brute-forcing order IDs
+        if (!isAuthorized) {
+            return response({ found: false, hasAnyOrders: hasAnyOrders });
+        }
+        
         return response({
           found: true,
           number: order.number,
@@ -391,7 +463,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               0
             ) as stock_available
           FROM products p
-          JOIN product_pricing pp ON pp.product_id = p.id
+          LEFT JOIN product_pricing pp ON pp.product_id = p.id
           LEFT JOIN brands b ON b.id = p.brand_id
           LEFT JOIN categories c ON c.id = p.category_id
           LEFT JOIN LATERAL (
@@ -581,6 +653,15 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if (id === "quick-price" && action && method === "PUT")
         return response(
           await storefront.quickUpdatePricing(
+            db,
+            actor,
+            uuid(action),
+            await body(req),
+          ),
+        );
+      if (id === "quick-stock" && action && method === "PUT")
+        return response(
+          await storefront.quickUpdateStock(
             db,
             actor,
             uuid(action),

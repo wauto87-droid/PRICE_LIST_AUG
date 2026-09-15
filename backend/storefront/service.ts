@@ -44,6 +44,9 @@ const publicSettings = (input: any) => {
     operationsEnabled: row.data?.operationsEnabled === true,
     bankTransferEnabled:row.data?.bankTransferEnabled!==false,
     bankInstructions:row.data?.bankInstructions||'',
+    maintenanceEnabled: row.data?.maintenanceEnabled ?? false,
+    maintenanceText: row.data?.maintenanceText ?? "",
+    maintenanceImage: row.data?.maintenanceImage ?? null,
   };
 };
 
@@ -90,6 +93,9 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
       bankTransferEnabled:z.boolean().optional(),bankInstructions:z.string().max(2000).optional(),
       onlineHoldMinutes: z.number().int().min(5).max(120).optional(),
       bankHoldMinutes: z.number().int().min(30).max(10080).optional(),
+      maintenanceEnabled: z.boolean().default(false).optional(),
+      maintenanceText: z.string().optional(),
+      maintenanceImage: z.string().nullable().optional(),
     })
     .parse(raw);
   return db.transaction(async (tx) => {
@@ -1618,4 +1624,43 @@ export async function changePassword(db: DB, account: any, raw: unknown) {
   
   // Invalidate other sessions except current if we wanted to, but simple update is fine
   return { success: true };
+}
+
+export async function quickUpdateStock(
+  db: DB,
+  actor: Actor,
+  id: string,
+  raw: unknown,
+) {
+  requirePermission(actor, "PRODUCT_EDIT");
+  const d = z.object({
+    quantity: z.coerce.number(),
+    reason: z.string().optional(),
+  }).parse(raw);
+
+  const product = await one(db, "SELECT id FROM products WHERE id=$1", [id]);
+  if (!product) throw new Error("Product not found");
+
+  const w = await one(db, "SELECT id FROM warehouses WHERE active ORDER BY name LIMIT 1");
+  if (!w) throw new Error("No active warehouse found to assign stock");
+
+  const { uuid } = await import("../../backend/shared/uuid");
+  const idempotency_key = uuid();
+
+  await db.query(`
+    INSERT INTO inventory_movements
+      (id, product_id, warehouse_id, kind, quantity, reference_type, idempotency_key, reason, actor_id)
+    VALUES
+      ($1, $2, $3, 'ADJUSTMENT', $4, 'STOCK_COUNT', $5, $6, $7)
+  `, [
+    uuid(),
+    id,
+    w.id,
+    d.quantity,
+    idempotency_key,
+    d.reason || 'Quick stock adjustment from Storefront Admin',
+    actor.id
+  ]);
+
+  return { success: true, added: d.quantity };
 }

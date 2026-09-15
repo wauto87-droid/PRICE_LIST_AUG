@@ -9,6 +9,7 @@ import Admin from "@/frontend/Admin";
 import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
 import Commercial from "@/frontend/Commercial";
+import MaintenanceBanner from "@/frontend/MaintenanceBanner";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
@@ -26,7 +27,9 @@ export default function App() {
     [message, setMessage] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [updateReady, setUpdateReady] = useState(false);
+    [updateReady, setUpdateReady] = useState(false),
+    [maintenance, setMaintenance] = useState<any>(null),
+    [bypassMaintenance, setBypassMaintenance] = useState(false);
   const releaseRef = useRef("");
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
   useEffect(() => {
@@ -58,6 +61,7 @@ export default function App() {
   async function refresh() {
     setLoading(true);
     try {
+      api("health/maintenance").then(setMaintenance).catch(() => {});
       const s = await api("auth/me");
       const nextRelease = typeof s.release === "string" ? s.release : "";
       setSession(s);
@@ -210,6 +214,22 @@ export default function App() {
     setTab("draft");
   }
   const compactWorkspace = !!session && tab === "workspace";
+
+  if (
+    maintenance?.workspace?.enabled &&
+    !bypassMaintenance &&
+    !session?.user?.permissions?.includes("ADMIN_VIEW")
+  ) {
+    return (
+      <MaintenanceBanner
+        title={t("System Maintenance", "صيانة النظام")}
+        text={maintenance.workspace.text}
+        image={maintenance.workspace.image}
+        onBypass={() => setBypassMaintenance(true)}
+      />
+    );
+  }
+
   return (
     <>
       <header

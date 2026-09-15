@@ -45,6 +45,7 @@ export default function StoreProducts({
   const [pubFilter, setPubFilter] = useState(publication);
   const [activeImageProductId, setActiveImageProductId] = useState<string | null>(null);
   const [quickPriceProduct, setQuickPriceProduct] = useState<any | null>(null);
+  const [quickStockProduct, setQuickStockProduct] = useState<any | null>(null);
   const [editProduct, setEditProduct] = useState<any | null>(null);
   const [showBulkImageMatcher, setShowBulkImageMatcher] = useState(false);
   const [expandedSeoId, setExpandedSeoId] = useState<string | null>(null);
@@ -121,6 +122,35 @@ export default function StoreProducts({
       await onRefresh();
     } catch (e: any) {
       setLocalError(e.message || "Failed to update price");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  const [qsQuantity, setQsQuantity] = useState<string>("");
+  const [qsReason, setQsReason] = useState<string>("");
+
+  function openQuickStock(p: any) {
+    setQuickStockProduct(p);
+    setQsQuantity("");
+    setQsReason("");
+  }
+
+  async function saveQuickStock() {
+    if (!quickStockProduct || !qsQuantity) return;
+    setActionBusy(true);
+    setLocalError("");
+    setLocalNotice("");
+    try {
+      await api(`storefront-admin/quick-stock/${quickStockProduct.id}`, "PUT", {
+        quantity: qsQuantity,
+        reason: qsReason,
+      });
+      setLocalNotice(t("Stock updated successfully", "تم تحديث المخزون بنجاح"));
+      setQuickStockProduct(null);
+      await onRefresh();
+    } catch (e: any) {
+      setLocalError(e.message || "Failed to update stock");
     } finally {
       setActionBusy(false);
     }
@@ -651,6 +681,18 @@ export default function StoreProducts({
                           </button>
                         )}
 
+                        {/* Quick Stock Button */}
+                        {can("PRODUCT_EDIT") && (
+                          <button
+                            type="button"
+                            className="icon-action-btn stock"
+                            onClick={() => openQuickStock(p)}
+                            title={t("Add/Adjust Stock", "إضافة / تعديل المخزون")}
+                          >
+                            📦 {t("Stock", "المخزون")}
+                          </button>
+                        )}
+
                         {/* Full Edit Button */}
                         {can("PRODUCT_EDIT") && can("PRODUCT_VIEW") && (
                           <button
@@ -884,6 +926,87 @@ export default function StoreProducts({
               t={t}
             />
           </section>
+        </div>
+      )}
+
+      {/* QUICK STOCK MODAL */}
+      {quickStockProduct && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setQuickStockProduct(null)}
+        >
+          <div
+            className="quick-price-modal-panel"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("Quick Stock Editor", "محرر المخزون السريع")}
+          >
+            <div className="modal-header">
+              <div>
+                <h3>📦 {t("Quick Stock Editor", "تعديل المخزون السريع")}</h3>
+                <p>
+                  <strong>{quickStockProduct.part_number}</strong> — {quickStockProduct.description}
+                </p>
+                <div style={{ marginTop: '8px' }}>
+                    <span className="stock-pill in-stock">
+                        ✅ {t("Current Available", "المتوفر حالياً")}: {quickStockProduct.available || 0}
+                    </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setQuickStockProduct(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="quick-price-body">
+              <div className="qp-form-grid">
+                <label>
+                  <span>{t("Quantity to Add/Remove (+/-)", "الكمية المضافة/المسحوبة (+/-)")}</span>
+                  <input
+                    type="number"
+                    step="1"
+                    value={qsQuantity}
+                    placeholder="e.g. 50 or -10"
+                    onChange={(e) => setQsQuantity(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="full-width">
+                  <span>{t("Reason / Note", "السبب / الملاحظة")}</span>
+                  <input
+                    type="text"
+                    value={qsReason}
+                    placeholder={t("e.g. Manual inventory count, Received from supplier", "مثال: جرد يدوي، استلام من المورد")}
+                    onChange={(e) => setQsReason(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="quick-price-actions">
+                <button
+                  type="button"
+                  className="primary-action-btn"
+                  onClick={saveQuickStock}
+                  disabled={actionBusy || !qsQuantity}
+                >
+                  {actionBusy ? "⏳" : "💾"} {t("Save Stock", "حفظ المخزون")}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action-btn"
+                  onClick={() => setQuickStockProduct(null)}
+                  disabled={actionBusy}
+                >
+                  {t("Cancel", "إلغاء")}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

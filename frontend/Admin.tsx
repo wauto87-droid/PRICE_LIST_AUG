@@ -33,6 +33,7 @@ import PriceWatcher from "./PriceWatcher";
 import ProductEnrichmentPanel from "./ProductEnrichmentPanel";
 import AdminDashboard from "./AdminDashboard";
 import LearnedDeliveryMatches from "./LearnedDeliveryMatches";
+import MaintenanceAdmin from "./MaintenanceAdmin";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
@@ -87,6 +88,7 @@ const sections = [
   ["audit", "Audit log", "سجل التدقيق", "AUDIT_VIEW"],
   ["backups", "Backups", "النسخ الاحتياطية", "BACKUP_MANAGE"],
   ["settings", "Settings", "الإعدادات", "SETTINGS_MANAGE"],
+  ["maintenance", "Maintenance", "الصيانة", "SETTINGS_MANAGE"],
 ];
 const importActionErrors = new Set([
   "Import could not be uploaded",

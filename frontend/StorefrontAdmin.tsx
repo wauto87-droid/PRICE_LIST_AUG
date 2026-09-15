@@ -175,7 +175,7 @@ export default function StorefrontAdmin({
 
   async function loadCommerce() {
     try {
-      const c = await api("storefront-admin/commerce");
+      const c = await api(`storefront-admin/commerce?_t=${Date.now()}`);
       setCommerceData(c);
     } catch (e: any) {
       console.error("Failed to load commerce data", e);
@@ -195,7 +195,7 @@ export default function StorefrontAdmin({
     const sequence = ++loadSequence.current;
     try {
       const result = await api(
-        `storefront-admin/management?${queryParams(queryStr, pubStr)}&offset=${nextOffset}`,
+        `storefront-admin/management?${queryParams(queryStr, pubStr)}&offset=${nextOffset}&_t=${Date.now()}`,
       );
       if (sequence !== loadSequence.current) return;
       setData(result);

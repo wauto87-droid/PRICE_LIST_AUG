@@ -242,8 +242,10 @@ async function handleBotMessage(msg, client) {
         return;
       }
 
-      const senderPhone = sender.replace(/@.*$/, "");
+      const rawSender = sender.replace(/@.*$/, "");
+      const senderPhone = rawSender.split(":")[0];
 
+      let unauthorizedFallback = false;
       try {
         const res = await fetch(`${appInternalUrl}/storefront/bot/price`, {
           method: "POST",
@@ -259,16 +261,8 @@ async function handleBotMessage(msg, client) {
         const data = await res.json();
 
         if (data.authorized === false) {
-          await client.sendMessage(sender, `🔒 *أمر خاص بموظفي شركة إيه إم تي | AMT Staff Only*
-────────────────────────────
-⚠️ رقم الواتساب الخاص بك غير مسجل كموظف في نظام إيه إم تي.
-لتفعيل صلاحية تسعير الموظفين، يرجى التواصل مع مدير النظام (Admin) لإضافة رقم جوالك في ملف المستخدم الخاص بك.
-
-⚠️ Your WhatsApp phone number is not registered in the AMT staff directory. Please contact your administrator to add your phone number in user management.`);
-          return;
-        }
-
-        if (!data.found) {
+          unauthorizedFallback = true;
+        } else if (!data.found) {
           await client.sendMessage(sender, `🔍 *بحث تسعيرة الموظفين | Staff Price Check*
 ────────────────────────────
 ❌ الصنف *${partNumber}* غير موجود في قاعدة بيانات المتجر أو غير نشط.
@@ -319,12 +313,15 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
 💡 *للطلب أو الحجز أو إضافة تسعيرة، استخدم لوحة تحكم إيه إم تي الداخلية.*`;
         }
 
-        await client.sendMessage(sender, staffCard);
+        if (!unauthorizedFallback) {
+          await client.sendMessage(sender, staffCard);
+        }
       } catch (err) {
         console.error("Bot price command error:", err);
         await client.sendMessage(sender, `❌ حدث خطأ أثناء جلب تسعيرة الصنف: ${partNumber}. يرجى المحاولة لاحقاً.`);
       }
-      return;
+
+      if (!unauthorizedFallback) return;
     }
 
     // LANGUAGE SWITCH COMMAND (ANYTIME)
@@ -354,19 +351,13 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
         return;
       }
 
-      // Check if it's an Arabic greeting, auto-set Arabic and show menu
-      const isArabicGreeting = ["مرحبا", "مرحباً", "اهلا", "أهلا", "هلا", "السلام عليكم", "سلام"].includes(lower);
-      if (isArabicGreeting) {
-        userLanguages[sender] = "ar";
-        saveLanguages();
-        await client.sendMessage(sender, getMainMenu(false, storeUrl));
-        return;
-      }
-
-      // Default to English
+      // Default to English unconditionally for new users
       userLanguages[sender] = "en";
       saveLanguages();
       lang = "en";
+      
+      await client.sendMessage(sender, getMainMenu(true, storeUrl));
+      return;
     }
 
     // Explicit language switch while already set
@@ -485,7 +476,8 @@ To check the status of your order, please reply with your Order Number (e.g., \`
     if (orderMatch || hasOrderKeywords || (isAwaitingOrder && bodyText.length >= 3 && !bodyText.startsWith("!"))) {
       delete userStates[sender];
       const queryNumber = (orderMatch ? orderMatch[0] : bodyText).trim();
-      const senderPhone = sender.replace(/@.*$/, "");
+      const rawSender = sender.replace(/@.*$/, "");
+      const senderPhone = rawSender.split(":")[0];
       try {
         const fetchRes = await fetch(`${appInternalUrl}/storefront/bot/track-order`, {
           method: "POST",
@@ -539,11 +531,22 @@ ${storeUrl}/account
 إذا كان لديك أي استفسار حول الشحنة، أرسل 6 للتواصل مع خدمة العملاء.`;
             await client.sendMessage(sender, orderCard);
             return;
-          } else if (data.unauthorized) {
-            await client.sendMessage(sender, isEn ? 
-              `🔒 *Unauthorized | غير مصرح*\n────────────────────────────\nThis order does not belong to your WhatsApp number.\nPlease register this phone number in your account settings and send the order number again.` : 
-              `🔒 *غير مصرح | Unauthorized*\n────────────────────────────\nهذا الطلب غير مرتبط برقم الواتساب الخاص بك.\nيرجى تسجيل هذا الرقم في حسابك عبر الموقع والمحاولة مرة أخرى.`);
-            return;
+          } else {
+            // Found is false, but let's check hasAnyOrders
+            if (data.hasAnyOrders === false) {
+                let notRegisteredMsg = '';
+                if (data.isRegistered) {
+                    notRegisteredMsg = isEn ?
+                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number (*+${senderPhone}*) is registered, but it is not linked to any recent orders.\n\n🔗 ${storeUrl}/account` :
+                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) مسجل لدينا، ولكنه غير مرتبط بأي طلبات حديثة.\n\n🔗 ${storeUrl}/account`;
+                } else {
+                    notRegisteredMsg = isEn ?
+                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number (*+${senderPhone}*) is not linked to any recent orders.\nIf you are an unregistered user, please ensure you register or checkout using this number on the storefront.\n\n🔗 ${storeUrl}/account` :
+                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) غير مرتبط بأي طلبات حديثة.\nإذا كنت مستخدمًا غير مسجل، يرجى التسجيل أو الطلب باستخدام هذا الرقم في المتجر.\n\n🔗 ${storeUrl}/account`;
+                }
+                await client.sendMessage(sender, notRegisteredMsg);
+                return;
+            }
           }
         }
       } catch (err) {
