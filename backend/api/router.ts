@@ -460,6 +460,15 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             await body(req),
           ),
         );
+      if (id === "quick-price" && action && method === "PUT")
+        return response(
+          await storefront.quickUpdatePricing(
+            db,
+            actor,
+            uuid(action),
+            await body(req),
+          ),
+        );
       if (id === "zones" && method === "PUT")
         return response(await storefront.saveZone(db, actor, await body(req)));
       if (id === "accounts" && action && method === "PUT")

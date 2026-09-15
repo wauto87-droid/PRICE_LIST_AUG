@@ -1021,7 +1021,100 @@ export async function management(db: DB, actor: Actor, q = "", raw: unknown = {}
   const total=Number((await one(db,`SELECT count(*) n FROM products p WHERE ${where}`,params))!.n);
   if(options.selection){assert(total<=10000,400,"Narrow the filters to select at most 10,000 products per operation");return {products:(await db.query(`SELECT p.id,p.version FROM products p WHERE ${where} ORDER BY p.part_number,p.id`,params)).rows,total};}
   return {settings:await configuration(db,actor),defaultVat:(await one(db,'SELECT data FROM settings WHERE id=1'))?.data.vat||'15',accounts:await listAccounts(db,actor),zones:(await db.query("SELECT * FROM delivery_zones ORDER BY name")).rows,total,offset:options.offset,
-    products:(await db.query(`SELECT p.id,p.part_number,p.description,p.active,p.storefront_published,p.storefront_slug,p.storefront_content,p.version FROM products p WHERE ${where} ORDER BY p.part_number,p.id LIMIT 100 OFFSET $3`,[...params,options.offset])).rows};
+    products:(await db.query(`SELECT 
+      p.id,p.part_number,p.description,p.active,p.storefront_published,p.storefront_slug,p.storefront_content,p.version,
+      b.name AS brand_name,
+      c.name AS category_name,
+      (SELECT i.id FROM product_images i WHERE i.product_id=p.id ORDER BY i.display_order, i.created_at LIMIT 1) AS primary_image_id,
+      (SELECT count(*)::int FROM product_images i WHERE i.product_id=p.id) AS image_count,
+      (COALESCE((SELECT sum(quantity) FROM inventory_movements m WHERE m.product_id=p.id AND kind NOT IN ('RESERVE','RELEASE')),0)
+       - COALESCE((SELECT sum(quantity) FROM stock_reservations r WHERE r.product_id=p.id AND status='ACTIVE'),0)
+       - COALESCE((SELECT sum(quantity) FROM commerce_holds h WHERE h.product_id=p.id AND status='ACTIVE'),0))::text AS available,
+      pp.cost::text AS cost,
+      pp.markup::text AS markup,
+      pp.list_price::text AS list_price,
+      pp.base_discount::text AS base_discount,
+      pp.master_excl::text AS master_excl,
+      pp.vat::text AS vat,
+      pp.method AS pricing_method,
+      pp.default_level,
+      COALESCE((
+        SELECT json_agg(json_build_object(
+          'code', l.code,
+          'name', l.code,
+          'active', l.active,
+          'method', l.method,
+          'fixedPrice', l.fixed_price::text,
+          'markup', l.markup::text,
+          'listPrice', l.list_price::text,
+          'baseDiscount', l.base_discount::text
+        ))
+        FROM product_selling_levels l
+        WHERE l.product_id=p.id
+      ), '[]'::json) AS levels
+    FROM products p 
+    LEFT JOIN product_pricing pp ON pp.product_id=p.id
+    LEFT JOIN brands b ON b.id=p.brand_id
+    LEFT JOIN categories c ON c.id=p.category_id
+    WHERE ${where} ORDER BY p.part_number,p.id LIMIT 100 OFFSET $3`,[...params,options.offset])).rows};
+}
+export async function quickUpdatePricing(
+  db: DB,
+  actor: Actor,
+  id: string,
+  raw: unknown,
+) {
+  requirePermission(actor, "PRODUCT_EDIT");
+  requirePermission(actor, "COST_VIEW");
+  const d = z
+    .object({
+      cost: z.string().optional(),
+      listPrice: z.string().optional(),
+      baseDiscount: z.string().optional(),
+      markup: z.string().optional(),
+      method: z.enum(["COST_MARKUP", "LIST_DISCOUNT"]).optional(),
+      vat: z.string().optional(),
+      defaultLevel: z.enum(["WHOLESALE", "RETAIL", "END_CUSTOMER"]).optional(),
+      levels: z.array(z.any()).optional(),
+    })
+    .parse(raw);
+
+  const { getProduct, toInput, saveProduct } = await import("../products/service");
+  const existing = await getProduct(db, id);
+  const input = toInput(existing);
+  if (d.cost !== undefined) input.cost = d.cost;
+  if (d.listPrice !== undefined) input.listPrice = d.listPrice;
+  if (d.baseDiscount !== undefined) input.baseDiscount = d.baseDiscount;
+  if (d.markup !== undefined) input.markup = d.markup;
+  if (d.method !== undefined) input.method = d.method;
+  if (d.vat !== undefined) input.vat = d.vat;
+  if (d.defaultLevel !== undefined) input.defaultLevel = d.defaultLevel;
+  if (d.levels !== undefined) {
+    input.levels = d.levels;
+  } else if (input.levels && d.defaultLevel) {
+    const found = input.levels.find((l: any) => l.code === d.defaultLevel);
+    if (found) {
+      found.active = true;
+      found.method = input.method;
+      found.markup = input.markup;
+      found.listPrice = input.listPrice;
+      found.baseDiscount = input.baseDiscount;
+    } else {
+      input.levels.push({
+        code: d.defaultLevel,
+        active: true,
+        method: input.method,
+        fixedPrice: "0",
+        markup: input.markup,
+        listPrice: input.listPrice,
+        baseDiscount: input.baseDiscount,
+      });
+    }
+  }
+
+  return await db.transaction(async (tx) => {
+    return await saveProduct(tx, actor, input, id, existing.version);
+  });
 }
 export async function publishProduct(
   db: DB,

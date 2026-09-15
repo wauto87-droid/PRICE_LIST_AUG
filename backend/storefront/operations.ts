@@ -389,12 +389,14 @@ export async function orderAction(
   await feature(db, "operationsEnabled");
   const d = z
     .object({
-      action: z.enum(["CANCEL", "PAYMENT", "TRACKING"]),
+      action: z.enum(["CANCEL", "PAYMENT", "TRACKING", "CONFIRM", "PROCESSING", "DELIVER"]),
       version: z.number().int(),
       amount: amount.optional(),
       reference: z.string().max(200).default(""),
       carrier: z.string().max(100).default(""),
       tracking: z.string().max(200).default(""),
+      warehouseId: z.string().uuid().optional(),
+      notes: z.string().max(1000).default(""),
       idempotencyKey: z.string().uuid(),
     })
     .parse(raw);
@@ -492,10 +494,28 @@ export async function orderAction(
         "UPDATE ecommerce_orders SET paid_amount=$2,hold_expires_at=CASE WHEN $2::numeric=(totals->>'total')::numeric THEN NULL ELSE hold_expires_at END,version=version+1 WHERE id=$1",
         [id, paid.toFixed(2)],
       );
+    } else if (d.action === "CONFIRM") {
+      assert(!["CANCELLED", "FAILED"].includes(o.status), 409, "Cancelled or failed orders cannot be confirmed");
+      await tx.query(
+        "UPDATE ecommerce_orders SET status='CONFIRMED',warehouse_id=COALESCE($2,warehouse_id),fulfillment_data=fulfillment_data||$3::jsonb,version=version+1 WHERE id=$1",
+        [id, d.warehouseId || null, json({ confirmedAt: new Date().toISOString(), fulfillmentStatus: 'CONFIRMED' })],
+      );
+    } else if (d.action === "PROCESSING") {
+      assert(!["CANCELLED", "FAILED"].includes(o.status), 409, "Cancelled or failed orders cannot be processed");
+      await tx.query(
+        "UPDATE ecommerce_orders SET status=CASE WHEN status IN ('PENDING_REVIEW','PENDING_PAYMENT') THEN 'CONFIRMED' ELSE status END,warehouse_id=COALESCE($2,warehouse_id),fulfillment_data=fulfillment_data||$3::jsonb,version=version+1 WHERE id=$1",
+        [id, d.warehouseId || null, json({ processingAt: new Date().toISOString(), fulfillmentStatus: 'PROCESSING' })],
+      );
+    } else if (d.action === "DELIVER") {
+      assert(!["CANCELLED", "FAILED"].includes(o.status), 409, "Cancelled or failed orders cannot be delivered");
+      await tx.query(
+        "UPDATE ecommerce_orders SET fulfillment_data=fulfillment_data||$2::jsonb,version=version+1 WHERE id=$1",
+        [id, json({ deliveredAt: new Date().toISOString(), fulfillmentStatus: 'DELIVERED' })],
+      );
     } else {
       await tx.query(
         "UPDATE ecommerce_orders SET fulfillment_data=fulfillment_data||$2::jsonb,version=version+1 WHERE id=$1",
-        [id, json({ carrier: d.carrier, tracking: d.tracking })],
+        [id, json({ carrier: d.carrier, tracking: d.tracking, shippedAt: new Date().toISOString(), fulfillmentStatus: 'SHIPPED' })],
       );
     }
     await event(tx, {
@@ -507,8 +527,14 @@ export async function orderAction(
         d.action === "PAYMENT"
           ? `Payment recorded: ${d.amount} SAR. Reference: ${d.reference}`
           : d.action === "TRACKING"
-            ? `Shipment: ${d.carrier} ${d.tracking}`
-            : "Order cancelled.",
+            ? `Shipment updated: ${d.carrier} ${d.tracking}`
+            : d.action === "CONFIRM"
+              ? "Order confirmed by store admin."
+              : d.action === "PROCESSING"
+                ? "Order is being prepared in warehouse."
+                : d.action === "DELIVER"
+                  ? "Order marked as delivered."
+                  : "Order cancelled.",
     });
     await audit(
       tx,

@@ -10,6 +10,9 @@ import BulkProductImages from "./BulkProductImages";
 import { ProductImageManager } from "./ProductImages";
 import WhatsAppAdmin from "./WhatsAppAdmin";
 import StoreInventory from "./StoreInventory";
+import StoreOrders from "./StoreOrders";
+import StoreProducts from "./StoreProducts";
+import "./storefront.css";
 
 export default function StorefrontAdmin({
   t,
@@ -22,45 +25,99 @@ export default function StorefrontAdmin({
 }) {
   const [edit, setEdit] = useState<any>();
   const [imageProduct, setImageProduct] = useState<string>();
-  const [optionProducts,setOptionProducts]=useState<any[]>([]);
-  const addOptions=(rows:any[])=>setOptionProducts(current=>[...new Map([...current,...rows].map(p=>[p.id,p])).values()]);
+  const [optionProducts, setOptionProducts] = useState<any[]>([]);
+  const addOptions = (rows: any[]) =>
+    setOptionProducts((current) => [
+      ...new Map([...current, ...rows].map((p) => [p.id, p])).values(),
+    ]);
   const loadSequence = useRef(0);
   const [selected, setSelected] = useState<string[]>([]);
-  const [versions,setVersions]=useState<Record<string,number>>({});
-  const [offset,setOffset]=useState(0),[publication,setPublication]=useState("ALL");
-  const queryParams=()=>`q=${encodeURIComponent(q)}&publication=${publication}`;
-  async function selectAll(){setBusy(true);try{const r=await api(`storefront-admin/management?${queryParams()}&selection=true`);setSelected(r.products.map((p:any)=>p.id));setVersions(Object.fromEntries(r.products.map((p:any)=>[p.id,p.version])))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+  const [versions, setVersions] = useState<Record<string, number>>({});
+  const [offset, setOffset] = useState(0);
+  const [publication, setPublication] = useState("ALL");
+  const [data, setData] = useState<any>();
+  const [commerceData, setCommerceData] = useState<any>();
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+
+  // 6 Primary Enterprise Hubs
+  // "orders" | "products" | "marketing" | "corporate" | "whatsapp" | "settings"
+  const [tab, updateTab] = useState<string>("orders");
+
+  // Secondary sub-tabs for grouped hubs
+  const [marketingSubTab, setMarketingSubTab] = useState<"homepage" | "promotions" | "seo">("homepage");
+  const [corporateSubTab, setCorporateSubTab] = useState<"customers" | "accounts" | "pricing" | "quotes" | "returns">("customers");
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "zones" | "inventory">("general");
+
+  const [q, setQ] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const queryParams = (queryStr = q, pubStr = publication) =>
+    `q=${encodeURIComponent(queryStr)}&publication=${pubStr}`;
+
+  async function selectAll() {
+    setBusy(true);
+    try {
+      const r = await api(
+        `storefront-admin/management?${queryParams()}&selection=true`,
+      );
+      setSelected(r.products.map((p: any) => p.id));
+      setVersions(
+        Object.fromEntries(r.products.map((p: any) => [p.id, p.version])),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function publishSelected(published: boolean) {
-    setBusy(true); setError(""); setNotice("");
-    const pending = new Set(selected), failures: string[] = [];
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const pending = new Set(selected),
+      failures: string[] = [];
     let updated = 0;
     try {
       for (let i = 0; i < selected.length; i += 100) {
         const result = await api("storefront-admin/bulk-publish", "PUT", {
-          items: selected.slice(i,i+100).map(id => ({id, version: versions[id], published})),
+          items: selected
+            .slice(i, i + 100)
+            .map((id) => ({ id, version: versions[id], published })),
         });
         for (const row of result.results) {
-          if (row.ok) { pending.delete(row.id); updated++; }
-          else failures.push(row.id + ": " + row.error);
+          if (row.ok) {
+            pending.delete(row.id);
+            updated++;
+          } else failures.push(row.id + ": " + row.error);
         }
       }
-    } catch (e) { failures.push((e as Error).message); }
-    finally {
+    } catch (e) {
+      failures.push((e as Error).message);
+    } finally {
       setSelected([...pending]);
       await load();
       setNotice(t("Updated", "تم تحديث") + ": " + updated);
-      setError(failures.join("; "));
+      if (failures.length) setError(failures.join("; "));
       setBusy(false);
     }
   }
+
   const can = (p: string) => user?.permissions?.includes(p);
-  const [data, setData] = useState<any>(),
-    [tab, updateTab] = useState("overview"),
-    [q, setQ] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState("");
-  const tabs = ["overview","products","homepage","customers","pricing","quotes","orders","returns","promotions","inventory","settings","whatsapp","zones","accounts"];
+
+  const hubs = [
+    ["orders", "🛍️ Orders & Sales", "🛍️ الطلبات والمبيعات"],
+    ["products", "📦 Products Catalog", "📦 كتالوج المنتجات"],
+    ["marketing", "🎨 Store & Marketing", "🎨 واجهة المتجر والتسويق"],
+    ["corporate", "🏢 Corporate & B2B", "🏢 حسابات وطلبات الشركات"],
+    ...(can("SETTINGS_MANAGE")
+      ? [["whatsapp", "💬 WhatsApp & Bot", "💬 واتساب والبوت"]]
+      : []),
+    ["settings", "⚙️ Store Settings", "⚙️ إعدادات المتجر"],
+  ];
+
   function setTab(value: string) {
     updateTab(value);
     const url = new URL(location.href);
@@ -68,33 +125,102 @@ export default function StorefrontAdmin({
     url.searchParams.set("storeTab", value);
     history.pushState(null, "", url);
   }
+
+  // Restore active tab from query params with backward compatibility for old tabs
   useEffect(() => {
     const restore = () => {
       const value = new URLSearchParams(location.search).get("storeTab");
-      updateTab(value && tabs.includes(value) ? value : "overview");
+      if (!value) return;
+
+      if (["orders"].includes(value)) {
+        updateTab("orders");
+      } else if (["products"].includes(value)) {
+        updateTab("products");
+      } else if (["homepage", "promotions", "marketing"].includes(value)) {
+        updateTab("marketing");
+        if (value === "homepage" || value === "promotions") {
+          setMarketingSubTab(value as any);
+        }
+      } else if (["customers", "pricing", "quotes", "returns", "accounts", "corporate"].includes(value)) {
+        updateTab("corporate");
+        if (["customers", "pricing", "quotes", "returns", "accounts"].includes(value)) {
+          setCorporateSubTab(value as any);
+        }
+      } else if (["whatsapp"].includes(value)) {
+        updateTab("whatsapp");
+      } else if (["settings", "zones", "inventory"].includes(value)) {
+        updateTab("settings");
+        if (value === "zones" || value === "inventory") {
+          setSettingsSubTab(value as any);
+        }
+      } else {
+        updateTab("orders");
+      }
     };
     restore();
     window.addEventListener("popstate", restore);
+
     const id = new URLSearchParams(location.search).get("editProduct");
     if (id && can("PRODUCT_EDIT") && can("PRODUCT_VIEW")) {
-      if (can("COST_VIEW")) api("products/" + encodeURIComponent(id)).then(r => setEdit({...r, partNumber: r.part_number || r.partNumber})).catch(e => setError(e.message));
+      if (can("COST_VIEW"))
+        api("products/" + encodeURIComponent(id))
+          .then((r) =>
+            setEdit({ ...r, partNumber: r.part_number || r.partNumber }),
+          )
+          .catch((e) => setError(e.message));
       else setImageProduct(id);
     }
     return () => window.removeEventListener("popstate", restore);
   }, []);
-  async function load(nextOffset=offset) {
+
+  async function loadCommerce() {
+    try {
+      const c = await api("storefront-admin/commerce");
+      setCommerceData(c);
+    } catch (e: any) {
+      console.error("Failed to load commerce data", e);
+    }
+  }
+
+  async function loadWarehouses() {
+    try {
+      const w = await api("warehouses?pageSize=100&active=ACTIVE");
+      setWarehouses(w.items || []);
+    } catch (e: any) {
+      console.error("Failed to load warehouses", e);
+    }
+  }
+
+  async function load(nextOffset = offset, queryStr = q, pubStr = publication) {
     const sequence = ++loadSequence.current;
     try {
-      const result=await api(`storefront-admin/management?${queryParams()}&offset=${nextOffset}`);
+      const result = await api(
+        `storefront-admin/management?${queryParams(queryStr, pubStr)}&offset=${nextOffset}`,
+      );
       if (sequence !== loadSequence.current) return;
-      setData(result);setOffset(nextOffset);addOptions(result.products);
-      setVersions(previous=>({...previous,...Object.fromEntries(result.products.filter((p:any)=>!selected.includes(p.id)).map((p:any)=>[p.id,p.version]))}));
+      setData(result);
+      setOffset(nextOffset);
+      addOptions(result.products);
+      setVersions((previous) => ({
+        ...previous,
+        ...Object.fromEntries(
+          result.products
+            .filter((p: any) => !selected.includes(p.id))
+            .map((p: any) => [p.id, p.version]),
+        ),
+      }));
       setError("");
-    } catch(e){if (sequence === loadSequence.current) setError((e as Error).message)}
+    } catch (e) {
+      if (sequence === loadSequence.current) setError((e as Error).message);
+    }
   }
+
   useEffect(() => {
     load();
+    loadCommerce();
+    loadWarehouses();
   }, []);
+
   async function save(path: string, body: unknown) {
     setBusy(true);
     setError("");
@@ -102,6 +228,7 @@ export default function StorefrontAdmin({
     try {
       await api(path, "PUT", body);
       await load();
+      await loadCommerce();
       setNotice(t("Saved", "تم الحفظ"));
     } catch (e) {
       setError((e as Error).message);
@@ -109,607 +236,545 @@ export default function StorefrontAdmin({
       setBusy(false);
     }
   }
+
   return (
     <section
-      className="card"
-      aria-label={t("Store management", "إدارة المتجر")}
+      className="storefront-admin-container"
+      aria-label={t("Storefront Operations & Hub", "مركز إدارة وتشغيل المتجر")}
     >
-      <div className="section-head">
-        <div>
-          <h2>{t("Store management", "إدارة المتجر")}</h2>
+      {/* ENTERPRISE STOREFRONT HEADER */}
+      <div className="storefront-admin-header">
+        <div className="header-title-block">
+          <h2>{t("Storefront Operations & Management", "إدارة المتجر الإلكتروني والطلبات")}</h2>
           <p>
             {t(
-              "Open your store, publish products and manage customer access.",
-              "افتح متجرك وانشر المنتجات وأدر حسابات العملاء.",
+              "Process orders, manage catalog, configure promotions, and control store settings in a unified dashboard.",
+              "معالجة الطلبات، إدارة المنتجات والصور والأسعار، وتحديث إعدادات المتجر من لوحة تحكم موحدة.",
             )}
           </p>
         </div>
-        <a href={appPath("/store")} target="_blank" rel="noreferrer">
-          {t("Open storefront ↗", "فتح المتجر ↗")}
-        </a>
-      </div>
-      <div className="actions">
-        {[
-          ["overview", "Overview", "نظرة عامة"],
-          ["products", "Products", "المنتجات"],
-          ["homepage", "Homepage", "الصفحة الرئيسية"],
-          ["customers", "Companies", "الشركات"],
-          ["pricing", "Company prices", "أسعار الشركات"],
-          ["quotes", "Requirements & quotes", "المتطلبات والعروض"],
-          ["orders", "Orders & payments", "الطلبات والمدفوعات"],
-          ["returns", "Returns & refunds", "المرتجعات والمبالغ المستردة"],
-          ["promotions", "Promotions", "العروض"],
-          ["settings", "Store settings", "إعدادات المتجر"],
-          ...(can("SETTINGS_MANAGE") ? [["whatsapp", "WhatsApp OTP", "واتساب والتحقق"]] : []),
-          ["zones", "Delivery zones", "مناطق التوصيل"],
-          ["accounts", "Business accounts", "حسابات الشركات"],
-        ].map(([key, en, ar]) => (
-          <button
-            key={key}
-            className={tab === key ? "primary" : ""}
-            onClick={() => setTab(key)}
+        <div className="header-right-actions">
+          <a
+            href={appPath("/store")}
+            target="_blank"
+            rel="noreferrer"
+            className="storefront-preview-btn"
           >
-            {t(en, ar)}
-          </button>
-        ))}
+            🌐 {t("Open Storefront ↗", "فتح المتجر الإلكتروني ↗")}
+          </a>
+        </div>
       </div>
-      <div className="actions">
-        {can("INVENTORY_VIEW") && (
-          <button onClick={() => setTab("inventory")}>
-            {t("Inventory & stock", "المخزون والأرصدة")}
-          </button>
-        )}
-        {can("INVENTORY_MANAGE") && (
-          <button onClick={() => navigate("warehouses")}>
-            {t("Warehouses", "المستودعات")}
-          </button>
-        )}
-        {can("SALES_ORDER_MANAGE") && (
-          <button onClick={() => navigate("orders")}>
-            {t("Fulfillment & deliveries", "التنفيذ والتسليم")}
-          </button>
-        )}
-      </div>
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p role="status">{notice}</p>}
-      {tab === "whatsapp" && can("SETTINGS_MANAGE") && <WhatsAppAdmin t={t}/> }
-      {tab === "whatsapp" ? null : !data ? (
-        <button onClick={() => load()}>{t("Load management", "تحميل الإدارة")}</button>
-      ) : (
-        <>
-          {["homepage","pricing","quotes","promotions","inventory"].includes(tab) && <CatalogOptionsSearch t={t} onResults={addOptions}/>}
-          {[
-            "overview",
-            "homepage",
-            "customers",
-            "pricing",
-            "quotes",
-            "orders",
-            "returns",
-            "promotions",
-          ].includes(tab) && (
-            <CommerceConsole
-              tab={tab}
-              t={t}
-              products={optionProducts}
-              user={user}
-            />
-          )}
-          {tab === "homepage" && <CategorySeo t={t}/>}
-          {tab === "inventory" && (
-            <StoreInventory t={t} products={optionProducts} user={user} />
-          )}
-          {tab === "settings" && (
-            <form
-              key={data.settings.version}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const f = new FormData(e.currentTarget);
-                save("storefront-admin", {
-                  version: data.settings.version,
-                  enabled: f.has("enabled"),
-                  companyName: f.get("companyName"),
-                  companyNameAr: f.get("companyNameAr"),
-                  hero: f.get("hero"),
-                  heroAr: f.get("heroAr"),
-                  supportMobile: f.get("supportMobile"),
-                  deliveryEnabled: f.has("deliveryEnabled"),
-                  pickupEnabled: f.has("pickupEnabled"),
-                  businessEnabled: f.has("businessEnabled"),
-                  operationsEnabled: f.has("operationsEnabled"),
-                  bankTransferEnabled:f.has('bankTransferEnabled'),bankInstructions:String(f.get('bankInstructions')||''),
-                  onlineHoldMinutes: Number(f.get("onlineHoldMinutes")),
-                  bankHoldMinutes: Number(f.get("bankHoldMinutes")),
-                });
-              }}
-            >
-              <p className="notice">
-                {data.settings.enabled
-                  ? t(
-                      "Your store is open. Only published products appear.",
-                      "المتجر مفتوح. تظهر المنتجات المنشورة فقط.",
-                    )
-                  : t(
-                      "Your store is closed. Enable it below, then publish products in Products.",
-                      "المتجر مغلق. فعّله أدناه ثم انشر المنتجات.",
-                    )}
-              </p>
-              <label>
-                <input
-                  type="checkbox"
-                  name="enabled"
-                  defaultChecked={data.settings.enabled}
-                />{" "}
-                {t("Store is open", "المتجر مفتوح")}
-              </label>
-              <div className="form-grid">
-                <label><input type="checkbox" name="bankTransferEnabled" defaultChecked={data.settings.data.bankTransferEnabled!==false}/>{t('Enable reviewed bank transfers','تفعيل التحويل البنكي بعد المراجعة')}</label><label>{t('Bank payment instructions (beneficiary, bank, IBAN)','تعليمات التحويل (المستفيد، البنك، الآيبان)')}<textarea name="bankInstructions" defaultValue={data.settings.data.bankInstructions||''}/></label>
-                {[
-                  ["companyName", "Company name", "اسم الشركة"],
-                  [
-                    "companyNameAr",
-                    "Arabic company name",
-                    "اسم الشركة بالعربية",
-                  ],
-                  ["hero", "Store headline", "عنوان المتجر"],
-                  ["heroAr", "Arabic headline", "العنوان بالعربية"],
-                  ["supportMobile", "Support phone", "هاتف الدعم"],
-                ].map(([key, en, ar]) => (
-                  <label key={key}>
-                    {t(en, ar)}
-                    <input
-                      name={key}
-                      defaultValue={
-                        data.settings.data[key] ||
-                        (key === "companyName" ? "AMT Electric" : "")
-                      }
-                      required={key === "companyName"}
-                    />
-                  </label>
-                ))}
-              </div>
-              <label>
-                <input
-                  type="checkbox"
-                  name="deliveryEnabled"
-                  defaultChecked={data.settings.data.deliveryEnabled !== false}
-                />{" "}
-                {t(
-                  "Enable delivery (configure zones below)",
-                  "تفعيل التوصيل (حدد المناطق)",
-                )}
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  name="pickupEnabled"
-                  defaultChecked={data.settings.data.pickupEnabled !== false}
-                />{" "}
-                {t(
-                  "Enable pickup (configure pickup branches in Warehouses)",
-                  "تفعيل الاستلام (حدد الفروع في المستودعات)",
-                )}
-              </label>
-              <p>
-                {t(
-                  "Card payments and verification require server provider configuration.",
-                  "الدفع بالبطاقة والتحقق يتطلبان إعداد المزود على الخادم.",
-                )}
-              </p>
-              <div className="form-grid">
-                <label>
-                  <input
-                    name="businessEnabled"
-                    type="checkbox"
-                    defaultChecked={data.settings.data.businessEnabled}
-                  />
-                  {t(
-                    "Enable company portal and requests",
-                    "تفعيل بوابة الشركات والطلبات",
-                  )}
-                </label>
-                <label>
-                  <input
-                    name="operationsEnabled"
-                    type="checkbox"
-                    defaultChecked={data.settings.data.operationsEnabled}
-                  />
-                  {t(
-                    "Enable payment operations and returns",
-                    "تفعيل عمليات الدفع والمرتجعات",
-                  )}
-                </label>
-                <label>
-                  {t(
-                    "Online payment hold (minutes)",
-                    "حجز الدفع الإلكتروني (دقائق)",
-                  )}
-                  <input
-                    type="number"
-                    min="5"
-                    max="120"
-                    name="onlineHoldMinutes"
-                    defaultValue={data.settings.data.onlineHoldMinutes || 15}
-                  />
-                </label>
-                <label>
-                  {t(
-                    "Bank review hold (minutes)",
-                    "حجز مراجعة التحويل (دقائق)",
-                  )}
-                  <input
-                    type="number"
-                    min="30"
-                    max="10080"
-                    name="bankHoldMinutes"
-                    defaultValue={data.settings.data.bankHoldMinutes || 1440}
-                  />
-                </label>
-              </div>
-              <button className="primary" disabled={busy}>
-                {t("Save store settings", "حفظ إعدادات المتجر")}
-              </button>
-            </form>
-          )}
 
-          {tab === "products" && (
-            <>
-              {can("PRODUCT_EDIT") && <BulkProductImages t={t}/>}
-              <div className="actions">
-                {can("PRODUCT_CREATE") && can("COST_VIEW") && (
-                  <button
-                    className="primary"
-                    onClick={() => setEdit({ ...blankProduct,vat:data.defaultVat })}
-                  >
-                    {t("Add product", "إضافة منتج")}
-                  </button>
+      {/* 6 MODERN ENTERPRISE HUBS NAVIGATION */}
+      <nav className="storefront-hubs-nav" aria-label={t("Storefront Hubs", "أقسام إدارة المتجر")}>
+        {hubs.map(([key, en, ar]) => {
+          const isActive = tab === key;
+          const orderBadge = key === "orders" && commerceData?.orders?.length ? commerceData.orders.length : null;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={`hub-nav-btn ${isActive ? "active" : ""}`}
+              onClick={() => setTab(key)}
+            >
+              <span>{t(en, ar)}</span>
+              {orderBadge !== null && (
+                <span className="hub-badge-count">{orderBadge}</span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* SYSTEM NOTIFICATIONS & ALERTS */}
+      {error && (
+        <div className="notice error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="notice success" role="status">
+          {notice}
+        </div>
+      )}
+
+      {/* MAIN CONTENT HUBS */}
+      <div className="storefront-hub-content">
+        {/* HUB 1: ORDERS & SALES (AMAZON / FLIPKART STYLE) */}
+        {tab === "orders" && (
+          <StoreOrders
+            t={t}
+            user={user}
+            orders={commerceData?.orders || []}
+            warehouses={warehouses}
+            onRefresh={async () => {
+              await loadCommerce();
+            }}
+          />
+        )}
+
+        {/* HUB 2: PRODUCTS CATALOG (ALL-IN-ONE WINDOW) */}
+        {tab === "products" && data && (
+          <StoreProducts
+            t={t}
+            user={user}
+            data={data}
+            offset={offset}
+            publication={publication}
+            searchQuery={q}
+            selectedIds={selected}
+            busy={busy}
+            onSearch={(newQ, newPub) => {
+              setQ(newQ);
+              setPublication(newPub);
+              setSelected([]);
+              load(0, newQ, newPub);
+            }}
+            onPageChange={(newOffset) => load(newOffset)}
+            onSelectionChange={(ids) => setSelected(ids)}
+            onSelectAll={selectAll}
+            onBulkPublish={publishSelected}
+            onSinglePublish={async (id, published, version) => {
+              await save(`storefront-admin/products/${id}`, { published, version });
+            }}
+            onRefresh={async () => {
+              await load();
+            }}
+          />
+        )}
+
+        {/* HUB 3: STOREFRONT & MARKETING */}
+        {tab === "marketing" && (
+          <div className="marketing-hub-wrapper">
+            <div className="sub-hubs-toolbar">
+              {[
+                ["homepage", "🖼️ Banners & Sections", "🖼️ البنرات والأقسام"],
+                ["promotions", "🎟️ Offers & Coupons", "🎟️ العروض والكوبونات"],
+                ["seo", "🌐 Category SEO", "🌐 تهيئة محركات البحث للفئات"],
+              ].map(([subKey, en, ar]) => (
+                <button
+                  key={subKey}
+                  type="button"
+                  className={`sub-hub-btn ${marketingSubTab === subKey ? "active" : ""}`}
+                  onClick={() => setMarketingSubTab(subKey as any)}
+                >
+                  {t(en, ar)}
+                </button>
+              ))}
+            </div>
+
+            {marketingSubTab === "seo" ? (
+              <CategorySeo t={t} />
+            ) : (
+              <>
+                <CatalogOptionsSearch t={t} onResults={addOptions} />
+                <CommerceConsole
+                  tab={marketingSubTab}
+                  t={t}
+                  products={optionProducts}
+                  user={user}
+                />
+              </>
+            )}
+          </div>
+        )}
+
+        {/* HUB 4: CORPORATE & B2B */}
+        {tab === "corporate" && (
+          <div className="corporate-hub-wrapper">
+            <div className="sub-hubs-toolbar">
+              {[
+                ["customers", "🏢 Companies", "🏢 الشركات المسجلة"],
+                ["accounts", "👥 Business Accounts", "👥 حسابات الشركات"],
+                ["pricing", "🏷️ Custom Price Lists", "🏷️ قوائم أسعار الشركات"],
+                ["quotes", "📋 RFQ Requirements & Quotes", "📋 طلبات عروض الأسعار"],
+                ["returns", "🔄 Returns & Refunds", "🔄 المرتجعات"],
+              ].map(([subKey, en, ar]) => (
+                <button
+                  key={subKey}
+                  type="button"
+                  className={`sub-hub-btn ${corporateSubTab === subKey ? "active" : ""}`}
+                  onClick={() => setCorporateSubTab(subKey as any)}
+                >
+                  {t(en, ar)}
+                </button>
+              ))}
+            </div>
+
+            {corporateSubTab === "accounts" ? (
+              <div className="accounts-management-section">
+                {!data?.accounts?.length ? (
+                  <p className="empty-message">
+                    {t("No business account applications yet.", "لا توجد طلبات حسابات شركات.")}
+                  </p>
+                ) : (
+                  data.accounts.map((a: any) => (
+                    <form
+                      className="card"
+                      key={JSON.stringify(a)}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const f = new FormData(e.currentTarget);
+                        save(`storefront-admin/accounts/${a.id}`, {
+                          status: f.get("status"),
+                          priceLevel: f.get("priceLevel") || null,
+                          creditEnabled: f.has("creditEnabled"),
+                          creditLimit: f.get("creditLimit") || null,
+                        });
+                      }}
+                    >
+                      <div className="account-header">
+                        <strong>{a.name} · {a.email}</strong>
+                        <span>📞 {a.mobile}</span>
+                      </div>
+                      <div className="form-grid">
+                        <label>
+                          {t("Status", "الحالة")}
+                          <select name="status" defaultValue={a.status}>
+                            <option value="PENDING">{t("Pending approval", "بانتظار الموافقة")}</option>
+                            <option value="ACTIVE">{t("Active", "نشط")}</option>
+                            <option value="BLOCKED">{t("Blocked", "محظور")}</option>
+                          </select>
+                        </label>
+                        <label>
+                          {t("Price level", "مستوى السعر")}
+                          <select name="priceLevel" defaultValue={a.price_level || ""}>
+                            <option value="">{t("Default retail", "تجزئة افتراضي")}</option>
+                            <option>WHOLESALE</option>
+                            <option>RETAIL</option>
+                            <option>END_CUSTOMER</option>
+                          </select>
+                        </label>
+                        <label>
+                          {t("Credit limit (SAR)", "حد الائتمان")}
+                          <input
+                            name="creditLimit"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={a.credit_limit || ""}
+                          />
+                        </label>
+                        <label className="checkbox-label">
+                          <input
+                            name="creditEnabled"
+                            type="checkbox"
+                            defaultChecked={a.credit_enabled}
+                          />
+                          {t("Enable credit terms", "تفعيل الائتمان")}
+                        </label>
+                      </div>
+                      <button disabled={busy} className="save-account-btn">
+                        {t("Save account", "حفظ الحساب")}
+                      </button>
+                    </form>
+                  ))
                 )}
-                {can("IMPORT_EXCEL") && (
-                  <a href={appPath("/") + "?commerce=imports"}>
-                    {t("Bulk import workspace", "مساحة الاستيراد الجماعي")}
-                  </a>
-                )}
-                <button type="button" disabled={busy} onClick={() => setSelected(v=>[...new Set([...v,...data.products.map((p:any)=>p.id)])])}>{t("Select page", "تحديد الصفحة")}</button>
-                <button type="button" disabled={busy} onClick={selectAll}>{t("Select all matching", "تحديد كل النتائج")}</button>
-                <button type="button" disabled={busy} onClick={() => setSelected([])}>{t("Clear selection", "إلغاء التحديد")}</button>
-                <span>{t("Selected", "المحدد")}: {selected.length}</span>
-                <button type="button" disabled={busy || !selected.length} onClick={()=>publishSelected(true)}>{t("Publish selected", "نشر المحدد")}</button>
-                <button type="button" disabled={busy || !selected.length} onClick={()=>publishSelected(false)}>{t("Unpublish selected", "إلغاء نشر المحدد")}</button>
               </div>
+            ) : (
+              <>
+                {["pricing", "quotes"].includes(corporateSubTab) && (
+                  <CatalogOptionsSearch t={t} onResults={addOptions} />
+                )}
+                <CommerceConsole
+                  tab={corporateSubTab}
+                  t={t}
+                  products={optionProducts}
+                  user={user}
+                />
+              </>
+            )}
+          </div>
+        )}
+
+        {/* HUB 5: WHATSAPP & BOT */}
+        {tab === "whatsapp" && can("SETTINGS_MANAGE") && (
+          <WhatsAppAdmin t={t} />
+        )}
+
+        {/* HUB 6: STORE SETTINGS */}
+        {tab === "settings" && data && (
+          <div className="settings-hub-wrapper">
+            <div className="sub-hubs-toolbar">
+              {[
+                ["general", "⚙️ Store Configuration", "⚙️ إعدادات المتجر"],
+                ["zones", "🚚 Delivery Zones", "🚚 مناطق التوصيل"],
+                ["inventory", "🏬 Inventory & Replenishment", "🏬 المستودعات وإعادة الطلب"],
+              ].map(([subKey, en, ar]) => (
+                <button
+                  key={subKey}
+                  type="button"
+                  className={`sub-hub-btn ${settingsSubTab === subKey ? "active" : ""}`}
+                  onClick={() => setSettingsSubTab(subKey as any)}
+                >
+                  {t(en, ar)}
+                </button>
+              ))}
+            </div>
+
+            {settingsSubTab === "general" && (
               <form
-                className="actions"
+                key={data.settings.version}
+                className="card settings-card"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  setSelected([]);load(0);
+                  const f = new FormData(e.currentTarget);
+                  save("storefront-admin", {
+                    version: data.settings.version,
+                    enabled: f.has("enabled"),
+                    companyName: f.get("companyName"),
+                    companyNameAr: f.get("companyNameAr"),
+                    hero: f.get("hero"),
+                    heroAr: f.get("heroAr"),
+                    supportMobile: f.get("supportMobile"),
+                    deliveryEnabled: f.has("deliveryEnabled"),
+                    pickupEnabled: f.has("pickupEnabled"),
+                    businessEnabled: f.has("businessEnabled"),
+                    operationsEnabled: f.has("operationsEnabled"),
+                    bankTransferEnabled: f.has("bankTransferEnabled"),
+                    bankInstructions: String(f.get("bankInstructions") || ""),
+                    onlineHoldMinutes: Number(f.get("onlineHoldMinutes")),
+                    bankHoldMinutes: Number(f.get("bankHoldMinutes")),
+                  });
                 }}
               >
-                <select aria-label={t("Publication filter", "تصفية النشر")} value={publication} onChange={e=>setPublication(e.target.value)}>{[["ALL","All products","كل المنتجات"],["PUBLISHED","Published","منشور"],["UNPUBLISHED","Unpublished","غير منشور"],["INACTIVE","Inactive","غير نشط"],["MISSING_IMAGE","Missing image","بدون صورة"],["MISSING_PRICE","Missing public price","بدون سعر عام"]].map(([value,en,ar])=><option key={value} value={value}>{t(en,ar)}</option>)}</select>
-                <input
-                  aria-label={t("Find products", "بحث المنتجات")}
-                  placeholder={t(
-                    "Part number or description",
-                    "رقم الصنف أو الوصف",
-                  )}
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-                <button>{t("Search", "بحث")}</button>
-              </form>
-              <p>
-                {t(
-                  "Unpriced products can be published for quotation requests. Only priced, available quantities can be purchased.",
-                  "يمكن نشر المنتجات بدون أسعار لطلب عروض الأسعار. الشراء للكميات المتاحة والمسعّرة فقط.",
-                )}
-              </p>
-              <div className="actions"><button disabled={busy||offset===0} onClick={()=>load(Math.max(0,offset-100))}>{t("Previous","السابق")}</button><span>{data.total ? offset+1 : 0}–{offset+data.products.length} / {data.total}</span><button disabled={busy||offset+100>=data.total} onClick={()=>load(offset+100)}>{t("Next","التالي")}</button></div>
-              <div className="dense-table-wrap">
-                <table className="dense-table">
-                  <thead>
-                    <tr>
-                      <th>{t("Product", "المنتج")}</th>
-                      <th>{t("Store visibility", "ظهور المنتج")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.products.map((p: any) => (
-                      <tr key={p.id}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            aria-label={
-                              t("Select product", "اختيار المنتج") +
-                              " " +
-                              p.part_number
-                            }
-                            checked={selected.includes(p.id)}
-                            onChange={(e) =>
-                              setSelected((v) =>
-                                e.target.checked
-                                  ? [...v, p.id]
-                                  : v.filter((id) => id !== p.id),
-                              )
-                            }
-                          />
-                          <strong>{p.part_number}</strong>
-                          <div>{p.description}</div>
-                          <details>
-                            <summary>
-                              {t(
-                                "Store description & SEO",
-                                "وصف المتجر وتحسين البحث",
-                              )}
-                            </summary>
-                            <form
-                              className="form-grid"
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                const f = new FormData(e.currentTarget);
-                                save("storefront-admin/products/" + p.id, {
-                                  published: p.storefront_published,
-                                  version: p.version,
-                                  slug: f.get("slug") || undefined,
-                                  content: {
-                                    description: f.get("description") || "",
-                                    seoTitle: f.get("seoTitle") || "",
-                                    seoDescription:
-                                      f.get("seoDescription") || "",
-                                  },
-                                });
-                              }}
-                            >
-                              <label>
-                                {t("Product URL slug", "عنوان رابط المنتج")}
-                                <input
-                                  name="slug"
-                                  defaultValue={p.storefront_slug || ""}
-                                  pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                                />
-                              </label>
-                              <label>
-                                {t("Store description", "وصف المتجر")}
-                                <textarea
-                                  name="description"
-                                  defaultValue={
-                                    p.storefront_content?.description || ""
-                                  }
-                                />
-                              </label>
-                              <label>
-                                {t("Search engine title", "عنوان محرك البحث")}
-                                <input
-                                  name="seoTitle"
-                                  defaultValue={
-                                    p.storefront_content?.seoTitle || ""
-                                  }
-                                />
-                              </label>
-                              <label>
-                                {t(
-                                  "Search engine description",
-                                  "وصف محرك البحث",
-                                )}
-                                <textarea
-                                  name="seoDescription"
-                                  defaultValue={
-                                    p.storefront_content?.seoDescription || ""
-                                  }
-                                />
-                              </label>
-                              <button disabled={busy}>
-                                {t("Save content", "حفظ المحتوى")}
-                              </button>
-                            </form>
-                          </details>
-                          {can("PRODUCT_EDIT") && can("PRODUCT_VIEW") && <button onClick={() => setImageProduct(p.id)}>{t("Manage images", "إدارة الصور")}</button>}
-                          {can("PRODUCT_EDIT") && can("COST_VIEW") && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  const r = await api("products/" + p.id);
-                                  setEdit({
-                                    ...r,
-                                    partNumber: r.part_number || r.partNumber,
-                                  });
-                                } catch (e) {
-                                  setError((e as Error).message);
-                                }
-                              }}
-                            >
-                              {t(
-                                "Edit product / images / price",
-                                "تعديل المنتج / الصور / السعر",
-                              )}
-                            </button>
+                <div className={`store-status-banner ${data.settings.enabled ? "open" : "closed"}`}>
+                  <div className="status-indicator-dot"></div>
+                  <div>
+                    <strong>
+                      {data.settings.enabled
+                        ? t("Store is currently OPEN", "المتجر مفتوح حالياً")
+                        : t("Store is currently CLOSED", "المتجر مغلق حالياً")}
+                    </strong>
+                    <p>
+                      {data.settings.enabled
+                        ? t(
+                            "Customers can browse and place orders for published products.",
+                            "يمكن للعملاء تصفح وشراء المنتجات المنشورة.",
+                          )
+                        : t(
+                            "Storefront is hidden. Enable it below when ready to accept orders.",
+                            "واجهة المتجر مخفية. فعّلها أدناه عندما تكون جاهزاً لاستقبال الطلبات.",
                           )}
-                        </td>
-                        <td>
-                          <button
-                            disabled={
-                              busy || (!p.active && !p.storefront_published)
-                            }
-                            onClick={() =>
-                              save(`storefront-admin/products/${p.id}`, {
-                                published: !p.storefront_published,
-                                version: p.version,
-                              })
-                            }
-                          >
-                            {p.storefront_published
-                              ? t(
-                                  "Published · Unpublish",
-                                  "منشور · إلغاء النشر",
-                                )
-                              : t("Publish to store", "نشر في المتجر")}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-          {tab === "zones" && (
-            <>
-              {[
-                ...data.zones,
-                {
-                  id: "new",
-                  name: "",
-                  fee: "0",
-                  active: true,
-                  free_above: null,
-                },
-              ].map((zone: any) => (
-                <form
-                  className="form-grid"
-                  key={zone.id + JSON.stringify(zone)}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    save("storefront-admin/zones", {
-                      ...(zone.id !== "new" ? { id: zone.id } : {}),
-                      name: f.get("name"),
-                      fee: f.get("fee"),
-                      freeAbove: f.get("freeAbove") || null,
-                      active: f.has("active"),
-                    });
-                  }}
-                >
-                  <label>
-                    {t("Zone name", "اسم المنطقة")}
-                    <input name="name" required defaultValue={zone.name} />
-                  </label>
-                  <label>
-                    {t("Delivery fee (SAR)", "رسوم التوصيل")}
-                    <input
-                      name="fee"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      required
-                      defaultValue={Number(zone.fee)}
-                    />
-                  </label>
-                  <label>
-                    {t(
-                      "Free above subtotal (optional)",
-                      "توصيل مجاني فوق (اختياري)",
-                    )}
-                    <input
-                      name="freeAbove"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      defaultValue={
-                        zone.free_above === null ? "" : Number(zone.free_above)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <input
-                      name="active"
-                      type="checkbox"
-                      defaultChecked={zone.active}
-                    />
-                    {t("Active", "نشط")}
-                  </label>
-                  <button disabled={busy}>
-                    {zone.id === "new"
-                      ? t("Add zone", "إضافة منطقة")
-                      : t("Save zone", "حفظ المنطقة")}
-                  </button>
-                </form>
-              ))}
-            </>
-          )}
-          {tab === "accounts" && (
-            <>
-              {!data.accounts.length && (
-                <p>
-                  {t(
-                    "No business account applications yet.",
-                    "لا توجد طلبات حسابات شركات.",
-                  )}
-                </p>
-              )}
-              {data.accounts.map((a: any) => (
-                <form
-                  className="card"
-                  key={JSON.stringify(a)}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    save(`storefront-admin/accounts/${a.id}`, {
-                      status: f.get("status"),
-                      priceLevel: f.get("priceLevel") || null,
-                      creditEnabled: f.has("creditEnabled"),
-                      creditLimit: f.get("creditLimit") || null,
-                    });
-                  }}
-                >
-                  <strong>
-                    {a.name} · {a.email}
-                  </strong>
-                  <p>{a.mobile}</p>
-                  <div className="form-grid">
-                    <label>
-                      {t("Status", "الحالة")}
-                      <select name="status" defaultValue={a.status}>
-                        <option value="PENDING">
-                          {t("Pending approval", "بانتظار الموافقة")}
-                        </option>
-                        <option value="ACTIVE">{t("Active", "نشط")}</option>
-                        <option value="BLOCKED">{t("Blocked", "محظور")}</option>
-                      </select>
-                    </label>
-                    <label>
-                      {t("Price level", "مستوى السعر")}
-                      <select
-                        name="priceLevel"
-                        defaultValue={a.price_level || ""}
-                      >
-                        <option value="">
-                          {t("Default retail", "تجزئة افتراضي")}
-                        </option>
-                        <option>WHOLESALE</option>
-                        <option>RETAIL</option>
-                        <option>END_CUSTOMER</option>
-                      </select>
-                    </label>
-                    <label>
-                      {t("Credit limit (SAR)", "حد الائتمان")}
-                      <input
-                        name="creditLimit"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        defaultValue={a.credit_limit || ""}
-                      />
-                    </label>
-                    <label>
-                      <input
-                        name="creditEnabled"
-                        type="checkbox"
-                        defaultChecked={a.credit_enabled}
-                      />
-                      {t("Enable credit terms", "تفعيل الائتمان")}
-                    </label>
+                    </p>
                   </div>
-                  <button disabled={busy}>
-                    {t("Save account", "حفظ الحساب")}
-                  </button>
-                </form>
-              ))}
-            </>
-          )}
-        </>
+                  <label className="toggle-open-label">
+                    <input
+                      type="checkbox"
+                      name="enabled"
+                      defaultChecked={data.settings.enabled}
+                    />{" "}
+                    {t("Open Store", "فتح المتجر")}
+                  </label>
+                </div>
+
+                <div className="form-grid" style={{ marginTop: "20px" }}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      name="bankTransferEnabled"
+                      defaultChecked={data.settings.data.bankTransferEnabled !== false}
+                    />
+                    {t("Enable reviewed bank transfers", "تفعيل التحويل البنكي بعد المراجعة")}
+                  </label>
+                  <label className="full-width">
+                    {t("Bank payment instructions (beneficiary, bank, IBAN)", "تعليمات التحويل (المستفيد، البنك، الآيبان)")}
+                    <textarea
+                      name="bankInstructions"
+                      rows={2}
+                      defaultValue={data.settings.data.bankInstructions || ""}
+                    />
+                  </label>
+                  {[
+                    ["companyName", "Company name", "اسم الشركة"],
+                    ["companyNameAr", "Arabic company name", "اسم الشركة بالعربية"],
+                    ["hero", "Store headline", "عنوان المتجر"],
+                    ["heroAr", "Arabic headline", "العنوان بالعربية"],
+                    ["supportMobile", "Support phone", "هاتف الدعم"],
+                  ].map(([key, en, ar]) => (
+                    <label key={key}>
+                      {t(en, ar)}
+                      <input
+                        name={key}
+                        defaultValue={
+                          data.settings.data[key] ||
+                          (key === "companyName" ? "AMT Electric" : "")
+                        }
+                        required={key === "companyName"}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="fulfillment-toggles">
+                  <label>
+                    <input
+                      type="checkbox"
+                      name="deliveryEnabled"
+                      defaultChecked={data.settings.data.deliveryEnabled !== false}
+                    />{" "}
+                    {t("Enable delivery (configure zones below)", "تفعيل التوصيل (حدد المناطق)")}
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      name="pickupEnabled"
+                      defaultChecked={data.settings.data.pickupEnabled !== false}
+                    />{" "}
+                    {t("Enable pickup (branches in Warehouses)", "تفعيل الاستلام (حدد الفروع في المستودعات)")}
+                  </label>
+                </div>
+
+                <div className="form-grid" style={{ marginTop: "15px" }}>
+                  <label>
+                    <input
+                      name="businessEnabled"
+                      type="checkbox"
+                      defaultChecked={data.settings.data.businessEnabled}
+                    />
+                    {t("Enable company portal and requests", "تفعيل بوابة الشركات والطلبات")}
+                  </label>
+                  <label>
+                    <input
+                      name="operationsEnabled"
+                      type="checkbox"
+                      defaultChecked={data.settings.data.operationsEnabled}
+                    />
+                    {t("Enable payment operations and returns", "تفعيل عمليات الدفع والمرتجعات")}
+                  </label>
+                  <label>
+                    {t("Online payment hold (minutes)", "حجز الدفع الإلكتروني (دقائق)")}
+                    <input
+                      type="number"
+                      min="5"
+                      max="120"
+                      name="onlineHoldMinutes"
+                      defaultValue={data.settings.data.onlineHoldMinutes || 15}
+                    />
+                  </label>
+                  <label>
+                    {t("Bank review hold (minutes)", "حجز مراجعة التحويل (دقائق)")}
+                    <input
+                      type="number"
+                      min="30"
+                      max="10080"
+                      name="bankHoldMinutes"
+                      defaultValue={data.settings.data.bankHoldMinutes || 1440}
+                    />
+                  </label>
+                </div>
+
+                <button className="primary" disabled={busy} style={{ marginTop: "20px" }}>
+                  💾 {t("Save store settings", "حفظ إعدادات المتجر")}
+                </button>
+              </form>
+            )}
+
+            {settingsSubTab === "zones" && (
+              <div className="zones-management-section">
+                {[
+                  ...data.zones,
+                  {
+                    id: "new",
+                    name: "",
+                    fee: "0",
+                    active: true,
+                    free_above: null,
+                  },
+                ].map((zone: any) => (
+                  <form
+                    className="card zone-card"
+                    key={zone.id + JSON.stringify(zone)}
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const f = new FormData(e.currentTarget);
+                      save("storefront-admin/zones", {
+                        ...(zone.id !== "new" ? { id: zone.id } : {}),
+                        name: f.get("name"),
+                        fee: f.get("fee"),
+                        freeAbove: f.get("freeAbove") || null,
+                        active: f.has("active"),
+                      });
+                    }}
+                  >
+                    <div className="form-grid">
+                      <label>
+                        {t("Zone name", "اسم المنطقة")}
+                        <input name="name" required defaultValue={zone.name} />
+                      </label>
+                      <label>
+                        {t("Delivery fee (SAR)", "رسوم التوصيل")}
+                        <input
+                          name="fee"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          required
+                          defaultValue={Number(zone.fee)}
+                        />
+                      </label>
+                      <label>
+                        {t("Free above subtotal (optional)", "توصيل مجاني فوق (اختياري)")}
+                        <input
+                          name="freeAbove"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          defaultValue={zone.free_above === null ? "" : Number(zone.free_above)}
+                        />
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          name="active"
+                          type="checkbox"
+                          defaultChecked={zone.active}
+                        />
+                        {t("Active", "نشط")}
+                      </label>
+                    </div>
+                    <button disabled={busy} className="primary">
+                      {zone.id === "new"
+                        ? t("Add zone", "إضافة منطقة")
+                        : t("Save zone", "حفظ المنطقة")}
+                    </button>
+                  </form>
+                ))}
+              </div>
+            )}
+
+            {settingsSubTab === "inventory" && (
+              <StoreInventory t={t} products={optionProducts} user={user} />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* MODALS */}
+      {imageProduct && (
+        <div className="modal-backdrop">
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("Product images", "صور المنتج")}
+          >
+            <button
+              onClick={() => {
+                setImageProduct(undefined);
+                void load();
+              }}
+            >
+              {t("Close", "إغلاق")}
+            </button>
+            <ProductImageManager
+              key={imageProduct}
+              productId={imageProduct}
+              t={t}
+            />
+          </section>
+        </div>
       )}
-      {imageProduct && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label={t("Product images", "صور المنتج")}><button onClick={() => { setImageProduct(undefined); void load(); }}>{t("Close", "إغلاق")}</button><ProductImageManager key={imageProduct} productId={imageProduct} t={t}/></section></div>}
+
       {edit && (
         <ProductEditor
           key={edit.id || "new"}
@@ -725,8 +790,16 @@ export default function StorefrontAdmin({
                 edit.id ? "PUT" : "POST",
                 p,
               );
-              setEdit({ ...saved, partNumber: saved.part_number || saved.partNumber });
-              setNotice(t("Product saved. You can now manage its images below.", "تم حفظ المنتج. يمكنك إدارة صوره أدناه."));
+              setEdit({
+                ...saved,
+                partNumber: saved.part_number || saved.partNumber,
+              });
+              setNotice(
+                t(
+                  "Product saved. You can now manage its images below.",
+                  "تم حفظ المنتج. يمكنك إدارة صوره أدناه.",
+                ),
+              );
               await load();
               return saved;
             } catch (e) {

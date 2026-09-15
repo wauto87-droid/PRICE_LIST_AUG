@@ -412,12 +412,27 @@ export async function dashboard(db: DB, actor: Actor) {
     ).rows,
     orders: (
       await db.query(
-        "SELECT o.*,c.name company_name FROM ecommerce_orders o LEFT JOIN commerce_companies c ON c.id=o.company_id ORDER BY o.created_at DESC LIMIT 200",
+        `SELECT 
+          o.*,
+          c.name AS company_name,
+          ca.email AS account_email,
+          ca.mobile AS account_mobile,
+          cust.name AS customer_name,
+          cust.number AS customer_number,
+          cust.mobile AS customer_mobile,
+          ca.email AS customer_email,
+          w.name AS warehouse_name
+        FROM ecommerce_orders o
+        LEFT JOIN commerce_companies c ON c.id = o.company_id
+        LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
+        LEFT JOIN customers cust ON cust.id = ca.customer_id
+        LEFT JOIN warehouses w ON w.id = o.warehouse_id
+        ORDER BY o.created_at DESC LIMIT 200`,
       )
     ).rows,
     summary: await one(
       db,
-      "SELECT (SELECT COALESCE(sum((totals->>'total')::numeric),0)::text FROM ecommerce_orders WHERE status='CONFIRMED') sales,(SELECT count(*) FROM commerce_requests WHERE status IN ('SUBMITTED','REVIEW')) pending_quotes,(SELECT COALESCE(sum(amount),0)::text FROM commerce_credit_entries) credit_used",
+      "SELECT (SELECT COALESCE(sum((totals->>'total')::numeric),0)::text FROM ecommerce_orders WHERE status='CONFIRMED') sales,(SELECT count(*) FROM commerce_requests WHERE status IN ('SUBMITTED','REVIEW')) pending_quotes,(SELECT COALESCE(sum(amount),0)::text FROM commerce_credit_entries) credit_used,(SELECT count(*) FROM ecommerce_orders) total_orders,(SELECT count(*) FROM ecommerce_orders WHERE status IN ('PENDING_REVIEW','PENDING_PAYMENT')) pending_orders",
     ),
     searches: (
       await db.query(
