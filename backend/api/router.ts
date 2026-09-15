@@ -279,13 +279,28 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         
         if (d.senderPhone) {
             const cleanSenderPhone = d.senderPhone.replace(/\D/g, "");
+            const senderLast9 = cleanSenderPhone.slice(-9);
+
             const orderGuestPhone = order.guest_phone ? order.guest_phone.replace(/\D/g, "") : "";
             const orderAccountPhone = order.account_phone ? order.account_phone.replace(/\D/g, "") : "";
             
-            const isAuthorized = cleanSenderPhone && (
-                (orderGuestPhone && (orderGuestPhone.includes(cleanSenderPhone) || cleanSenderPhone.includes(orderGuestPhone))) ||
-                (orderAccountPhone && (orderAccountPhone.includes(cleanSenderPhone) || cleanSenderPhone.includes(orderAccountPhone)))
-            );
+            let isAuthorized = false;
+
+            if (senderLast9) {
+                if ((orderGuestPhone && orderGuestPhone.slice(-9) === senderLast9) || 
+                    (orderAccountPhone && orderAccountPhone.slice(-9) === senderLast9)) {
+                    isAuthorized = true;
+                } else {
+                    const staff = await one(db, `
+                      SELECT id FROM users 
+                      WHERE NOT disabled AND phone IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $1
+                      LIMIT 1
+                    `, [senderLast9]);
+                    if (staff) {
+                        isAuthorized = true;
+                    }
+                }
+            }
             
             if (!isAuthorized) {
                 return response({ found: false, unauthorized: true });
