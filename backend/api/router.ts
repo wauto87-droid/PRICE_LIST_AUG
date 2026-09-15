@@ -249,7 +249,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           ),
         );
       if (id === "bot" && action === "track-order" && method === "POST") {
-        const d = z.object({ query: z.string().trim().min(1).max(100) }).parse(await body(req));
+        const d = z.object({ query: z.string().trim().min(1).max(100), senderPhone: z.string().optional() }).parse(await body(req));
         const cleanQuery = d.query.replace(/^[#\s]+/, "").trim();
         const order = await one(db, `
           SELECT 
@@ -262,7 +262,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             o.address,
             o.created_at, 
             jsonb_array_length(o.lines) as item_count,
-            o.lines
+            o.lines,
+            o.guest_contact->>'phone' as guest_phone,
+            ca.mobile as account_phone
           FROM ecommerce_orders o
           LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
           WHERE lower(o.number) = lower($1) 
@@ -274,6 +276,21 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           ORDER BY o.created_at DESC LIMIT 1
         `, [d.query, cleanQuery]);
         if (!order) return response({ found: false });
+        
+        if (d.senderPhone) {
+            const cleanSenderPhone = d.senderPhone.replace(/\D/g, "");
+            const orderGuestPhone = order.guest_phone ? order.guest_phone.replace(/\D/g, "") : "";
+            const orderAccountPhone = order.account_phone ? order.account_phone.replace(/\D/g, "") : "";
+            
+            const isAuthorized = cleanSenderPhone && (
+                (orderGuestPhone && (orderGuestPhone.includes(cleanSenderPhone) || cleanSenderPhone.includes(orderGuestPhone))) ||
+                (orderAccountPhone && (orderAccountPhone.includes(cleanSenderPhone) || cleanSenderPhone.includes(orderAccountPhone)))
+            );
+            
+            if (!isAuthorized) {
+                return response({ found: false, unauthorized: true });
+            }
+        }
         return response({
           found: true,
           number: order.number,

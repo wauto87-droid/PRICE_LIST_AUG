@@ -261,10 +261,10 @@ async function handleBotMessage(msg, client) {
         if (data.authorized === false) {
           await client.sendMessage(sender, `🔒 *أمر خاص بموظفي شركة إيه إم تي | AMT Staff Only*
 ────────────────────────────
-⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) غير مسجل كموظف في نظام إيه إم تي.
+⚠️ رقم الواتساب الخاص بك غير مسجل كموظف في نظام إيه إم تي.
 لتفعيل صلاحية تسعير الموظفين، يرجى التواصل مع مدير النظام (Admin) لإضافة رقم جوالك في ملف المستخدم الخاص بك.
 
-⚠️ Your WhatsApp phone number (*+${senderPhone}*) is not registered in the AMT staff directory. Please contact your administrator to add your phone number in user management.`);
+⚠️ Your WhatsApp phone number is not registered in the AMT staff directory. Please contact your administrator to add your phone number in user management.`);
           return;
         }
 
@@ -485,11 +485,12 @@ To check the status of your order, please reply with your Order Number (e.g., \`
     if (orderMatch || hasOrderKeywords || (isAwaitingOrder && bodyText.length >= 3 && !bodyText.startsWith("!"))) {
       delete userStates[sender];
       const queryNumber = (orderMatch ? orderMatch[0] : bodyText).trim();
+      const senderPhone = sender.replace(/@.*$/, "");
       try {
         const fetchRes = await fetch(`${appInternalUrl}/storefront/bot/track-order`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ query: queryNumber }),
+          body: JSON.stringify({ query: queryNumber, senderPhone }),
           signal: AbortSignal.timeout(6000),
         });
         if (fetchRes.ok) {
@@ -537,6 +538,11 @@ ${storeUrl}/account
 ────────────────────────────
 إذا كان لديك أي استفسار حول الشحنة، أرسل 6 للتواصل مع خدمة العملاء.`;
             await client.sendMessage(sender, orderCard);
+            return;
+          } else if (data.unauthorized) {
+            await client.sendMessage(sender, isEn ? 
+              `🔒 *Unauthorized | غير مصرح*\n────────────────────────────\nThis order does not belong to your WhatsApp number.\nPlease register this phone number in your account settings and send the order number again.` : 
+              `🔒 *غير مصرح | Unauthorized*\n────────────────────────────\nهذا الطلب غير مرتبط برقم الواتساب الخاص بك.\nيرجى تسجيل هذا الرقم في حسابك عبر الموقع والمحاولة مرة أخرى.`);
             return;
           }
         }
