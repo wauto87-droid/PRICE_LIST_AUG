@@ -12,12 +12,17 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
   useEffect(() => {
     Promise.all([
       api("admin/settings"),
-      api("storefront/admin/settings")
+      api("storefront-admin")
     ])
       .then(([workspaceSettings, storefrontSettings]) => {
         setData({
           workspace: workspaceSettings,
-          storefront: storefrontSettings.settings.data, // Admin settings for storefront might be inside a particular structure. Let's assume it matches storefront/admin/settings
+          storefrontRaw: storefrontSettings,
+          storefront: {
+            maintenanceEnabled: storefrontSettings?.data?.maintenanceEnabled ?? false,
+            maintenanceText: storefrontSettings?.data?.maintenanceText ?? "",
+            maintenanceImage: storefrontSettings?.data?.maintenanceImage ?? null,
+          },
         });
       })
       .catch((e) => setError(e.message));
@@ -29,14 +34,20 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
     setError("");
     setSuccess("");
     try {
-      await api("admin/settings", {
-        method: "POST",
-        body: data.workspace,
+      const savedWorkspace = await api("admin/settings", "PUT", data.workspace);
+      const savedStorefront = await api("storefront-admin", "PUT", {
+        ...data.storefrontRaw?.data,
+        enabled: data.storefrontRaw?.enabled ?? true,
+        version: data.storefrontRaw?.version,
+        maintenanceEnabled: data.storefront.maintenanceEnabled,
+        maintenanceText: data.storefront.maintenanceText,
+        maintenanceImage: data.storefront.maintenanceImage,
       });
-      await api("storefront/admin/settings", {
-        method: "POST",
-        body: { settings: { data: data.storefront } },
-      });
+      setData((prev: any) => ({
+        ...prev,
+        workspace: savedWorkspace,
+        storefrontRaw: savedStorefront,
+      }));
       setSuccess(t("Maintenance settings saved successfully", "تم حفظ إعدادات الصيانة بنجاح"));
     } catch (e) {
       setError((e as Error).message);

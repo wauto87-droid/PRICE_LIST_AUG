@@ -671,6 +671,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
               "quantity-finder",
               "reusable-custom-items",
               "learned-delivery-matches",
+              "maintenance",
             ].includes(section) && (
               <button disabled={busy} onClick={() => void load()}>
                 {t("Refresh", "تحديث")}
@@ -712,6 +713,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <ReusableCustomItems t={t} />
         ) : section === "learned-delivery-matches" ? (
           <LearnedDeliveryMatches t={t} />
+        ) : section === "maintenance" ? (
+          <MaintenanceAdmin t={t} />
         ) : !data ? (
           <p>
             {error

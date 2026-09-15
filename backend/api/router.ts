@@ -288,7 +288,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         let hasAnyOrders = false;
         let isRegistered = false;
         if (senderLast9) {
-             const userOrders = await db.any(`
+             const userOrder = await one(db, `
                 SELECT o.id FROM ecommerce_orders o
                 LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
                 WHERE 
@@ -297,7 +297,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                   (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), 9) = $1)
                 LIMIT 1
              `, [senderLast9]);
-             hasAnyOrders = userOrders.length > 0;
+             hasAnyOrders = !!userOrder;
              
              const account = await one(db, `
                 SELECT id FROM customer_accounts 
@@ -362,7 +362,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         
         if (!order) return response({ found: false, hasAnyOrders: hasAnyOrders || isStaff });
         
-        let isAuthorized = isStaff;
+        let isAuthorized = !d.senderPhone || isStaff;
         if (!isAuthorized && senderLast9) {
             const orderGuestPhone = order.guest_phone ? order.guest_phone.replace(/\D/g, "") : "";
             const orderAccountPhone = order.account_phone ? order.account_phone.replace(/\D/g, "") : "";

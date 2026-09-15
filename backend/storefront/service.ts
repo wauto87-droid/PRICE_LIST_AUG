@@ -52,7 +52,14 @@ const publicSettings = (input: any) => {
 
 export async function configuration(db: DB, actor?: Actor) {
   const row = await one(db, "SELECT * FROM storefront_settings WHERE id=1");
-  if (actor) requirePermission(actor, "STOREFRONT_MANAGE");
+  if (actor) {
+    assert(
+      actor.permissions.includes("STOREFRONT_MANAGE") ||
+        actor.permissions.includes("SETTINGS_MANAGE"),
+      403,
+      "Missing permission: STOREFRONT_MANAGE or SETTINGS_MANAGE",
+    );
+  }
   if (actor)
     return {
       ...row,
@@ -76,7 +83,12 @@ export async function configuration(db: DB, actor?: Actor) {
   return { ...publicSettings(row), pickupLocations, deliveryZones };
 }
 export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
-  requirePermission(actor, "STOREFRONT_MANAGE");
+  assert(
+    actor.permissions.includes("STOREFRONT_MANAGE") ||
+      actor.permissions.includes("SETTINGS_MANAGE"),
+    403,
+    "Missing permission: STOREFRONT_MANAGE or SETTINGS_MANAGE",
+  );
   const data = z
     .object({
       enabled: z.boolean(),
