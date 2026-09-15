@@ -1644,8 +1644,7 @@ export async function quickUpdateStock(
   const w = await one(db, "SELECT id FROM warehouses WHERE active ORDER BY name LIMIT 1");
   if (!w) throw new Error("No active warehouse found to assign stock");
 
-  const { uuid } = await import("../../backend/shared/uuid");
-  const idempotency_key = uuid();
+  const idempotency_key = randomUUID();
 
   await db.query(`
     INSERT INTO inventory_movements
@@ -1653,7 +1652,7 @@ export async function quickUpdateStock(
     VALUES
       ($1, $2, $3, 'ADJUSTMENT', $4, 'STOCK_COUNT', $5, $6, $7)
   `, [
-    uuid(),
+    randomUUID(),
     id,
     w.id,
     d.quantity,
