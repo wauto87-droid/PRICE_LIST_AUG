@@ -225,13 +225,17 @@ export default function Storefront() {
           if (
             prev.maintenanceEnabled !== d.storefront.enabled ||
             prev.maintenanceText !== d.storefront.text ||
-            prev.maintenanceImage !== d.storefront.image
+            prev.maintenanceImage !== d.storefront.image ||
+            prev.whatsappNumber !== d.storefront.whatsappNumber ||
+            prev.supportMobile !== d.storefront.supportMobile
           ) {
             return {
               ...prev,
               maintenanceEnabled: d.storefront.enabled,
               maintenanceText: d.storefront.text,
               maintenanceImage: d.storefront.image,
+              whatsappNumber: d.storefront.whatsappNumber,
+              supportMobile: d.storefront.supportMobile,
             };
           }
           return prev;
@@ -248,6 +252,8 @@ export default function Storefront() {
           maintenanceEnabled: true,
           maintenanceText: e.detail.text ?? prev?.maintenanceText,
           maintenanceImage: e.detail.image ?? prev?.maintenanceImage,
+          whatsappNumber: e.detail.whatsappNumber ?? prev?.whatsappNumber,
+          supportMobile: e.detail.supportMobile ?? prev?.supportMobile,
         }));
       }
     };
@@ -388,6 +394,7 @@ export default function Storefront() {
         title={t("Store Maintenance", "صيانة المتجر")}
         text={config.maintenanceText}
         image={config.maintenanceImage}
+        whatsappNumber={config.whatsappNumber}
         supportMobile={config.supportMobile}
         onBypass={() => setBypassMaintenance(true)}
       />

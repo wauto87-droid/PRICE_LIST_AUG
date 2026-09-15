@@ -47,6 +47,7 @@ const publicSettings = (input: any) => {
     maintenanceEnabled: row.data?.maintenanceEnabled ?? false,
     maintenanceText: row.data?.maintenanceText ?? "",
     maintenanceImage: row.data?.maintenanceImage ?? null,
+    whatsappNumber: row.data?.supportMobile ?? "",
   };
 };
 

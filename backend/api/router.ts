@@ -100,16 +100,29 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (root === "health") {
       const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
       const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+      let botNumber: string | null = null;
+      try {
+        const botStatus = await whatsappAdmin("status", {});
+        if (botStatus && botStatus.number) {
+          botNumber = "+" + String(botStatus.number).replace(/\D/g, "");
+        }
+      } catch {}
+      const configuredPhone = storefrontSettings?.data?.supportMobile || null;
+      const whatsappNumber = botNumber || configuredPhone || null;
       const maintenance = {
         workspace: {
           enabled: Boolean(workspace?.data?.workspaceMaintenance),
           text: workspace?.data?.workspaceMaintenanceText ?? "",
           image: workspace?.data?.workspaceMaintenanceImage ?? null,
+          whatsappNumber,
+          supportMobile: configuredPhone,
         },
         storefront: {
           enabled: Boolean(storefrontSettings?.data?.maintenanceEnabled),
           text: storefrontSettings?.data?.maintenanceText ?? "",
           image: storefrontSettings?.data?.maintenanceImage ?? null,
+          whatsappNumber,
+          supportMobile: configuredPhone,
         },
       };
       if (id === "maintenance") {

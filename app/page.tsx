@@ -239,7 +239,8 @@ export default function App() {
         title={t("System Maintenance", "صيانة النظام")}
         text={maintenance.workspace.text}
         image={maintenance.workspace.image}
-        supportMobile={session?.settings?.supportMobile}
+        whatsappNumber={maintenance.workspace.whatsappNumber}
+        supportMobile={maintenance.workspace.supportMobile || session?.settings?.supportMobile}
         onBypass={() => setBypassMaintenance(true)}
       />
     );
