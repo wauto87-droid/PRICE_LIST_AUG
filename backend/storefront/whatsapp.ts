@@ -2,11 +2,28 @@ import { z } from "zod";
 import { assert } from "../core/errors";
 
 export function normalizePhone(value: string) {
-  const digits = value
+  assert(value && typeof value === "string", 400, "Enter a valid mobile number");
+  let digits = value
     .trim()
-    .replace(/[\s()\-]/g, "")
-    .replace(/^00/, "+")
-    .replace(/^05/, "+9665");
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[\s()\-./]/g, "");
+
+  if (digits.startsWith("00")) {
+    digits = "+" + digits.slice(2);
+  }
+  if (digits.startsWith("+96605")) {
+    digits = "+9665" + digits.slice(6);
+  } else if (digits.startsWith("96605")) {
+    digits = "+9665" + digits.slice(5);
+  } else if (digits.startsWith("05")) {
+    digits = "+9665" + digits.slice(2);
+  } else if (/^5\d{8}$/.test(digits)) {
+    digits = "+966" + digits;
+  } else if (digits.startsWith("9665")) {
+    digits = "+" + digits;
+  }
+
   const phone = digits.startsWith("+") ? digits : `+${digits}`;
   assert(
     /^\+[1-9]\d{7,14}$/.test(phone),

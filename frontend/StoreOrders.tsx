@@ -277,12 +277,12 @@ export default function StoreOrders({
 
     win.document.write(`
       <!DOCTYPE html>
-      <html dir="rtl" lang="ar">
+      <html dir="ltr" lang="en">
       <head>
         <meta charset="utf-8"/>
-        <title>فاتورة طلب ${order.number}</title>
+        <title>Order Invoice ${order.number}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 30px; color: #1e293b; background: #fff; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; background: #fff; line-height: 1.5; }
           .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 15px; margin-bottom: 20px; }
           .title { font-size: 24px; font-weight: 800; color: #0f172a; }
           .meta { font-size: 13px; color: #64748b; line-height: 1.6; }
@@ -290,8 +290,8 @@ export default function StoreOrders({
           .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; }
           .card h4 { margin: 0 0 10px; color: #0f172a; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 13px; }
-          th { background: #f1f5f9; padding: 10px; text-align: right; border-bottom: 2px solid #cbd5e1; }
-          .totals { width: 300px; margin-right: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; }
+          th { background: #f1f5f9; padding: 10px; text-align: left; border-bottom: 2px solid #cbd5e1; }
+          .totals { width: 340px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; }
           .totals-row { display: flex; justify-content: space-between; padding: 5px 0; }
           .totals-total { font-size: 16px; font-weight: 800; border-top: 2px solid #0f172a; padding-top: 10px; margin-top: 5px; color: #0284c7; }
           @media print { body { padding: 0; } }
@@ -300,32 +300,32 @@ export default function StoreOrders({
       <body>
         <div class="header">
           <div>
-            <div class="title">فاتورة طلب المتجر الإلكتروني</div>
-            <div class="meta">رقم الطلب: <strong>${order.number}</strong></div>
-            <div class="meta">التاريخ: ${new Date(order.created_at).toLocaleString("ar-SA")}</div>
-            <div class="meta">حالة الطلب: <strong>${stage.labelAr}</strong></div>
+            <div class="title">Online Store Order Invoice</div>
+            <div class="meta">Order Number: <strong>${order.number}</strong></div>
+            <div class="meta">Date: ${new Date(order.created_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</div>
+            <div class="meta">Order Status: <strong>${stage.labelEn || stage.labelAr}</strong></div>
           </div>
-          <div style="text-align: left;">
-            <div style="font-size: 20px; font-weight: 700; color: #0284c7;">AMT ELECTRIC</div>
-            <div class="meta">متجر المواد الكهربائية والمشاريع</div>
-            <div class="meta">الرقم الضريبي: 300000000000003</div>
+          <div style="text-align: right;">
+            <div style="font-size: 20px; font-weight: 700; color: #0284c7;">AMT ELECTRICAL SUPPLIES</div>
+            <div class="meta">Electrical Materials & Project Solutions</div>
+            <div class="meta">VAT Registration No: 300000000000003</div>
           </div>
         </div>
 
         <div class="grid">
           <div class="card">
-            <h4>بيانات العميل</h4>
-            <div><strong>الاسم:</strong> ${cust.name}</div>
-            <div><strong>الجوال:</strong> ${cust.mobile || "—"}</div>
-            <div><strong>البريد:</strong> ${cust.email || "—"}</div>
-            ${cust.company ? `<div><strong>الشركة:</strong> ${cust.company}</div>` : ""}
+            <h4>Customer Details</h4>
+            <div><strong>Name:</strong> ${cust.name}</div>
+            <div><strong>Mobile:</strong> ${cust.mobile || "—"}</div>
+            <div><strong>Email:</strong> ${cust.email || "—"}</div>
+            ${cust.company ? `<div><strong>Company:</strong> ${cust.company}</div>` : ""}
           </div>
           <div class="card">
-            <h4>بيانات التوصيل والاستلام</h4>
-            <div><strong>طريقة التنفيذ:</strong> ${order.fulfillment_method === "PICKUP" ? "استلام من الفرع / المستودع" : "توصيل إلى العنوان"}</div>
-            <div><strong>المدينة / المنطقة:</strong> ${order.address?.city || "الرياض"} ${order.address?.district ? ` - حي ${order.address.district}` : ""}</div>
-            <div><strong>العنوان:</strong> ${order.address?.street || "—"}</div>
-            <div><strong>طريقة الدفع:</strong> ${order.payment_method} (${order.paid_amount > 0 ? "مدفوع " + order.paid_amount + " ر.س" : "غير مدفوع"})</div>
+            <h4>Fulfillment & Payment Details</h4>
+            <div><strong>Fulfillment:</strong> ${order.fulfillment_method === "PICKUP" ? "Pickup from Warehouse / Branch" : "Delivery to Address"}</div>
+            <div><strong>City / Region:</strong> ${order.address?.city || "Riyadh"}${order.address?.district ? ` - ${order.address.district}` : ""}</div>
+            <div><strong>Address:</strong> ${order.address?.street || "—"}</div>
+            <div><strong>Payment:</strong> ${order.payment_method} (${order.paid_amount > 0 ? "Paid " + Number(order.paid_amount).toFixed(2) + " SAR" : "Unpaid"})</div>
           </div>
         </div>
 
@@ -333,11 +333,11 @@ export default function StoreOrders({
           <thead>
             <tr>
               <th style="text-align: center; width: 40px;">#</th>
-              <th>الصنف والوصف</th>
-              <th style="text-align: center; width: 70px;">الكمية</th>
-              <th style="text-align: right; width: 110px;">سعر الوحدة</th>
-              <th style="text-align: right; width: 100px;">ضريبة 15%</th>
-              <th style="text-align: right; width: 120px;">الإجمالي</th>
+              <th>Item & Description</th>
+              <th style="text-align: center; width: 70px;">Qty</th>
+              <th style="text-align: right; width: 120px;">Unit Price (excl. VAT)</th>
+              <th style="text-align: right; width: 100px;">VAT (15%)</th>
+              <th style="text-align: right; width: 120px;">Line Total</th>
             </tr>
           </thead>
           <tbody>
@@ -347,20 +347,20 @@ export default function StoreOrders({
 
         <div class="totals">
           <div class="totals-row">
-            <span>المجموع الفرعي (غير شامل الضريبة):</span>
-            <span>${Number(order.totals?.subtotal || 0).toFixed(2)} ر.س</span>
+            <span>Subtotal (excl. VAT):</span>
+            <span>${Number(order.totals?.subtotal || 0).toFixed(2)} SAR</span>
           </div>
           <div class="totals-row">
-            <span>ضريبة القيمة المضافة (15%):</span>
-            <span>${Number(order.totals?.vat || 0).toFixed(2)} ر.س</span>
+            <span>VAT (15%):</span>
+            <span>${Number(order.totals?.vat || 0).toFixed(2)} SAR</span>
           </div>
           <div class="totals-row">
-            <span>رسوم التوصيل:</span>
-            <span>${Number(order.totals?.delivery || 0).toFixed(2)} ر.س</span>
+            <span>Delivery Fee:</span>
+            <span>${Number(order.totals?.delivery || 0).toFixed(2)} SAR</span>
           </div>
           <div class="totals-row totals-total">
-            <span>المبلغ الإجمالي المستحق:</span>
-            <span>${Number(order.totals?.total || 0).toFixed(2)} ر.س</span>
+            <span>Total Amount Due:</span>
+            <span>${Number(order.totals?.total || 0).toFixed(2)} SAR</span>
           </div>
         </div>
 

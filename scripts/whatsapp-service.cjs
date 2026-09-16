@@ -25,30 +25,36 @@ let userStates = {};
 
 function parseStaffPricingQuery(raw) {
   let text = (raw || "").trim();
+  // Normalize Eastern Arabic (٠-٩) and Perso-Arabic numerals to ASCII, and Arabic percent sign
+  text = text
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/٪/g, "%");
+
   if (text.startsWith("!")) text = text.slice(1).trim();
 
   let percent = undefined;
   let percentType = "AUTO";
 
-  // 1. Explicit positive markup (+10% or +10)
-  const plusMatch = text.match(/(?:[\s]+|^)\+(\d+(?:\.\d+)?)\s*%?$/);
+  // 1. Explicit positive markup (+10% or +10 or + 10%)
+  const plusMatch = text.match(/(?:[\s]+|^)\+\s*(\d+(?:\.\d+)?)\s*%?$/);
   if (plusMatch) {
     percent = parseFloat(plusMatch[1]);
     percentType = "MARKUP";
     text = text.slice(0, plusMatch.index).trim();
   } else {
-    // 2. Explicit discount (-10% or -10)
-    const minusMatch = text.match(/(?:[\s]+|^)\-(\d+(?:\.\d+)?)\s*%?$/);
+    // 2. Explicit discount (-10% or -10 or - 10%)
+    const minusMatch = text.match(/(?:[\s]+|^)\-\s*(\d+(?:\.\d+)?)\s*%?$/);
     if (minusMatch) {
       percent = parseFloat(minusMatch[1]);
       percentType = "DISCOUNT";
       text = text.slice(0, minusMatch.index).trim();
     } else {
-      // 3. Trailing percentage (%10 or % 10 or 10% or space 10)
+      // 3. Trailing percentage (%10 or % 10 or 10% or space 10% or space 10)
       const numMatch = text.match(/(?:[\s%]+)(\d+(?:\.\d+)?)\s*%?$/);
       if (numMatch) {
         percent = parseFloat(numMatch[1]);
-        percentType = "AUTO";
+        percentType = "DISCOUNT";
         text = text.slice(0, numMatch.index).trim();
       } else {
         // 4. Has % symbol without number (e.g. LC1D09M7 % or % LC1D09M7)
@@ -59,7 +65,7 @@ function parseStaffPricingQuery(raw) {
           const afterNum = parseFloat(after);
           if (!isNaN(afterNum) && after.length > 0) {
             percent = afterNum;
-            percentType = "AUTO";
+            percentType = "DISCOUNT";
             text = before;
           } else {
             text = before || after;
@@ -71,6 +77,78 @@ function parseStaffPricingQuery(raw) {
 
   text = text.replace(/^[!%\s]+|[!%\s]+$/g, "").trim();
   return { partNumber: text, percent, percentType };
+}
+
+async function getSenderPhone(msg, client) {
+  let num = "";
+  try {
+    if (msg && typeof msg.getContact === "function") {
+      const contact = await msg.getContact();
+      if (contact && contact.number) {
+        const cleaned = String(contact.number).replace(/\D/g, "");
+        if (cleaned && cleaned.length >= 8 && cleaned.length <= 15) {
+          num = cleaned;
+        }
+      }
+    }
+  } catch (e) {}
+
+  if (!num) {
+    const candidates = [msg.author, msg.from];
+    for (const c of candidates) {
+      if (c && typeof c === "string") {
+        const raw = c.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+        if (raw && raw.length >= 8 && raw.length <= 15) {
+          num = raw;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!num) {
+    const raw = (msg.author || msg.from || "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+    num = raw;
+  }
+  return num;
+}
+
+let cachedSupportContact = { phone: null, fetchedAt: 0 };
+
+async function getSupportContactNumber(client) {
+  const now = Date.now();
+  let configured = null;
+  if (now - cachedSupportContact.fetchedAt > 60000) {
+    try {
+      const appInternalUrl = process.env.APP_INTERNAL_URL || "http://127.0.0.1:18180/amt_price_list/api/v1";
+      const res = await fetch(`${appInternalUrl}/storefront/config`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const data = await res.json();
+        const num = (data.whatsappNumber || data.supportMobile || "").trim();
+        if (num && num !== "+966 11 000 0000" && num !== "0000000000" && !num.includes("000 0000")) {
+          configured = num;
+        }
+      }
+      cachedSupportContact = { phone: configured, fetchedAt: now };
+    } catch (e) {
+      configured = cachedSupportContact.phone;
+    }
+  } else {
+    configured = cachedSupportContact.phone;
+  }
+
+  if (configured) {
+    return configured.startsWith("+") ? configured : `+${configured}`;
+  }
+
+  // Fallback: Use registered number of the bot itself
+  const botNumber = client?.info?.wid?.user;
+  if (botNumber) {
+    const clean = String(botNumber).replace(/\D/g, "");
+    if (clean) return `+${clean}`;
+  }
+
+  return "+966500000000";
 }
 
 const isEntrypoint =
@@ -225,7 +303,7 @@ async function handleBotMessage(msg, client) {
     const appInternalUrl = process.env.APP_INTERNAL_URL || "http://127.0.0.1:18180/amt_price_list/api/v1";
 
     // STAFF PRICING COMMAND (!partNumber or partNumber % or %partNumber)
-    const isPricingCmd = bodyText.startsWith("!") || bodyText.includes("%");
+    const isPricingCmd = bodyText.startsWith("!") || bodyText.includes("%") || bodyText.includes("٪");
     if (isPricingCmd) {
       const parsed = parseStaffPricingQuery(bodyText);
       const partNumber = parsed.partNumber;
@@ -238,14 +316,14 @@ async function handleBotMessage(msg, client) {
 \`!LC1D09M7\`
 \`!LC1D09M7 %\`
 \`!LC1D09M7 10%\`
+\`!LC1D09M7 -10%\`
+\`!LC1D09M7 +15%\`
 \`LC1D09M7 % 20\``);
         return;
       }
 
-      const rawSender = sender.replace(/@.*$/, "");
-      const senderPhone = rawSender.split(":")[0];
+      const senderPhone = await getSenderPhone(msg, client);
 
-      let unauthorizedFallback = false;
       try {
         const res = await fetch(`${appInternalUrl}/storefront/bot/price`, {
           method: "POST",
@@ -253,7 +331,7 @@ async function handleBotMessage(msg, client) {
           body: JSON.stringify({ 
             query: partNumber, 
             senderPhone, 
-            discount: percent, 
+            discount: percentType === "MARKUP" ? undefined : percent, 
             percent, 
             percentType 
           })
@@ -261,7 +339,15 @@ async function handleBotMessage(msg, client) {
         const data = await res.json();
 
         if (data.authorized === false) {
-          unauthorizedFallback = true;
+          const phoneFormatted = (senderPhone && senderPhone.length <= 15 && senderPhone.length >= 8) ? ` (*+${senderPhone}*)` : "";
+          await client.sendMessage(sender, `⚠️ *غير مصرح باستعلام أسعار الموظفين | Unauthorized*
+────────────────────────────
+رقم الهاتف الخاص بك${phoneFormatted} غير مسجل في قائمة حسابات الموظفين المصرح لهم.
+للحصول على صلاحية الاستعلام عن أسعار التكلفة ونسب الخصم، يرجى الطلب من المشرف إضافة رقم هاتفك في:
+لوحة التحكم ⬅️ الموظفين والمستخدمين.
+
+Your phone number${phoneFormatted} is not registered as authorized staff. Please contact the administrator to register your mobile.`);
+          return;
         } else if (!data.found) {
           await client.sendMessage(sender, `🔍 *بحث تسعيرة الموظفين | Staff Price Check*
 ────────────────────────────
@@ -277,6 +363,12 @@ Part number *${partNumber}* was not found in active products.`);
 
         let staffCard = "";
         if (data.method === "COST_MARKUP") {
+          const hasDiscount = (data.discountPercent && data.discountPercent > 0) || (data.requestedDiscount && data.requestedDiscount > 0);
+          const discPct = data.discountPercent || data.requestedDiscount || 0;
+          const discDetails = hasDiscount ? `
+📉 *نسبة الخصم المطبقة:* ${discPct}%${discAlert}
+💵 *السعر بعد الخصم (قبل الضريبة):* ${data.discountedPrice} ريال` : "";
+
           staffCard = `🏷️ *تفاصيل تسعيرة الصنف (تكلفة + هامش ربح) | Staff Price Details*
 ────────────────────────────
 👤 *الموظف:* ${staffName}
@@ -287,8 +379,8 @@ Part number *${partNumber}* was not found in active products.`);
 
 ⚙️ *نظام التسعير:* تكلفة + هامش ربح (Cost + Markup)
 🔒 *سعر التكلفة:* ${data.cost} ريال
-📈 *نسبة هامش الربح:* ${data.markupPercent}%
-💵 *السعر الأساسي (قبل الضريبة):* ${data.priceExcl} ريال
+📈 *نسبة هامش الربح الأساسية:* ${data.markupPercent}%
+💵 *السعر الأساسي (قبل الضريبة):* ${data.priceExcl} ريال${discDetails}
 📑 *ضريبة القيمة المضافة (${data.vat}%):* ${data.vatAmount} ريال
 ✨ *السعر النهائي للعميل:* *${data.finalPrice} ريال* (شامل الضريبة)
 ────────────────────────────
@@ -313,15 +405,13 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
 💡 *للطلب أو الحجز أو إضافة تسعيرة، استخدم لوحة تحكم إيه إم تي الداخلية.*`;
         }
 
-        if (!unauthorizedFallback) {
-          await client.sendMessage(sender, staffCard);
-        }
+        await client.sendMessage(sender, staffCard);
+        return;
       } catch (err) {
         console.error("Bot price command error:", err);
         await client.sendMessage(sender, `❌ حدث خطأ أثناء جلب تسعيرة الصنف: ${partNumber}. يرجى المحاولة لاحقاً.`);
+        return;
       }
-
-      if (!unauthorizedFallback) return;
     }
 
     // LANGUAGE SWITCH COMMAND (ANYTIME)
@@ -476,8 +566,7 @@ To check the status of your order, please reply with your Order Number (e.g., \`
     if (orderMatch || hasOrderKeywords || (isAwaitingOrder && bodyText.length >= 3 && !bodyText.startsWith("!"))) {
       delete userStates[sender];
       const queryNumber = (orderMatch ? orderMatch[0] : bodyText).trim();
-      const rawSender = sender.replace(/@.*$/, "");
-      const senderPhone = rawSender.split(":")[0];
+      const senderPhone = await getSenderPhone(msg, client);
       try {
         const fetchRes = await fetch(`${appInternalUrl}/storefront/bot/track-order`, {
           method: "POST",
@@ -534,15 +623,16 @@ ${storeUrl}/account
           } else {
             // Found is false, but let's check hasAnyOrders
             if (data.hasAnyOrders === false) {
+                const phoneDisplay = (senderPhone && senderPhone.length <= 15 && senderPhone.length >= 8) ? ` (*+${senderPhone}*)` : "";
                 let notRegisteredMsg = '';
                 if (data.isRegistered) {
                     notRegisteredMsg = isEn ?
-                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number (*+${senderPhone}*) is registered, but it is not linked to any recent orders.\n\n🔗 ${storeUrl}/account` :
-                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) مسجل لدينا، ولكنه غير مرتبط بأي طلبات حديثة.\n\n🔗 ${storeUrl}/account`;
+                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number${phoneDisplay} is registered, but it is not linked to any recent orders.\n\n🔗 ${storeUrl}/account` :
+                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك${phoneDisplay} مسجل لدينا، ولكنه غير مرتبط بأي طلبات حديثة.\n\n🔗 ${storeUrl}/account`;
                 } else {
                     notRegisteredMsg = isEn ?
-                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number (*+${senderPhone}*) is not linked to any recent orders.\nIf you are an unregistered user, please ensure you register or checkout using this number on the storefront.\n\n🔗 ${storeUrl}/account` :
-                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك (*+${senderPhone}*) غير مرتبط بأي طلبات حديثة.\nإذا كنت مستخدمًا غير مسجل، يرجى التسجيل أو الطلب باستخدام هذا الرقم في المتجر.\n\n🔗 ${storeUrl}/account`;
+                    `📦 *Order Tracking*\n────────────────────────────\n⚠️ Your WhatsApp number${phoneDisplay} is not linked to any recent orders.\nIf you are an unregistered user, please ensure you register or checkout using this number on the storefront.\n\n🔗 ${storeUrl}/account` :
+                    `📦 *تتبع الطلب*\n────────────────────────────\n⚠️ رقم الواتساب الخاص بك${phoneDisplay} غير مرتبط بأي طلبات حديثة.\nإذا كنت مستخدمًا غير مسجل، يرجى التسجيل أو الطلب باستخدام هذا الرقم في المتجر.\n\n🔗 ${storeUrl}/account`;
                 }
                 await client.sendMessage(sender, notRegisteredMsg);
                 return;
@@ -643,12 +733,13 @@ ${storeUrl}
 
     // 7. OPTION 6: Customer Support
     if (["6", "دعم", "مساعدة", "خدمة العملاء", "مبيعات", "موظف", "support", "agent", "human", "contact"].includes(lower)) {
+      const contactPhone = await getSupportContactNumber(client);
       const supportMsg = isEn ? `💬 *Customer Support & Sales*
 ────────────────────────────
 Our team is happy to assist you:
 
 📞 *Phone / Sales:*
-+966 11 000 0000
+${contactPhone}
 
 ✉️ *Email:*
 support@amtelectric.com | sales@amtelectric.com
@@ -663,7 +754,7 @@ Sat - Thu: 8:00 AM - 6:00 PM
 فريقنا يسعد بخدمتكم والإجابة على كافة استفساراتكم الفنية والشرائية:
 
 📞 *الهاتف / المبيعات:*
-+966 11 000 0000
+${contactPhone}
 
 ✉️ *البريد الإلكتروني:*
 support@amtelectric.com | sales@amtelectric.com

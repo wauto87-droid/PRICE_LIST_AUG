@@ -6,6 +6,7 @@ import { setup, PERMISSIONS } from "../backend/auth/service";
 import { saveProduct } from "../backend/products/service";
 import * as admin from "../backend/admin/service";
 import { handle } from "../backend/api/router";
+import { normalizePhone } from "../backend/storefront/whatsapp";
 
 test("staff phone management, bot price search and numbered language selection", async (t) => {
   Object.assign(process.env, { NODE_ENV: "test" });
@@ -49,6 +50,12 @@ test("staff phone management, bot price search and numbered language selection",
 
   const staffInDb = await one(db, "SELECT phone, max_discount FROM users WHERE id=$1", [staffSave.id]);
   assert.equal(staffInDb?.phone, "+966501234567");
+
+  // Validate robust phone number normalization
+  assert.equal(normalizePhone("٠٥٠١٢٣٤٥٦٧"), "+966501234567");
+  assert.equal(normalizePhone("501234567"), "+966501234567");
+  assert.equal(normalizePhone("+966 050 123 4567"), "+966501234567");
+  assert.equal(normalizePhone("9660501234567"), "+966501234567");
 
   // 2. Create a test product with pricing
   const product = await db.transaction((tx) =>
@@ -368,9 +375,68 @@ test("staff phone management, bot price search and numbered language selection",
   assert.match(sentB[1].text, /Language has been set to English/);
   assert.match(sentB[2].text, /Welcome to AMT Electrical Supplies/);
 
-  // Switching language via "lang"
-  await handleBotMessage({ from: senderB, body: "lang", fromMe: false }, clientB);
-  assert.match(sentB[sentB.length - 1].text, /Please select your language/);
+    // Switching language via "lang"
+    await handleBotMessage({ from: senderB, body: "lang", fromMe: false }, clientB);
+    assert.match(sentB[sentB.length - 1].text, /Please select your language/);
+
+    // Test 11: Authorized Staff command !LC1D09M7 10%
+    const sentStaff: { to: string; text: string }[] = [];
+    const clientStaff = {
+      info: { wid: { user: "966509876543" } },
+      sendMessage: async (to: string, text: string) => { sentStaff.push({ to, text }); },
+      getContact: async () => ({ number: "966509876543" }),
+    };
+    const staffMsg = {
+      from: "966509876543@c.us",
+      body: "!LC1D09M7 10%",
+      fromMe: false,
+      getContact: async () => ({ number: "966509876543" }),
+    };
+    await handleBotMessage(staffMsg, clientStaff);
+    assert.equal(sentStaff.length, 1);
+    assert.match(sentStaff[0].text, /تفاصيل تسعيرة الصنف/);
+    assert.match(sentStaff[0].text, /125\.00/); // base price excl
+    assert.match(sentStaff[0].text, /112\.50/); // discounted price
+    assert.match(sentStaff[0].text, /129\.38/); // final price incl VAT
+
+    // Test 12: Staff command with Eastern Arabic numerals and Arabic percent sign: !LC1D09M7 ١٠٪
+    sentStaff.length = 0;
+    const arabicStaffMsg = {
+      from: "966509876543@c.us",
+      body: "!LC1D09M7 ١٠٪",
+      fromMe: false,
+      getContact: async () => ({ number: "966509876543" }),
+    };
+    await handleBotMessage(arabicStaffMsg, clientStaff);
+    assert.equal(sentStaff.length, 1);
+    assert.match(sentStaff[0].text, /تفاصيل تسعيرة الصنف/);
+    assert.match(sentStaff[0].text, /112\.50/);
+
+    // Test 13: Unauthorized Staff command returns clear notice, not silent customer menu
+    const sentUnauth: { to: string; text: string }[] = [];
+    const clientUnauth = {
+      info: { wid: { user: "966500000999" } },
+      sendMessage: async (to: string, text: string) => { sentUnauth.push({ to, text }); },
+    };
+    const unauthStaffMsg = {
+      from: "966500000999@c.us",
+      body: "!LC1D09M7 10%",
+      fromMe: false,
+      getContact: async () => ({ number: "966500000999" }),
+    };
+    await handleBotMessage(unauthStaffMsg, clientUnauth);
+    assert.equal(sentUnauth.length, 1);
+    assert.match(sentUnauth[0].text, /غير مصرح باستعلام أسعار الموظفين/);
+    assert.match(sentUnauth[0].text, /966500000999/);
+
+    // Test 14: Option 6 Customer Support fallback to registered bot number when admin did not set custom number
+    const sentSupport: { to: string; text: string }[] = [];
+    const clientSupport = {
+      info: { wid: { user: "966555888999" } },
+      sendMessage: async (to: string, text: string) => { sentSupport.push({ to, text }); },
+    };
+    await handleBotMessage({ from: "966599000002@c.us", body: "6", fromMe: false }, clientSupport);
+    assert.match(sentSupport[sentSupport.length - 1].text, /\+966555888999/);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -301,21 +301,35 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if (id === "bot" && action === "track-order" && method === "POST") {
         const d = z.object({ query: z.string().trim().min(1).max(100).optional(), senderPhone: z.string().optional(), fetchLatest: z.boolean().optional() }).parse(await body(req));
         
-        let senderLast9 = null;
+        const cleanDigits = (val?: string) => {
+          if (!val) return "";
+          return val.replace(/[٠-٩]/g, (ch) => String("٠١٢٣٤٥٦٧٨٩".indexOf(ch)))
+                    .replace(/[۰-۹]/g, (ch) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(ch)))
+                    .replace(/\D/g, "");
+        };
+
+        let senderLast9: string | null = null;
         let isStaff = false;
         
         if (d.senderPhone) {
-            const cleanSenderPhone = d.senderPhone.replace(/\D/g, "");
-            senderLast9 = cleanSenderPhone.length >= 9 ? cleanSenderPhone.slice(-9) : null;
+            const cleanSenderPhone = cleanDigits(d.senderPhone);
+            senderLast9 = cleanSenderPhone.length >= 9 ? cleanSenderPhone.slice(-9) : (cleanSenderPhone.length >= 8 ? cleanSenderPhone.slice(-8) : null);
         }
 
         if (senderLast9) {
             const staff = await one(db, `
               SELECT id FROM users 
-              WHERE NOT disabled AND phone IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $1
+              WHERE NOT disabled AND phone IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), length($1)) = $1
               LIMIT 1
             `, [senderLast9]);
             if (staff) isStaff = true;
+            else {
+              const sf = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+              const adminMobile = cleanDigits(sf?.data?.supportMobile);
+              if (adminMobile && adminMobile.slice(-senderLast9.length) === senderLast9) {
+                isStaff = true;
+              }
+            }
         }
 
         // Check if they have ANY orders or are registered to give a better error message
@@ -326,16 +340,16 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 SELECT o.id FROM ecommerce_orders o
                 LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
                 WHERE 
-                  (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), 9) = $1)
+                  (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), length($1)) = $1)
                   OR
-                  (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), 9) = $1)
+                  (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), length($1)) = $1)
                 LIMIT 1
              `, [senderLast9]);
              hasAnyOrders = !!userOrder;
              
              const account = await one(db, `
                 SELECT id FROM customer_accounts 
-                WHERE mobile IS NOT NULL AND RIGHT(regexp_replace(mobile, '\\D', '', 'g'), 9) = $1
+                WHERE mobile IS NOT NULL AND RIGHT(regexp_replace(mobile, '\\D', '', 'g'), length($1)) = $1
                 LIMIT 1
              `, [senderLast9]);
              isRegistered = !!account;
@@ -351,9 +365,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                       FROM ecommerce_orders o
                       LEFT JOIN customer_accounts ca ON ca.id = o.customer_account_id
                       WHERE 
-                        (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), 9) = $1)
+                        (o.guest_contact->>'phone' IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), length($1)) = $1)
                         OR
-                        (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), 9) = $1)
+                        (ca.mobile IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), length($1)) = $1)
                       ORDER BY o.created_at DESC LIMIT 1
                  `, [senderLast9]);
                  if (latestOrder) {
@@ -369,6 +383,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         }
 
         const cleanQuery = d.query.replace(/^[#\s]+/, "").trim();
+        const queryDigits = cleanDigits(cleanQuery);
+        const queryLast9 = queryDigits.length >= 9 ? queryDigits.slice(-9) : (queryDigits.length >= 8 ? queryDigits.slice(-8) : null);
+
         const order = await one(db, `
           SELECT 
             o.id,
@@ -389,20 +406,26 @@ export async function handle(req: Request, db: DB): Promise<Response> {
             OR lower(o.number) = lower($2)
             OR o.number ILIKE '%' || $2 || '%'
             OR o.id::text ILIKE $2 || '%'
-            OR (o.guest_contact->>'phone' IS NOT NULL AND regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g'))
-            OR (ca.mobile IS NOT NULL AND regexp_replace(ca.mobile, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g'))
+            OR (o.guest_contact->>'phone' IS NOT NULL AND (
+                regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g') = $3
+                OR ($4::text IS NOT NULL AND RIGHT(regexp_replace(o.guest_contact->>'phone', '\\D', '', 'g'), length($4)) = $4)
+            ))
+            OR (ca.mobile IS NOT NULL AND (
+                regexp_replace(ca.mobile, '\\D', '', 'g') = $3
+                OR ($4::text IS NOT NULL AND RIGHT(regexp_replace(ca.mobile, '\\D', '', 'g'), length($4)) = $4)
+            ))
           ORDER BY o.created_at DESC LIMIT 1
-        `, [d.query, cleanQuery]);
+        `, [d.query, cleanQuery, queryDigits || cleanQuery, queryLast9]);
         
         if (!order) return response({ found: false, hasAnyOrders: hasAnyOrders || isStaff });
         
         let isAuthorized = !d.senderPhone || isStaff;
         if (!isAuthorized && senderLast9) {
-            const orderGuestPhone = order.guest_phone ? order.guest_phone.replace(/\D/g, "") : "";
-            const orderAccountPhone = order.account_phone ? order.account_phone.replace(/\D/g, "") : "";
+            const orderGuestPhone = cleanDigits(order.guest_phone);
+            const orderAccountPhone = cleanDigits(order.account_phone);
             
-            if ((orderGuestPhone && orderGuestPhone.slice(-9) === senderLast9) || 
-                (orderAccountPhone && orderAccountPhone.slice(-9) === senderLast9)) {
+            if ((orderGuestPhone && orderGuestPhone.slice(-senderLast9.length) === senderLast9) || 
+                (orderAccountPhone && orderAccountPhone.slice(-senderLast9.length) === senderLast9)) {
                 isAuthorized = true;
             }
         }
@@ -437,20 +460,42 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           percentType: z.enum(["AUTO", "MARKUP", "DISCOUNT"]).optional().default("AUTO"),
         }).parse(await body(req));
 
+        const cleanDigits = (val?: string) => {
+          if (!val) return "";
+          return val.replace(/[٠-٩]/g, (ch) => String("٠١٢٣٤٥٦٧٨٩".indexOf(ch)))
+                    .replace(/[۰-۹]/g, (ch) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(ch)))
+                    .replace(/\D/g, "");
+        };
+
         let staff: any = null;
         if (d.senderPhone) {
-          const rawDigits = d.senderPhone.replace(/\D/g, "");
-          const last9 = rawDigits.slice(-9);
+          const rawDigits = cleanDigits(d.senderPhone);
+          const last9 = rawDigits.length >= 9 ? rawDigits.slice(-9) : (rawDigits.length >= 8 ? rawDigits.slice(-8) : null);
           staff = await one(db, `
             SELECT id, username, name, role_id, max_discount, phone
             FROM users
             WHERE NOT disabled AND phone IS NOT NULL AND (
               phone = $1
               OR regexp_replace(phone, '\\D', '', 'g') = $2
-              OR RIGHT(regexp_replace(phone, '\\D', '', 'g'), 9) = $3
+              OR ($3::text IS NOT NULL AND RIGHT(regexp_replace(phone, '\\D', '', 'g'), length($3)) = $3)
             )
             LIMIT 1
           `, [d.senderPhone, rawDigits, last9]);
+
+          if (!staff && last9) {
+            const sfSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+            const adminPhone = cleanDigits(sfSettings?.data?.supportMobile);
+            if (adminPhone && (adminPhone === rawDigits || adminPhone.slice(-last9.length) === last9)) {
+              staff = {
+                id: "admin-settings-match",
+                username: "admin",
+                name: "Store Administrator",
+                role_id: "ADMIN",
+                max_discount: 100,
+                phone: sfSettings?.data?.supportMobile,
+              };
+            }
+          }
 
           if (!staff) {
             return response({
@@ -548,26 +593,31 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         let discountAllowed = true;
 
         if (effectiveMethod === "COST_MARKUP") {
-          // If staff explicitly passed percent (or percentType is MARKUP or AUTO)
-          if (d.percent !== undefined && (d.percentType === "MARKUP" || d.percentType === "AUTO")) {
+          // If staff explicitly passed percent with MARKUP (e.g. +10%)
+          if (d.percent !== undefined && d.percentType === "MARKUP") {
             appliedMarkup = d.percent;
           }
           basePriceExcl = cost * (1 + appliedMarkup / 100);
           discountedPrice = basePriceExcl;
 
-          // If a discount on the marked-up price is also requested
-          if (d.discount !== undefined && d.discount > 0) {
-            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+          // If a discount on the marked-up price is requested (e.g. 10%, -10%, discount param, or DISCOUNT type)
+          const reqDisc = (d.discount !== undefined && d.discount > 0)
+            ? d.discount
+            : (d.percentType === "DISCOUNT" && d.percent !== undefined ? d.percent : undefined);
+
+          if (reqDisc !== undefined && reqDisc > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, reqDisc));
             discountedPrice = basePriceExcl * (1 - appliedDiscount / 100);
             discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
           }
         } else if (effectiveMethod === "LIST_DISCOUNT") {
           basePriceExcl = listPrice;
-          // If staff explicitly passed percent (or percentType is DISCOUNT or AUTO)
-          if (d.percent !== undefined && (d.percentType === "DISCOUNT" || d.percentType === "AUTO")) {
-            appliedDiscount = d.percent;
-          } else if (d.discount !== undefined && d.discount > 0) {
-            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+          const reqDisc = (d.discount !== undefined && d.discount > 0)
+            ? d.discount
+            : ((d.percentType === "DISCOUNT" || d.percentType === "AUTO") && d.percent !== undefined ? d.percent : undefined);
+
+          if (reqDisc !== undefined && reqDisc > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, reqDisc));
           }
           discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
           discountedPrice = listPrice * (1 - appliedDiscount / 100);
@@ -575,8 +625,12 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           // FIXED price
           basePriceExcl = Number(product.level_fixed_price) || 0;
           discountedPrice = basePriceExcl;
-          if (d.discount !== undefined && d.discount > 0) {
-            appliedDiscount = Math.min(100, Math.max(0, d.discount));
+          const reqDisc = (d.discount !== undefined && d.discount > 0)
+            ? d.discount
+            : ((d.percentType === "DISCOUNT" || d.percentType === "AUTO") && d.percent !== undefined ? d.percent : undefined);
+
+          if (reqDisc !== undefined && reqDisc > 0) {
+            appliedDiscount = Math.min(100, Math.max(0, reqDisc));
             discountedPrice = basePriceExcl * (1 - appliedDiscount / 100);
             discountAllowed = maxDisc == null || appliedDiscount <= maxDisc;
           }
