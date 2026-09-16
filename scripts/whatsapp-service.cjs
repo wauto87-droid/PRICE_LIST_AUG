@@ -81,31 +81,35 @@ function parseStaffPricingQuery(raw) {
 
 async function getSenderPhone(msg, client) {
   let num = "";
-  try {
-    if (msg && typeof msg.getContact === "function") {
-      const contact = await msg.getContact();
-      if (contact && contact.number) {
-        const cleaned = String(contact.number).replace(/\D/g, "");
-        if (cleaned && cleaned.length >= 8 && cleaned.length <= 15) {
-          num = cleaned;
-        }
-      }
-    }
-  } catch (e) {}
 
-  if (!num) {
-    const candidates = [msg.author, msg.from];
-    for (const c of candidates) {
-      if (c && typeof c === "string") {
-        const raw = c.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
-        if (raw && raw.length >= 8 && raw.length <= 15) {
-          num = raw;
-          break;
-        }
+  // 1. Prioritize JID from msg.author or msg.from
+  const candidates = [msg.author, msg.from];
+  for (const c of candidates) {
+    if (c && typeof c === "string" && !c.includes('@g.us') && !c.includes('@lid')) {
+      const raw = c.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+      if (raw && raw.length >= 8 && raw.length <= 15) {
+        num = raw;
+        break;
       }
     }
   }
 
+  // 2. Fallback to getContact
+  if (!num) {
+    try {
+      if (msg && typeof msg.getContact === "function") {
+        const contact = await msg.getContact();
+        if (contact && contact.number) {
+          const cleaned = String(contact.number).replace(/\D/g, "");
+          if (cleaned && cleaned.length >= 8 && cleaned.length <= 15) {
+            num = cleaned;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 3. Absolute fallback
   if (!num) {
     const raw = (msg.author || msg.from || "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
     num = raw;
