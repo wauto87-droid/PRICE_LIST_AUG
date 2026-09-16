@@ -128,13 +128,20 @@ export default function App() {
       }
     };
     window.addEventListener("amt-maintenance-active", onMaintenanceActive);
+    let consecutiveFailures = 0;
     const timer = setInterval(async () => {
       try {
         const r = await fetch(appPath("/api/v1/health"), {
           cache: "no-store",
-          signal: AbortSignal.timeout(4000),
+          signal: AbortSignal.timeout(6000),
         });
-        setOnline(r.ok && navigator.onLine);
+        if (r.ok && navigator.onLine) {
+          consecutiveFailures = 0;
+          setOnline(true);
+        } else if (!r.ok) {
+          consecutiveFailures++;
+          if (consecutiveFailures >= 2) setOnline(false);
+        }
         const data = await r.json().catch(() => null);
         if (data?.maintenance) {
           setMaintenance(data.maintenance);
@@ -147,7 +154,10 @@ export default function App() {
           setUpdateReady(true);
         }
       } catch {
-        setOnline(false);
+        consecutiveFailures++;
+        if (!navigator.onLine || consecutiveFailures >= 2) {
+          setOnline(false);
+        }
       }
     }, 2500);
     return () => {

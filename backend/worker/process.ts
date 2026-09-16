@@ -286,11 +286,18 @@ export async function runJob(db: DB) {
           await tx.query("DELETE FROM delivery_quote_rows WHERE job_id=$1", [
             imp.id,
           ]);
-          for (let i = 0; i < extracted.rows.length; i++)
+          const chunkSize = 250;
+          for (let i = 0; i < extracted.rows.length; i += chunkSize) {
+            const chunk = extracted.rows.slice(i, i + chunkSize);
+            const ids = chunk.map(() => randomUUID());
+            const rowNums = chunk.map((_, idx) => i + idx + 1);
+            const rawJsons = chunk.map((r: any) => json(r));
             await tx.query(
-              "INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)",
-              [randomUUID(), imp.id, i + 1, json(extracted.rows[i])],
+              `INSERT INTO delivery_quote_rows(id, job_id, row_number, raw)
+               SELECT unnest($1::uuid[]), $2, unnest($3::int[]), unnest($4::jsonb[])`,
+              [ids, imp.id, rowNums, rawJsons],
             );
+          }
           await tx.query(
             "UPDATE delivery_quote_jobs SET status='AWAITING_MAPPING',summary=$2,version=version+1,updated_at=now() WHERE id=$1",
             [

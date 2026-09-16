@@ -64,7 +64,9 @@ export async function api<T = any>(
       body: body === undefined ? undefined : form ? body : JSON.stringify(body),
     });
   } catch (error) {
-    window.dispatchEvent(new Event("amt-connection-lost"));
+    if ((error as any)?.name !== "AbortError") {
+      window.dispatchEvent(new Event("amt-connection-lost"));
+    }
     throw error;
   }
   // A provider-specific 503 (for example WhatsApp) is not a lost connection.

@@ -92,18 +92,43 @@ export default function DeliveryQuoteImport({
       if (generation === historyGeneration.current[scope]) setHistoryBusy(false);
     }
   };
-  const open = async (id: string, nextFilter = filter) => {
+  const [rowPage, setRowPage] = useState(0);
+  const [rowPageSize, setRowPageSize] = useState(50);
+  const open = async (id: string, nextFilter = filter, page = rowPage, size = rowPageSize) => {
     const next: any = await api(
-      `delivery-quote-imports/${id}?page=0&pageSize=100&filter=${encodeURIComponent(nextFilter)}`,
+      `delivery-quote-imports/${id}?page=${page}&pageSize=${size}&filter=${encodeURIComponent(nextFilter)}`,
     );
     setJob(next);
     setFilter(nextFilter);
+    setRowPage(page);
+    setRowPageSize(size);
     setShowCustomerColumn(false);
     const columns = next.summary?.columns || [];
     setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
     setCustomerCodeDraft(String((next.header || next.summary)?.customerCode || ""));
     setSelected({});
   };
+
+  useEffect(() => {
+    if (!job || (job.status !== "UPLOADED" && job.status !== "PROCESSING")) return;
+    const interval = setInterval(async () => {
+      try {
+        const next: any = await api(
+          `delivery-quote-imports/${job.id}?page=0&pageSize=${rowPageSize}&filter=${encodeURIComponent(filter)}`,
+        );
+        if (next.status !== "UPLOADED" && next.status !== "PROCESSING") {
+          setJob(next);
+          const columns = next.summary?.columns || [];
+          setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
+          setCustomerCodeDraft(String((next.header || next.summary)?.customerCode || ""));
+          await loadJobs();
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [job?.id, job?.status, filter, rowPageSize]);
 
   useEffect(() => {
     void loadJobs().catch((e) => setError(e.message));
@@ -529,6 +554,20 @@ export default function DeliveryQuoteImport({
       )}
       {tab === "OUTPUTS" && renderHistory("converted")}
       {tab === "ADMIN" && isAdmin && renderHistory("admin")}
+      {job && (job.status === "UPLOADED" || job.status === "PROCESSING") && (
+        <div className="notice" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px" }}>
+          <div style={{ width: "20px", height: "20px", border: "3px solid #cbd5e1", borderTopColor: "#2563eb", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+          <div>
+            <strong>{t("Extracting delivery note rows…", "جارٍ استخراج صفوف إذن التسليم…")}</strong>
+            <p className="muted" style={{ margin: "2px 0 0 0" }}>
+              {t(
+                "Processing Excel file. Rows will appear automatically once ready.",
+                "تتم معالجة ملف الإكسل. ستظهر الصفوف تلقائياً فور اكتمالها.",
+              )}
+            </p>
+          </div>
+        </div>
+      )}
       {job?.summary?.warnings?.length ? (
         <div className="notice">
           {job.summary.warnings.join(" ")}
@@ -657,7 +696,7 @@ export default function DeliveryQuoteImport({
               <button
                 key={key}
                 className={filter === key ? "primary" : ""}
-                onClick={() => void open(job.id, key)}
+                onClick={() => void open(job.id, key, 0, rowPageSize)}
               >
                 {t(en, ar)}
               </button>
@@ -672,7 +711,7 @@ export default function DeliveryQuoteImport({
                     action: "REMOVE",
                     rowUpdates: getRowUpdates(),
                   });
-                  await open(job.id, filter);
+                  await open(job.id, filter, rowPage, rowPageSize);
                 })
               }
             >
@@ -688,7 +727,7 @@ export default function DeliveryQuoteImport({
                     action: "RESTORE",
                     rowUpdates: getRowUpdates(),
                   });
-                  await open(job.id, filter);
+                  await open(job.id, filter, rowPage, rowPageSize);
                 })
               }
             >
@@ -704,7 +743,7 @@ export default function DeliveryQuoteImport({
                     completed: true,
                     rowUpdates: getRowUpdates(),
                   });
-                  await open(job.id, filter);
+                  await open(job.id, filter, rowPage, rowPageSize);
                 })
               }
             >
@@ -720,7 +759,7 @@ export default function DeliveryQuoteImport({
                     rowIds: allIds,
                     rowUpdates: getRowUpdates(),
                   });
-                  await open(job.id, filter);
+                  await open(job.id, filter, rowPage, rowPageSize);
                 })
               }
             >
@@ -740,7 +779,7 @@ export default function DeliveryQuoteImport({
                     });
                   }
                   const refreshed: any = await api(
-                    `delivery-quote-imports/${job.id}?page=0&pageSize=100&filter=${encodeURIComponent(filter)}`,
+                    `delivery-quote-imports/${job.id}?page=${rowPage}&pageSize=${rowPageSize}&filter=${encodeURIComponent(filter)}`,
                   );
                   const quote = await api(
                     `delivery-quote-imports/${job.id}/finalize`,
@@ -748,13 +787,39 @@ export default function DeliveryQuoteImport({
                     { version: refreshed.version },
                   );
                   onImported(quote);
-                  await open(job.id, filter);
+                  await open(job.id, filter, rowPage, rowPageSize);
                 })
               }
             >
-              {t("Create quotation", "إنشاء عرض السعر")}
+              {busy ? t("Creating quotation…", "جارٍ إنشاء عرض السعر…") : t("Create quotation", "إنشاء عرض السعر")}
             </button>
           </div>
+          {(() => {
+            const totalRows = job?.resultCount ?? job?.summary?.totalRows ?? 0;
+            const totalPages = Math.max(1, Math.ceil(totalRows / rowPageSize));
+            if (totalPages <= 1) return null;
+            return (
+              <div className="delivery-history-pagination" style={{ margin: "10px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+                <button
+                  type="button"
+                  disabled={rowPage <= 0 || busy}
+                  onClick={() => void open(job.id, filter, rowPage - 1, rowPageSize)}
+                >
+                  {t("Previous", "السابق")}
+                </button>
+                <span>
+                  {t("Page", "صفحة")} {rowPage + 1} / {totalPages} ({totalRows} {t("rows", "صف")})
+                </span>
+                <button
+                  type="button"
+                  disabled={rowPage + 1 >= totalPages || busy}
+                  onClick={() => void open(job.id, filter, rowPage + 1, rowPageSize)}
+                >
+                  {t("Next", "التالي")}
+                </button>
+              </div>
+            );
+          })()}
           <div className="table-scroll">
             <table>
               <thead>
@@ -897,7 +962,7 @@ export default function DeliveryQuoteImport({
                                   completed: true,
                                   rowUpdates: getRowUpdates(),
                                 });
-                                await open(job.id, filter);
+                                await open(job.id, filter, rowPage, rowPageSize);
                               })
                             }
                           >
@@ -912,7 +977,7 @@ export default function DeliveryQuoteImport({
                                   action: row.action === "REMOVE" ? "RESTORE" : "REMOVE",
                                   rowUpdates: getRowUpdates(),
                                 });
-                                await open(job.id, filter);
+                                await open(job.id, filter, rowPage, rowPageSize);
                               })
                             }
                           >
@@ -928,6 +993,32 @@ export default function DeliveryQuoteImport({
               </tbody>
             </table>
           </div>
+          {(() => {
+            const totalRows = job?.resultCount ?? job?.summary?.totalRows ?? 0;
+            const totalPages = Math.max(1, Math.ceil(totalRows / rowPageSize));
+            if (totalPages <= 1) return null;
+            return (
+              <div className="delivery-history-pagination" style={{ margin: "12px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+                <button
+                  type="button"
+                  disabled={rowPage <= 0 || busy}
+                  onClick={() => void open(job.id, filter, rowPage - 1, rowPageSize)}
+                >
+                  {t("Previous", "السابق")}
+                </button>
+                <span>
+                  {t("Page", "صفحة")} {rowPage + 1} / {totalPages} ({totalRows} {t("rows", "صف")})
+                </span>
+                <button
+                  type="button"
+                  disabled={rowPage + 1 >= totalPages || busy}
+                  onClick={() => void open(job.id, filter, rowPage + 1, rowPageSize)}
+                >
+                  {t("Next", "التالي")}
+                </button>
+              </div>
+            );
+          })()}
         </>
       )}
       {job?.status === "COMPLETED" && (

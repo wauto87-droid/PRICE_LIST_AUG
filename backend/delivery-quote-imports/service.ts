@@ -231,6 +231,10 @@ async function stageRow(
   db: DB,
   raw: Record<string, unknown>,
   mapping: z.infer<typeof mappingSchema>,
+  context?: {
+    matchMap: Map<string, { id: string; matched_alias: string | null }>;
+    pricingMap: Map<string, any>;
+  },
 ) {
   const customerName = String(raw[mapping.customerName] ?? "").trim();
   const customerCode = mapping.customerCode ? String(raw[mapping.customerCode] ?? "").trim() : "";
@@ -265,13 +269,29 @@ async function stageRow(
     unresolved: false,
   };
   if (!issues.length && action === "ADD" && partNumber) {
-    const matched = await productMatch(db, partNumber);
+    const matched = context
+      ? context.matchMap.get(normalizePart(partNumber)) ?? null
+      : await productMatch(db, partNumber);
     if (matched) {
       if (matched.matched_alias)
         (importMeta as any).matchedAlias = matched.matched_alias;
-      const row = await getProduct(db, matched.id);
-      const input = toInput(row);
-      const level = selectedLevel(input);
+      let level: any;
+      if (context && context.pricingMap.has(matched.id)) {
+        const p = context.pricingMap.get(matched.id);
+        const input = {
+          method: p.method,
+          markup: p.markup,
+          listPrice: p.list_price,
+          baseDiscount: p.base_discount,
+          levels: p.levels,
+          defaultLevel: p.default_level,
+        } as any;
+        level = selectedLevel(input);
+      } else {
+        const row = await getProduct(db, matched.id);
+        const input = toInput(row);
+        level = selectedLevel(input);
+      }
       resolution = "MATCHED_CATALOG";
       productId = matched.id;
       lineInput = {
@@ -664,26 +684,111 @@ export async function mapRows(
         [id],
       )
     ).rows;
+
+    // 1. Collect all candidate part numbers to match in batch
+    const candidateParts: string[] = [];
+    for (const row of rows) {
+      const pn = String(row.raw?.[mapping.partNumber] ?? "").trim();
+      if (pn) candidateParts.push(normalizePart(pn));
+    }
+    const uniqueParts = [...new Set(candidateParts)];
+
+    const matchMap = new Map<string, { id: string; matched_alias: string | null }>();
+    if (uniqueParts.length > 0) {
+      const matchRows = (
+        await tx.query(
+          `SELECT p.id, p.normalized_part AS lookup_key, NULL::text AS matched_alias, 0 AS priority
+           FROM products p
+           WHERE p.normalized_part = ANY($1::text[])
+           UNION ALL
+           SELECT a.product_id AS id, a.normalized AS lookup_key, a.normalized AS matched_alias, 1 AS priority
+           FROM product_aliases a
+           WHERE a.normalized = ANY($1::text[])
+           ORDER BY priority ASC`,
+          [uniqueParts],
+        )
+      ).rows;
+      for (const m of matchRows as any[]) {
+        if (!matchMap.has(m.lookup_key)) {
+          matchMap.set(m.lookup_key, { id: m.id, matched_alias: m.matched_alias });
+        }
+      }
+    }
+
+    const matchedProductIds = [...new Set([...matchMap.values()].map((m) => m.id))];
+    const pricingMap = new Map<string, any>();
+    if (matchedProductIds.length > 0) {
+      const productRows = (
+        await tx.query(
+          `SELECT p.id, pp.default_level, pp.method, pp.markup, pp.list_price, pp.base_discount,
+             COALESCE((
+               SELECT json_agg(json_build_object(
+                 'code', l.code,
+                 'active', l.active,
+                 'method', l.method,
+                 'fixedPrice', l.fixed_price::text,
+                 'markup', l.markup::text,
+                 'listPrice', l.list_price::text,
+                 'baseDiscount', l.base_discount::text
+               ) ORDER BY CASE l.code WHEN 'WHOLESALE' THEN 0 WHEN 'RETAIL' THEN 1 ELSE 2 END)
+               FROM product_selling_levels l WHERE l.product_id = p.id
+             ), '[]'::json) AS levels
+           FROM products p
+           JOIN product_pricing pp ON pp.product_id = p.id
+           WHERE p.id = ANY($1::uuid[])`,
+          [matchedProductIds],
+        )
+      ).rows;
+      for (const p of productRows as any[]) {
+        pricingMap.set(p.id, p);
+      }
+    }
+
+    const context = { matchMap, pricingMap };
     const staged: Awaited<ReturnType<typeof stageRow>>[] = [];
     for (const row of rows) {
-      const next = await stageRow(tx, row.raw, mapping);
+      const next = await stageRow(tx, row.raw, mapping, context);
       staged.push(next);
+    }
+
+    // Batch update rows in chunks of 200 using unnest
+    const chunkSize = 200;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunkRows = rows.slice(i, i + chunkSize);
+      const chunkStaged = staged.slice(i, i + chunkSize);
       await tx.query(
-        `UPDATE delivery_quote_rows
-         SET resolution=$2,action=$3,completed=$4,issues=$5,line_input=$6,source_price=$7,product_id=$8
-         WHERE id=$1`,
+        `UPDATE delivery_quote_rows AS r
+         SET resolution = v.resolution,
+             action = v.action,
+             completed = v.completed,
+             issues = v.issues::jsonb,
+             line_input = v.line_input::jsonb,
+             source_price = v.source_price,
+             product_id = v.product_id::uuid
+         FROM unnest(
+           $1::uuid[],
+           $2::text[],
+           $3::text[],
+           $4::boolean[],
+           $5::text[],
+           $6::text[],
+           $7::text[],
+           $8::text[]
+         ) AS v(id, resolution, action, completed, issues, line_input, source_price, product_id)
+         WHERE r.id = v.id`,
         [
-          row.id,
-          next.resolution,
-          next.action,
-          next.completed,
-          json(next.issues),
-          json(next.lineInput),
-          next.sourcePrice || null,
-          next.productId,
+          chunkRows.map((r) => r.id),
+          chunkStaged.map((s) => s.resolution),
+          chunkStaged.map((s) => s.action),
+          chunkStaged.map((s) => s.completed),
+          chunkStaged.map((s) => json(s.issues)),
+          chunkStaged.map((s) => json(s.lineInput)),
+          chunkStaged.map((s) => s.sourcePrice || null),
+          chunkStaged.map((s) => s.productId),
         ],
       );
     }
+
     const header = headerState(staged);
     const summaryRows = rows.map((row, index) => ({
       ...row,
@@ -727,6 +832,13 @@ export async function reviewRows(
       )
     ).rows;
     assert(rows.length === data.rowIds.length, 404, "One or more rows were not found");
+    const updates: {
+      id: string;
+      action: string;
+      completed: boolean;
+      issues: string[];
+      lineInput: any;
+    }[] = [];
     for (const row of rows) {
       let nextInput = { ...(row.line_input ?? {}) };
       const rowUpdate =
@@ -794,30 +906,83 @@ export async function reviewRows(
       )
         completed = issues.length === 0;
       else if (issues.length) completed = false;
+      const finalAction =
+        data.action === "REMOVE"
+          ? "REMOVE"
+          : data.action === "RESTORE"
+            ? "ADD"
+            : row.action;
+      updates.push({
+        id: row.id,
+        action: finalAction,
+        completed,
+        issues,
+        lineInput: nextInput,
+      });
+    }
+
+    // Batch update using unnest in chunks of 200
+    const chunkSize = 200;
+    for (let i = 0; i < updates.length; i += chunkSize) {
+      const chunk = updates.slice(i, i + chunkSize);
       await tx.query(
-        `UPDATE delivery_quote_rows
-         SET action=$2,completed=$3,issues=$4,line_input=$5
-         WHERE id=$1`,
+        `UPDATE delivery_quote_rows AS r
+         SET action = v.action,
+             completed = v.completed,
+             issues = v.issues::jsonb,
+             line_input = v.line_input::jsonb
+         FROM unnest($1::uuid[], $2::text[], $3::boolean[], $4::text[], $5::text[])
+         AS v(id, action, completed, issues, line_input)
+         WHERE r.id = v.id`,
         [
-          row.id,
-          data.action === "REMOVE"
-            ? "REMOVE"
-            : data.action === "RESTORE"
-              ? "ADD"
-              : row.action,
-          completed,
-          json(issues),
-          json(nextInput),
+          chunk.map((u) => u.id),
+          chunk.map((u) => u.action),
+          chunk.map((u) => u.completed),
+          chunk.map((u) => json(u.issues)),
+          chunk.map((u) => json(u.lineInput)),
         ],
       );
     }
-    const refreshed = (
-      await tx.query(
-        "SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
-        [id],
-      )
-    ).rows;
-    const summary = summarizeReview(refreshed, job.header ?? {});
+
+    const countRow = await one<{
+      totalRows: number;
+      includedRows: number;
+      removedRows: number;
+      completedRows: number;
+      blockedRows: number;
+      matchedRows: number;
+      customRows: number;
+    }>(
+      tx,
+      `SELECT
+        count(*)::int AS "totalRows",
+        count(*) FILTER (WHERE action = 'ADD')::int AS "includedRows",
+        count(*) FILTER (WHERE action = 'REMOVE')::int AS "removedRows",
+        count(*) FILTER (WHERE action = 'ADD' AND completed)::int AS "completedRows",
+        count(*) FILTER (WHERE jsonb_array_length(issues) > 0)::int AS "blockedRows",
+        count(*) FILTER (WHERE resolution = 'MATCHED_CATALOG')::int AS "matchedRows",
+        count(*) FILTER (WHERE resolution = 'UNMATCHED_CUSTOM')::int AS "customRows"
+       FROM delivery_quote_rows
+       WHERE job_id = $1`,
+      [id],
+    );
+    const header = job.header ?? {};
+    const summary = {
+      ...(countRow || {
+        totalRows: 0,
+        includedRows: 0,
+        removedRows: 0,
+        completedRows: 0,
+        blockedRows: 0,
+        matchedRows: 0,
+        customRows: 0,
+      }),
+      customerName: header.customerName,
+      customerCode: header.customerCode,
+      docNos: header.docNos,
+      dates: header.dates,
+      blockedReason: header.blockedReason,
+    };
     await tx.query(
       "UPDATE delivery_quote_jobs SET summary=$2,version=version+1,updated_at=now() WHERE id=$1",
       [id, json(summary)],
@@ -835,8 +1000,44 @@ export async function updateHeader(db: DB, actor: Actor, id: string, input: unkn
     assert(job.version === data.version, 409, "Import changed. Reload");
     const savedCustomer = data.customerCode ? await one(tx, "SELECT name,mobile FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customerCode]) : null;
     const header = normalizeDeliveryHeader({ ...(job.header ?? {}), customerCode: data.customerCode, customerName: savedCustomer?.name || job.header?.customerName || "", customerMobile: savedCustomer?.mobile || job.header?.customerMobile || "" });
-    const rows = (await tx.query("SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number", [id])).rows;
-    const summary = summarizeReview(rows, header);
+    const countRow = await one<{
+      totalRows: number;
+      includedRows: number;
+      removedRows: number;
+      completedRows: number;
+      blockedRows: number;
+      matchedRows: number;
+      customRows: number;
+    }>(
+      tx,
+      `SELECT
+        count(*)::int AS "totalRows",
+        count(*) FILTER (WHERE action = 'ADD')::int AS "includedRows",
+        count(*) FILTER (WHERE action = 'REMOVE')::int AS "removedRows",
+        count(*) FILTER (WHERE action = 'ADD' AND completed)::int AS "completedRows",
+        count(*) FILTER (WHERE jsonb_array_length(issues) > 0)::int AS "blockedRows",
+        count(*) FILTER (WHERE resolution = 'MATCHED_CATALOG')::int AS "matchedRows",
+        count(*) FILTER (WHERE resolution = 'UNMATCHED_CUSTOM')::int AS "customRows"
+       FROM delivery_quote_rows
+       WHERE job_id = $1`,
+      [id],
+    );
+    const summary = {
+      ...(countRow || {
+        totalRows: 0,
+        includedRows: 0,
+        removedRows: 0,
+        completedRows: 0,
+        blockedRows: 0,
+        matchedRows: 0,
+        customRows: 0,
+      }),
+      customerName: header.customerName,
+      customerCode: header.customerCode,
+      docNos: header.docNos,
+      dates: header.dates,
+      blockedReason: header.blockedReason,
+    };
     await tx.query("UPDATE delivery_quote_jobs SET header=$2,summary=$3,version=version+1,updated_at=now() WHERE id=$1", [id, json(header), json(summary)]);
     await audit(tx, actor.id, "DELIVERY_QUOTE_CUSTOMER_CODE", "delivery_quote_jobs", id, null, { customerCode: data.customerCode });
     return { ok: true };
@@ -863,13 +1064,12 @@ export async function finalize(
       return publicQuote(await getQuote(tx, actor, job.quote_id), actor);
     }
     assert(job.version === data.version, 409, "Import changed. Reload");
-    const rows = (
+    const included = (
       await tx.query(
-        "SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
+        "SELECT * FROM delivery_quote_rows WHERE job_id=$1 AND action='ADD' ORDER BY row_number",
         [id],
       )
     ).rows;
-    const included = rows.filter((row) => row.action === "ADD");
     assert(included.length > 0, 400, "Select at least one row for the quotation");
     const header = job.mapping
       ? headerFromRows(included, job.mapping, job.header)
