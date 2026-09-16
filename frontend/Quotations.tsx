@@ -81,6 +81,34 @@ export default function Quotations({
     );
     return () => clearInterval(timer);
   }, [pdf]);
+
+  const exportToExcel = () => {
+    if (!selected) return;
+    const header = [
+      t("Part Number", "رقم الصنف"),
+      t("Description", "الوصف"),
+      t("Quantity", "الكمية"),
+      t("Unit Price", "سعر الوحدة"),
+      t("Total", "الإجمالي")
+    ].join(",");
+    const csvRows = selected.lines.map((l: any) => {
+      const part = `"${(l.partNumber || "").replace(/"/g, '""')}"`;
+      const desc = `"${(l.description || "").replace(/"/g, '""')}"`;
+      const qty = l.price?.quantity || 0;
+      const unit = l.price?.finalExcl || l.price?.unit || 0;
+      const total = l.price?.total || 0;
+      return [part, desc, qty, unit, total].join(",");
+    });
+    const csv = [header, ...csvRows].join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Quotation_${selected.number}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="card">
       <div className="section-title">
@@ -464,6 +492,12 @@ export default function Quotations({
                 }
               >
                 {t("Generate PDF", "إنشاء PDF")}
+              </button>
+              <button
+                disabled={busy}
+                onClick={exportToExcel}
+              >
+                {t("Export to Excel", "تصدير إلى Excel")}
               </button>
               {selected.status === "DRAFT" &&
                 user.permissions.includes("QUOTE_DELETE") && (

@@ -37,23 +37,23 @@ function parseStaffPricingQuery(raw) {
   let percentType = "AUTO";
 
   // 1. Explicit positive markup (+10% or +10 or + 10%)
-  const plusMatch = text.match(/(?:[\s]+|^)\+\s*(\d+(?:\.\d+)?)\s*%?$/);
+  const plusMatch = text.match(/(?:[\s]*|^)\+\s*(\d+(?:\.\d+)?)\s*%?$/);
   if (plusMatch) {
     percent = parseFloat(plusMatch[1]);
     percentType = "MARKUP";
     text = text.slice(0, plusMatch.index).trim();
   } else {
     // 2. Explicit discount (-10% or -10 or - 10%)
-    const minusMatch = text.match(/(?:[\s]+|^)\-\s*(\d+(?:\.\d+)?)\s*%?$/);
+    const minusMatch = text.match(/(?:[\s]*|^)\-\s*(\d+(?:\.\d+)?)\s*%?$/);
     if (minusMatch) {
       percent = parseFloat(minusMatch[1]);
       percentType = "DISCOUNT";
       text = text.slice(0, minusMatch.index).trim();
     } else {
       // 3. Trailing percentage (%10 or % 10 or 10% or space 10% or space 10)
-      const numMatch = text.match(/(?:[\s%]+)(\d+(?:\.\d+)?)\s*%?$/);
+      const numMatch = text.match(/(?:[\s]+)(\d+(?:\.\d+)?)\s*%?$|(?:\s*)(\d+(?:\.\d+)?)\s*%$/);
       if (numMatch) {
-        percent = parseFloat(numMatch[1]);
+        percent = parseFloat(numMatch[1] || numMatch[2]);
         percentType = "DISCOUNT";
         text = text.slice(0, numMatch.index).trim();
       } else {
@@ -81,11 +81,11 @@ function parseStaffPricingQuery(raw) {
 
 async function getSenderPhone(msg, client) {
   let num = "";
+  const candidates = [msg.author, msg.from, msg._data?.author, msg._data?.from, msg.id?.participant, msg.id?.remote];
 
-  // 1. Prioritize JID from msg.author or msg.from
-  const candidates = [msg.author, msg.from];
+  // 1. Prioritize real JID (@c.us or @s.whatsapp.net) over @lid
   for (const c of candidates) {
-    if (c && typeof c === "string" && !c.includes('@g.us') && !c.includes('@lid')) {
+    if (c && typeof c === "string" && (c.includes('@c.us') || c.includes('@s.whatsapp.net'))) {
       const raw = c.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
       if (raw && raw.length >= 8 && raw.length <= 15) {
         num = raw;
@@ -94,12 +94,25 @@ async function getSenderPhone(msg, client) {
     }
   }
 
-  // 2. Fallback to getContact
+  // 2. Fallback to any non-group, non-lid JID
+  if (!num) {
+    for (const c of candidates) {
+      if (c && typeof c === "string" && !c.includes('@g.us') && !c.includes('@lid')) {
+        const raw = c.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+        if (raw && raw.length >= 8 && raw.length <= 15) {
+          num = raw;
+          break;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to getContact
   if (!num) {
     try {
       if (msg && typeof msg.getContact === "function") {
         const contact = await msg.getContact();
-        if (contact && contact.number) {
+        if (contact && contact.number && !String(contact.id?._serialized || "").includes("lid")) {
           const cleaned = String(contact.number).replace(/\D/g, "");
           if (cleaned && cleaned.length >= 8 && cleaned.length <= 15) {
             num = cleaned;
@@ -109,12 +122,17 @@ async function getSenderPhone(msg, client) {
     } catch (e) {}
   }
 
-  // 3. Absolute fallback
+  // 4. Absolute fallback (avoid lids)
   if (!num) {
-    const raw = (msg.author || msg.from || "").replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
-    num = raw;
+    const fallbackSource = msg.author || msg.from || "";
+    if (!fallbackSource.includes("@lid")) {
+      const raw = fallbackSource.replace(/@.*$/, "").split(":")[0].replace(/\D/g, "");
+      if (raw && raw.length >= 8 && raw.length <= 15) {
+        num = raw;
+      }
+    }
   }
-  return num;
+  return num || null;
 }
 
 let cachedSupportContact = { phone: null, fetchedAt: 0 };
@@ -175,59 +193,46 @@ function getStoreUrl(customUrl) {
 function formatOtpMessage(code, purpose, customStoreUrl) {
   const storeUrl = getStoreUrl(customStoreUrl);
 
-  let titleAr = "رمز التحقق لتسجيل الدخول";
   let titleEn = "Login Verification Code";
-  let actionAr = "لتسجيل الدخول إلى حسابك";
   let actionEn = "to sign in to your account";
 
   if (purpose === "SIGNUP") {
-    titleAr = "تأكيد تسجيل الحساب الجديد";
     titleEn = "Account Registration Code";
-    actionAr = "لتفعيل وإنشاء حسابك الجديد";
     actionEn = "to activate your new account";
   } else if (purpose === "CHECKOUT") {
-    titleAr = "تأكيد طلب الشراء والدفع";
     titleEn = "Order Checkout Code";
-    actionAr = "لتأكيد إتمام طلب الشراء والدفع";
     actionEn = "to verify and complete your order";
   }
 
-  return `⚡ *شركة إيه إم تي للمواد الكهربائية*
-*AMT Electrical Supplies*
+  return `⚡ *AMT Electrical Supplies*
 ────────────────────────────
-🔐 *${titleAr}*
-*${titleEn}*
+🔐 *${titleEn}*
 
-رمز التحقق الخاص بك ${actionAr} هو:
 Your verification code ${actionEn} is:
 
 👉  *${code}*  👈
 
-⏱️ الرمز صالح للاستخدام لمدة *10 دقائق* فقط.
 ⏱️ Code is valid for *10 minutes* only.
 
-⚠️ *تنبيه أمني هام:* لا تشارك هذا الرمز مع أي شخص، موظفونا لن يطلبوا هذا الرمز منك أبداً.
 ⚠️ *Security Notice:* Never share this code with anyone. AMT staff will never ask for it.
 ────────────────────────────
-🌐 *متجرنا الإلكتروني الرسمي | Official Store:*
+🌐 *Official Store:*
 ${storeUrl}
 
-📞 *خدمة العملاء والدعم الفني:*
+📞 *Support:*
 support@amtelectric.com`;
 }
 
 function formatTestMessage(customStoreUrl) {
   const storeUrl = getStoreUrl(customStoreUrl);
 
-  return `⚡ *شركة إيه إم تي للمواد الكهربائية | AMT Electric*
+  return `⚡ *AMT Electric*
 ────────────────────────────
-✅ *اختبار اتصال واتساب ناجح!*
-*WhatsApp Connection Test Successful!*
+✅ *WhatsApp Connection Test Successful!*
 
-تم ربط نظام واتساب بالمتجر الإلكتروني بنجاح وهو يعمل الآن بكفاءة لإرسال رموز التحقق، تحديثات الطلبات، والرد الآلي على العملاء.
 WhatsApp integration is operational and ready to dispatch OTPs, order updates, and automated bot assistance.
 
-🌐 *رابط المتجر:*
+🌐 *Store Link:*
 ${storeUrl}
 ────────────────────────────`;
 }
@@ -280,15 +285,13 @@ How can we assist you today? Please select a service number:
 }
 
 function getLanguagePrompt() {
-  return `⚡ *شركة إيه إم تي للمواد الكهربائية*
-*AMT Electrical Supplies*
+  return `⚡ *AMT Electrical Supplies*
 ────────────────────────────
-🌐 *الرجاء اختيار اللغة / Please select your language:*
+🌐 *Please select your language:*
 
 1️⃣  العربية (Arabic) 🇸🇦
 2️⃣  English 🇬🇧
 
-💡 *أرسل 1 للغة العربية أو 2 للإنجليزية*
 💡 *Reply 1 for Arabic or 2 for English*
 ────────────────────────────`;
 }
@@ -343,21 +346,19 @@ async function handleBotMessage(msg, client) {
         const data = await res.json();
 
         if (data.authorized === false) {
-          const phoneFormatted = (senderPhone && senderPhone.length <= 15 && senderPhone.length >= 8) ? ` (*+${senderPhone}*)` : "";
-          await client.sendMessage(sender, `⚠️ *غير مصرح باستعلام أسعار الموظفين | Unauthorized*
+          const phoneFormatted = (senderPhone && senderPhone.length <= 15 && senderPhone.length >= 8) ? ` (+${senderPhone})` : "";
+          const supportNumber = await getSupportContactNumber(client);
+          const supportStr = supportNumber ? ` Please ask the administrator (${supportNumber}) to register your mobile in the control panel.` : ` Please ask the administrator to register your mobile in the control panel.`;
+          
+          await client.sendMessage(sender, `⚠️ *Unauthorized Access*
 ────────────────────────────
-رقم الهاتف الخاص بك${phoneFormatted} غير مسجل في قائمة حسابات الموظفين المصرح لهم.
-للحصول على صلاحية الاستعلام عن أسعار التكلفة ونسب الخصم، يرجى الطلب من المشرف إضافة رقم هاتفك في:
-لوحة التحكم ⬅️ الموظفين والمستخدمين.
-
-Your phone number${phoneFormatted} is not registered as authorized staff. Please contact the administrator to register your mobile.`);
+Your phone number${phoneFormatted} is not registered as authorized staff.${supportStr}`);
           return;
         } else if (!data.found) {
-          await client.sendMessage(sender, `🔍 *بحث تسعيرة الموظفين | Staff Price Check*
+          await client.sendMessage(sender, `🔍 *Staff Price Check*
 ────────────────────────────
-❌ الصنف *${partNumber}* غير موجود في قاعدة بيانات المتجر أو غير نشط.
-يرجى التأكد من كتابة رقم الصنف أو البديل بشكل صحيح.
-Part number *${partNumber}* was not found in active products.`);
+❌ Part number *${partNumber}* was not found in active products.
+Please ensure the part number is typed correctly.`);
           return;
         }
 
@@ -413,7 +414,7 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
         return;
       } catch (err) {
         console.error("Bot price command error:", err);
-        await client.sendMessage(sender, `❌ حدث خطأ أثناء جلب تسعيرة الصنف: ${partNumber}. يرجى المحاولة لاحقاً.`);
+        await client.sendMessage(sender, `❌ An error occurred while fetching the price for: ${partNumber}. Please try again later.`);
         return;
       }
     }
@@ -472,11 +473,11 @@ ${data.cost ? `🔒 *سعر التكلفة الداخلي:* ${data.cost} ريا�
 
     // Handle document / media without text
     if (msg.hasMedia && !bodyText) {
-      await client.sendMessage(sender, `📄 *شكراً لإرسال الملف! | Document Received*
+      await client.sendMessage(sender, `📄 *Document Received*
 ────────────────────────────
-تم استلام ملفك بنجاح. إذا كان هذا جدول كميات لمشروع أو طلب تسعيرة (BOM / RFQ)، سيقوم مهندسو المبيعات بمراجعته والتواصل معك.
+Your file has been received successfully. If this is a Bill of Materials (BOM) or RFQ, our sales engineers will review it and get back to you.
 
-🔗 *يمكنك أيضاً رفع ملفك ومتابعته عبر بوابة الشركات والمشاريع:*
+🔗 *You can also upload and track your project requirements via the portal:*
 ${storeUrl}/requirements
 ────────────────────────────`);
       return;

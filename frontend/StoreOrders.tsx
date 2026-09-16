@@ -282,6 +282,7 @@ export default function StoreOrders({
       <html dir="ltr" lang="en">
       <head>
         <meta charset="utf-8"/>
+        <base href="${window.location.origin}" />
         <title>Order Invoice ${order.number}</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; background: #fff; line-height: 1.5; }
@@ -402,6 +403,7 @@ export default function StoreOrders({
       <html dir="ltr" lang="en">
       <head>
         <meta charset="utf-8"/>
+        <base href="${window.location.origin}" />
         <title>Delivery Slip ${order.number}</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #000; background: #fff; line-height: 1.6; }

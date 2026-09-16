@@ -225,17 +225,19 @@ export async function runJob(db: DB) {
           );
         await db.transaction(async (tx) => {
           await tx.query("DELETE FROM import_rows WHERE job_id=$1", [imp.id]);
-          for (let i = 0; i < extracted.rows.length; i++)
+          const chunkSize = 250;
+          for (let i = 0; i < extracted.rows.length; i += chunkSize) {
+            const chunk = extracted.rows.slice(i, i + chunkSize);
+            const ids = chunk.map(() => randomUUID());
+            const rowNums = chunk.map((_: unknown, idx: number) => i + idx + 1);
+            const rawJsons = chunk.map((r: any) => json(r));
+            const confidences = chunk.map(() => imp.kind === "PDF" ? "LOW" : "HIGH");
             await tx.query(
-              "INSERT INTO import_rows(id,job_id,row_number,raw,confidence) VALUES($1,$2,$3,$4,$5)",
-              [
-                randomUUID(),
-                imp.id,
-                i + 1,
-                json(extracted.rows[i]),
-                imp.kind === "PDF" ? "LOW" : "HIGH",
-              ],
+              `INSERT INTO import_rows(id, job_id, row_number, raw, confidence)
+               SELECT unnest($1::uuid[]), $2, unnest($3::int[]), unnest($4::jsonb[]), unnest($5::text[])`,
+              [ids, imp.id, rowNums, rawJsons, confidences],
             );
+          }
           await tx.query(
             "UPDATE import_jobs SET status='AWAITING_REVIEW',summary=$2,version=version+1,updated_at=now() WHERE id=$1",
             [
