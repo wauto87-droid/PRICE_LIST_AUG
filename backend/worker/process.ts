@@ -290,7 +290,7 @@ export async function runJob(db: DB) {
           for (let i = 0; i < extracted.rows.length; i += chunkSize) {
             const chunk = extracted.rows.slice(i, i + chunkSize);
             const ids = chunk.map(() => randomUUID());
-            const rowNums = chunk.map((_, idx) => i + idx + 1);
+            const rowNums = chunk.map((_: unknown, idx: number) => i + idx + 1);
             const rawJsons = chunk.map((r: any) => json(r));
             await tx.query(
               `INSERT INTO delivery_quote_rows(id, job_id, row_number, raw)
