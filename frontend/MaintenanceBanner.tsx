@@ -106,11 +106,22 @@ export default function MaintenanceBanner({
 
           {image ? (
             <div className="maintenance-image-wrapper">
-              <img
-                src={image}
-                alt="System Maintenance"
-                className="maintenance-custom-image"
-              />
+              {image.startsWith("data:video/") || /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(image) ? (
+                <video
+                  src={image}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="maintenance-custom-image maintenance-custom-video"
+                />
+              ) : (
+                <img
+                  src={image}
+                  alt="System Maintenance"
+                  className="maintenance-custom-image"
+                />
+              )}
             </div>
           ) : (
             <div className="maintenance-hero-icon">

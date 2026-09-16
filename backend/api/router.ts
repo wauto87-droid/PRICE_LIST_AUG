@@ -78,7 +78,7 @@ async function readLimited(req: Request, limit: number): Promise<Buffer> {
   }
 }
 async function body(req: Request) {
-  const text = (await readLimited(req, 2 * 1024 * 1024)).toString("utf8");
+  const text = (await readLimited(req, 20 * 1024 * 1024)).toString("utf8");
   try {
     return JSON.parse(text);
   } catch {
@@ -130,6 +130,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
       await db.query("SELECT 1");
       return response({ ok: true, release, maintenance });
+    }
+    if (root === "ads" && method === "GET") {
+      const all = await storefront.getAds(db);
+      return response({ ads: all.filter((a: any) => a && a.enabled) });
     }
     if (root === "setup" && method === "GET")
       return response({
@@ -648,6 +652,15 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       );
     }
     if (root === "storefront-admin") {
+      if (id === "ads") {
+        auth.requirePermission(actor, "STOREFRONT_MANAGE");
+        if (method === "GET") {
+          return response({ ads: await storefront.getAds(db) });
+        }
+        if (method === "PUT") {
+          return response(await storefront.saveAds(db, actor, await body(req)));
+        }
+      }
       if(id==='catalog-options'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({ids:z.array(z.string().uuid()).max(200)}).parse(await body(req));return response({products:(await db.query('SELECT id,part_number,description FROM products WHERE id=ANY($1::uuid[]) ORDER BY part_number',[d.ids])).rows});}
 
       if(id==='category-seo'){

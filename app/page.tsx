@@ -10,6 +10,7 @@ import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
 import Commercial from "@/frontend/Commercial";
 import MaintenanceBanner from "@/frontend/MaintenanceBanner";
+import AdDisplay from "@/frontend/AdDisplay";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 const emptyCart = () => ({
@@ -679,6 +680,7 @@ export default function App() {
           {t("Built for your business", "مصمم لأعمالك")}
         </span>
       </footer>
+      <AdDisplay target="WORKSPACE" lang={lang as any} />
     </>
   );
 }

@@ -48,6 +48,7 @@ const publicSettings = (input: any) => {
     maintenanceText: row.data?.maintenanceText ?? "",
     maintenanceImage: row.data?.maintenanceImage ?? null,
     whatsappNumber: row.data?.supportMobile ?? "",
+    ads: Array.isArray(row.data?.ads) ? row.data.ads.filter((a: any) => a && a.enabled) : [],
   };
 };
 
@@ -137,6 +138,68 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
       { ...saved, data: { ...saved.data, secrets: "not stored" } },
     );
     return saved;
+  });
+}
+
+export async function getAds(db: DB) {
+  const row = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
+  const ads = Array.isArray(row?.data?.ads) ? row.data.ads : [];
+  return ads;
+}
+
+export async function saveAds(db: DB, actor: Actor, raw: unknown) {
+  assert(
+    actor.permissions.includes("STOREFRONT_MANAGE") ||
+      actor.permissions.includes("SETTINGS_MANAGE"),
+    403,
+    "Missing permission: STOREFRONT_MANAGE or SETTINGS_MANAGE",
+  );
+  const data = z
+    .object({
+      ads: z.array(
+        z.object({
+          id: z.string().uuid(),
+          enabled: z.boolean().default(true),
+          title: z.string().trim().min(1).max(150),
+          titleAr: z.string().trim().max(150).optional().default(""),
+          description: z.string().trim().max(500).optional().default(""),
+          descriptionAr: z.string().trim().max(500).optional().default(""),
+          mediaUrl: z.string().trim().min(1),
+          target: z.enum(["ALL", "STOREFRONT", "WORKSPACE"]).default("ALL"),
+          type: z.enum(["POPUP", "INTERVAL", "BANNER"]).default("POPUP"),
+          intervalSeconds: z.number().int().min(10).max(86400).default(60),
+          ctaText: z.string().trim().max(80).optional().default(""),
+          ctaTextAr: z.string().trim().max(80).optional().default(""),
+          ctaLink: z.string().trim().max(500).optional().default(""),
+          dismissible: z.boolean().default(true),
+          createdAt: z.string().optional(),
+        }),
+      ),
+    })
+    .parse(raw);
+
+  return db.transaction(async (tx) => {
+    const before = await one(
+      tx,
+      "SELECT * FROM storefront_settings WHERE id=1 FOR UPDATE",
+    );
+    const currentData = before?.data || {};
+    await tx.query(
+      "UPDATE storefront_settings SET data=$1,version=version+1,updated_at=now() WHERE id=1",
+      [json({ ...currentData, ads: data.ads })],
+    );
+
+    await audit(
+      tx,
+      actor.id,
+      "STOREFRONT_ADS_UPDATE",
+      "storefront_settings",
+      "1",
+      { count: currentData.ads?.length || 0 },
+      { count: data.ads.length },
+    );
+
+    return { ok: true, ads: data.ads };
   });
 }
 

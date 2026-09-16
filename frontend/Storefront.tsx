@@ -12,6 +12,7 @@ import BusinessPortal from "./BusinessPortal";
 import StoreMerchandising from "./StoreMerchandising";
 import StoreReceipts from "./StoreReceipts";
 import MaintenanceBanner from "./MaintenanceBanner";
+import AdDisplay from "./AdDisplay";
 export type StoreProduct = {
   id: string;
   part_number: string;
@@ -1191,6 +1192,7 @@ export default function Storefront() {
           </div>
         </StoreDialog>
       )}
+      <AdDisplay target="STOREFRONT" lang={lang as any} />
     </main>
   );
 }

@@ -12,6 +12,7 @@ import WhatsAppAdmin from "./WhatsAppAdmin";
 import StoreInventory from "./StoreInventory";
 import StoreOrders from "./StoreOrders";
 import StoreProducts from "./StoreProducts";
+import StoreAdsAdmin from "./StoreAdsAdmin";
 import "./storefront.css";
 
 export default function StorefrontAdmin({
@@ -112,6 +113,7 @@ export default function StorefrontAdmin({
     ["products", "📦 Products Catalog", "📦 كتالوج المنتجات"],
     ["marketing", "🎨 Store & Marketing", "🎨 واجهة المتجر والتسويق"],
     ["corporate", "🏢 Corporate & B2B", "🏢 حسابات وطلبات الشركات"],
+    ["ads", "📢 Ads & Popups", "📢 الإعلانات والنوافذ"],
     ...(can("SETTINGS_MANAGE")
       ? [["whatsapp", "💬 WhatsApp & Bot", "💬 واتساب والبوت"]]
       : []),
@@ -136,6 +138,8 @@ export default function StorefrontAdmin({
         updateTab("orders");
       } else if (["products"].includes(value)) {
         updateTab("products");
+      } else if (["ads"].includes(value)) {
+        updateTab("ads");
       } else if (["homepage", "promotions", "marketing"].includes(value)) {
         updateTab("marketing");
         if (value === "homepage" || value === "promotions") {
@@ -746,6 +750,11 @@ export default function StorefrontAdmin({
               <StoreInventory t={t} products={optionProducts} user={user} />
             )}
           </div>
+        )}
+
+        {/* HUB: ADS & PROMOTIONS */}
+        {tab === "ads" && (
+          <StoreAdsAdmin t={t} user={user} />
         )}
       </div>
 

@@ -56,15 +56,34 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
     }
   };
 
+  const isVideoMedia = (url?: string | null) => {
+    if (!url) return false;
+    return url.startsWith("data:video/") || /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(url);
+  };
+
   const toBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 500000) {
-        reject(new Error("Use PNG/JPEG/WebP smaller than 500 KB"));
+      const allowed = [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "video/mp4",
+        "video/webm",
+        "video/ogg",
+        "video/quicktime",
+      ];
+      if (!allowed.includes(file.type) && !file.name.match(/\.(png|jpe?g|webp|gif|mp4|webm|ogg|mov)$/i)) {
+        reject(new Error(t("Use PNG, JPEG, WebP, GIF, or MP4/WebM video under 15 MB", "استخدم ملف PNG أو JPEG أو WebP أو GIF أو فيديو MP4/WebM بحجم أقل من 15 ميغابايت")));
+        return;
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        reject(new Error(t("File exceeds 15 MB limit", "يتجاوز حجم الملف الحد الأقصى (15 ميغابايت)")));
         return;
       }
       const r = new FileReader();
       r.onload = () => resolve(String(r.result));
-      r.onerror = () => reject(new Error("Image could not be read"));
+      r.onerror = () => reject(new Error(t("File could not be read", "تعذر قراءة الملف")));
       r.readAsDataURL(file);
     });
   };
@@ -104,31 +123,65 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
           />
         </label>
 
-        <label className="full-width">
-          {t("Custom Image (PNG/JPEG/WebP, < 500KB)", "صورة مخصصة (أقل من 500 كيلوبايت)")}
-          <input
-            type="file"
-            accept="image/png, image/jpeg, image/webp"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                try {
-                  const b64 = await toBase64(file);
-                  setData({
-                    ...data,
-                    workspace: { ...data.workspace, workspaceMaintenanceImage: b64 },
-                  });
-                } catch (err: any) {
-                  alert(err.message);
+        <div className="full-width">
+          <label>
+            {t("Custom Media (Photo, Animated GIF, or MP4/WebM Video, < 15MB)", "وسائط مخصصة (صورة، GIF متحرك، أو فيديو MP4/WebM، أقل من 15 ميجابايت)")}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg,video/quicktime"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  try {
+                    const b64 = await toBase64(file);
+                    setData({
+                      ...data,
+                      workspace: { ...data.workspace, workspaceMaintenanceImage: b64 },
+                    });
+                  } catch (err: any) {
+                    alert(err.message);
+                  }
                 }
+              }}
+            />
+          </label>
+          <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#64748b" }}>{t("Or enter media URL:", "أو أدخل رابط الوسائط:")}</span>
+            <input
+              type="url"
+              placeholder="https://.../banner.mp4 or .gif"
+              value={data.workspace.workspaceMaintenanceImage || ""}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  workspace: { ...data.workspace, workspaceMaintenanceImage: e.target.value.trim() || null },
+                })
               }
-            }}
-          />
-        </label>
+              style={{ flex: 1, fontSize: 12, padding: "4px 8px" }}
+            />
+          </div>
+        </div>
         {data.workspace.workspaceMaintenanceImage && (
-          <div className="full-width">
-            <img src={data.workspace.workspaceMaintenanceImage} alt="Workspace Maintenance Banner" style={{ maxHeight: 150 }} />
-            <div>
+          <div className="full-width" style={{ marginTop: 8, padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ marginBottom: 6, fontWeight: 600, fontSize: 13 }}>{t("Media Preview:", "معاينة الوسائط:")}</div>
+            {isVideoMedia(data.workspace.workspaceMaintenanceImage) ? (
+              <video
+                src={data.workspace.workspaceMaintenanceImage}
+                autoPlay
+                loop
+                muted
+                playsInline
+                controls
+                style={{ maxHeight: 200, maxWidth: "100%", borderRadius: 6, display: "block", background: "#000" }}
+              />
+            ) : (
+              <img
+                src={data.workspace.workspaceMaintenanceImage}
+                alt="Workspace Maintenance Media"
+                style={{ maxHeight: 200, maxWidth: "100%", borderRadius: 6, display: "block", objectFit: "contain" }}
+              />
+            )}
+            <div style={{ marginTop: 8 }}>
               <button
                 type="button"
                 className="danger"
@@ -139,7 +192,7 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
                   })
                 }
               >
-                {t("Remove Image", "إزالة الصورة")}
+                {t("Remove Media", "إزالة الوسائط")}
               </button>
             </div>
           </div>
@@ -185,34 +238,71 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
           />
         </label>
 
-        <label className="full-width">
-          {t("Custom Image (PNG/JPEG/WebP, < 500KB)", "صورة مخصصة (أقل من 500 كيلوبايت)")}
-          <input
-            type="file"
-            accept="image/png, image/jpeg, image/webp"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                try {
-                  const b64 = await toBase64(file);
-                  setData({
-                    ...data,
-                    storefront: {
-                      ...data.storefront,
-                      maintenanceImage: b64,
-                    },
-                  });
-                } catch (err: any) {
-                  alert(err.message);
+        <div className="full-width">
+          <label>
+            {t("Custom Media (Photo, Animated GIF, or MP4/WebM Video, < 15MB)", "وسائط مخصصة (صورة، GIF متحرك، أو فيديو MP4/WebM، أقل من 15 ميجابايت)")}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg,video/quicktime"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  try {
+                    const b64 = await toBase64(file);
+                    setData({
+                      ...data,
+                      storefront: {
+                        ...data.storefront,
+                        maintenanceImage: b64,
+                      },
+                    });
+                  } catch (err: any) {
+                    alert(err.message);
+                  }
                 }
+              }}
+            />
+          </label>
+          <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#64748b" }}>{t("Or enter media URL:", "أو أدخل رابط الوسائط:")}</span>
+            <input
+              type="url"
+              placeholder="https://.../store_banner.mp4 or .gif"
+              value={data.storefront.maintenanceImage || ""}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  storefront: {
+                    ...data.storefront,
+                    maintenanceImage: e.target.value.trim() || null,
+                  },
+                })
               }
-            }}
-          />
-        </label>
+              style={{ flex: 1, fontSize: 12, padding: "4px 8px" }}
+            />
+          </div>
+        </div>
         {data.storefront.maintenanceImage && (
-          <div className="full-width">
-            <img src={data.storefront.maintenanceImage} alt="Storefront Maintenance Banner" style={{ maxHeight: 150 }} />
-            <div>
+          <div className="full-width" style={{ marginTop: 8, padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ marginBottom: 6, fontWeight: 600, fontSize: 13 }}>{t("Media Preview:", "معاينة الوسائط:")}</div>
+            {isVideoMedia(data.storefront.maintenanceImage) ? (
+              <video
+                src={data.storefront.maintenanceImage}
+                autoPlay
+                loop
+                muted
+                playsInline
+                controls
+                style={{ maxHeight: 200, maxWidth: "100%", borderRadius: 6, display: "block", background: "#000" }}
+              />
+            ) : (
+              <img
+                src={data.storefront.maintenanceImage}
+                alt="Storefront Maintenance Media"
+                style={{ maxHeight: 200, maxWidth: "100%", borderRadius: 6, display: "block", objectFit: "contain" }}
+              />
+            )}
+            <div style={{ marginTop: 8 }}>
               <button
                 type="button"
                 className="danger"
@@ -226,7 +316,7 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
                   })
                 }
               >
-                {t("Remove Image", "إزالة الصورة")}
+                {t("Remove Media", "إزالة الوسائط")}
               </button>
             </div>
           </div>
