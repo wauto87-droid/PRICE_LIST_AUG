@@ -8,6 +8,7 @@ export interface StoreOrdersProps {
   user: any;
   orders: any[];
   warehouses: any[];
+  storefrontSettings?: any;
   onRefresh: () => Promise<void>;
 }
 
@@ -120,6 +121,7 @@ export default function StoreOrders({
   user,
   orders = [],
   warehouses = [],
+  storefrontSettings,
   onRefresh,
 }: StoreOrdersProps) {
   const [filterTab, setFilterTab] = useState<string>("ALL");
@@ -306,9 +308,10 @@ export default function StoreOrders({
             <div class="meta">Order Status: <strong>${stage.labelEn || stage.labelAr}</strong></div>
           </div>
           <div style="text-align: right;">
-            <div style="font-size: 20px; font-weight: 700; color: #0284c7;">AMT ELECTRICAL SUPPLIES</div>
-            <div class="meta">Electrical Materials & Project Solutions</div>
-            <div class="meta">VAT Registration No: 300000000000003</div>
+            ${storefrontSettings?.invoiceLogoUrl ? `<img src="${storefrontSettings.invoiceLogoUrl}" alt="Logo" style="max-height: 80px; max-width: 250px; margin-bottom: 10px;" />` : `<div style="font-size: 20px; font-weight: 700; color: #0284c7;">${storefrontSettings?.companyName || "STORE INVOICE"}</div>`}
+            <div class="meta">${storefrontSettings?.invoiceAddress ? storefrontSettings.invoiceAddress.replace(/\\n/g, '<br/>') : ""}</div>
+            ${storefrontSettings?.invoiceCrNumber ? `<div class="meta">CR No: ${storefrontSettings.invoiceCrNumber}</div>` : ""}
+            ${storefrontSettings?.invoiceVatNumber ? `<div class="meta">VAT Registration No: ${storefrontSettings.invoiceVatNumber}</div>` : ""}
           </div>
         </div>
 
@@ -367,10 +370,90 @@ export default function StoreOrders({
         <script>
           window.onload = function() { window.print(); }
         </script>
+
+        ${storefrontSettings?.invoiceSlipFooter ? `<div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid #eee; padding-top: 10px;">${storefrontSettings.invoiceSlipFooter.replace(/\\n/g, '<br/>')}</div>` : ""}
       </body>
       </html>
     `);
     win.document.close();
+    win.focus();
+    setTimeout(() => {
+      win.onload = function() { win.print(); }
+    }, 500);
+  }
+
+  function printDeliverySlip(order: any) {
+    const cust = resolveCustomer(order);
+    const win = window.open("", "_blank");
+    if (!win) return;
+    
+    let trackingInfo = "";
+    if (order.fulfillment_data?.carrier || order.fulfillment_data?.tracking) {
+      trackingInfo = `
+        <div style="margin-top: 20px; padding: 15px; border: 2px dashed #0284c7; border-radius: 8px; background: #f0f9ff; text-align: center;">
+          <div style="font-size: 14px; color: #0284c7; margin-bottom: 5px;"><strong>SHIPPING TRACKING</strong></div>
+          <div style="font-size: 18px; font-weight: 800;">${order.fulfillment_data.carrier || "Courier"} - ${order.fulfillment_data.tracking || "N/A"}</div>
+        </div>
+      `;
+    }
+
+    win.document.write(`
+      <!DOCTYPE html>
+      <html dir="ltr" lang="en">
+      <head>
+        <meta charset="utf-8"/>
+        <title>Delivery Slip ${order.number}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #000; background: #fff; line-height: 1.6; }
+          .label-container { max-width: 600px; margin: 0 auto; border: 2px solid #000; padding: 30px; border-radius: 12px; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #000; padding-bottom: 20px; margin-bottom: 20px; }
+          .title { font-size: 28px; font-weight: 900; letter-spacing: 1px; }
+          .order-id { font-size: 16px; font-weight: 700; background: #000; color: #fff; padding: 5px 15px; border-radius: 20px; }
+          .section { margin-bottom: 25px; }
+          .section h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; color: #666; letter-spacing: 1px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+          .address-box { font-size: 16px; font-weight: 600; padding: 10px 0; }
+          @media print { body { padding: 0; } .label-container { border: none; padding: 0; max-width: 100%; } }
+        </style>
+      </head>
+      <body>
+        <div class="label-container">
+          <div class="header">
+            <div class="title">DELIVERY SLIP</div>
+            <div class="order-id">#${order.number}</div>
+          </div>
+          
+          <div class="section">
+            <h3>FROM (SENDER)</h3>
+            <div class="address-box">
+              <div style="font-size: 18px; font-weight: 800; margin-bottom: 5px;">${storefrontSettings?.companyName || "STORE"}</div>
+              <div style="font-weight: 400; color: #444;">${storefrontSettings?.invoiceAddress ? storefrontSettings.invoiceAddress.replace(/\\n/g, '<br/>') : "Saudi Arabia"}</div>
+              ${storefrontSettings?.supportMobile ? `<div style="font-weight: 400; margin-top: 5px;">Phone: ${storefrontSettings.supportMobile}</div>` : ""}
+            </div>
+          </div>
+
+          <div class="section">
+            <h3>TO (RECEIVER)</h3>
+            <div class="address-box" style="font-size: 20px;">
+              <div style="font-size: 24px; font-weight: 800; margin-bottom: 5px;">${cust.name}</div>
+              ${cust.company ? `<div style="color: #444; margin-bottom: 5px;">${cust.company}</div>` : ""}
+              <div style="font-weight: 500;">${order.address?.street || ""}</div>
+              <div style="font-weight: 500;">${order.address?.district ? order.address.district + ", " : ""}${order.address?.city || "Riyadh"}</div>
+              <div style="font-weight: 500; margin-top: 10px; padding: 5px 10px; background: #eee; display: inline-block; border-radius: 4px;">📞 ${cust.mobile || "N/A"}</div>
+            </div>
+          </div>
+
+          ${trackingInfo}
+          
+          ${storefrontSettings?.invoiceSlipFooter ? `<div style="margin-top: 40px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid #ccc; padding-top: 15px;">${storefrontSettings.invoiceSlipFooter.replace(/\\n/g, '<br/>')}</div>` : ""}
+        </div>
+      </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    setTimeout(() => {
+      win.onload = function() { win.print(); }
+    }, 500);
   }
 
   return (
@@ -753,6 +836,14 @@ export default function StoreOrders({
                 </span>
               </div>
               <div className="header-actions">
+                <button
+                  type="button"
+                  className="drawer-action-icon-btn"
+                  onClick={() => printDeliverySlip(activeOrder)}
+                  title={t("Print Delivery Slip", "طباعة بوليصة الشحن")}
+                >
+                  📦 {t("Delivery Slip", "بوليصة الشحن")}
+                </button>
                 <button
                   type="button"
                   className="drawer-action-icon-btn"

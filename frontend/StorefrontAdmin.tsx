@@ -47,7 +47,7 @@ export default function StorefrontAdmin({
   // Secondary sub-tabs for grouped hubs
   const [marketingSubTab, setMarketingSubTab] = useState<"homepage" | "promotions" | "seo">("homepage");
   const [corporateSubTab, setCorporateSubTab] = useState<"customers" | "accounts" | "pricing" | "quotes" | "returns">("customers");
-  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "zones" | "inventory">("general");
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "zones" | "inventory" | "print">("general");
 
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
@@ -311,6 +311,7 @@ export default function StorefrontAdmin({
             user={user}
             orders={commerceData?.orders || []}
             warehouses={warehouses}
+            storefrontSettings={data?.settings?.data}
             onRefresh={async () => {
               await loadCommerce();
             }}
@@ -502,6 +503,7 @@ export default function StorefrontAdmin({
             <div className="sub-hubs-toolbar">
               {[
                 ["general", "⚙️ Store Configuration", "⚙️ إعدادات المتجر"],
+                ["print", "🖨️ Print Settings", "🖨️ إعدادات الطباعة"],
                 ["zones", "🚚 Delivery Zones", "🚚 مناطق التوصيل"],
                 ["inventory", "🏬 Inventory & Replenishment", "🏬 المستودعات وإعادة الطلب"],
               ].map(([subKey, en, ar]) => (
@@ -744,6 +746,74 @@ export default function StorefrontAdmin({
                   </form>
                 ))}
               </div>
+            )}
+
+            {settingsSubTab === "print" && (
+              <form
+                key={data.settings.version}
+                className="card settings-card"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  save("storefront-admin", {
+                    ...data.settings.data,
+                    version: data.settings.version,
+                    enabled: data.settings.enabled,
+                    invoiceLogoUrl: String(f.get("invoiceLogoUrl") || ""),
+                    invoiceVatNumber: String(f.get("invoiceVatNumber") || ""),
+                    invoiceCrNumber: String(f.get("invoiceCrNumber") || ""),
+                    invoiceAddress: String(f.get("invoiceAddress") || ""),
+                    invoiceSlipFooter: String(f.get("invoiceSlipFooter") || ""),
+                  });
+                }}
+              >
+                <h3>{t("Invoice & Delivery Slip Settings", "إعدادات الفاتورة وبوليصة الشحن")}</h3>
+                <div className="form-grid">
+                  <label>
+                    {t("Logo URL (Leave blank to use company name)", "رابط الشعار (اتركه فارغاً لاستخدام اسم الشركة)")}
+                    <input
+                      name="invoiceLogoUrl"
+                      type="url"
+                      defaultValue={data.settings.data.invoiceLogoUrl || ""}
+                    />
+                  </label>
+                  <label>
+                    {t("VAT Number", "الرقم الضريبي")}
+                    <input
+                      name="invoiceVatNumber"
+                      type="text"
+                      defaultValue={data.settings.data.invoiceVatNumber || ""}
+                    />
+                  </label>
+                  <label>
+                    {t("CR Number", "رقم السجل التجاري")}
+                    <input
+                      name="invoiceCrNumber"
+                      type="text"
+                      defaultValue={data.settings.data.invoiceCrNumber || ""}
+                    />
+                  </label>
+                  <label className="full-width">
+                    {t("Store Address", "عنوان المتجر")}
+                    <textarea
+                      name="invoiceAddress"
+                      rows={2}
+                      defaultValue={data.settings.data.invoiceAddress || ""}
+                    />
+                  </label>
+                  <label className="full-width">
+                    {t("Delivery Slip Footer Note", "ملاحظة التذييل في بوليصة الشحن")}
+                    <textarea
+                      name="invoiceSlipFooter"
+                      rows={2}
+                      defaultValue={data.settings.data.invoiceSlipFooter || ""}
+                    />
+                  </label>
+                </div>
+                <button disabled={busy} className="save-account-btn" style={{ marginTop: "1rem" }}>
+                  {t("Save Print Settings", "حفظ إعدادات الطباعة")}
+                </button>
+              </form>
             )}
 
             {settingsSubTab === "inventory" && (

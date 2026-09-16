@@ -110,6 +110,11 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
       maintenanceEnabled: z.boolean().default(false).optional(),
       maintenanceText: z.string().optional(),
       maintenanceImage: z.string().nullable().optional(),
+      invoiceLogoUrl: z.string().optional(),
+      invoiceVatNumber: z.string().optional(),
+      invoiceCrNumber: z.string().optional(),
+      invoiceAddress: z.string().optional(),
+      invoiceSlipFooter: z.string().optional(),
     })
     .parse(raw);
   return db.transaction(async (tx) => {
