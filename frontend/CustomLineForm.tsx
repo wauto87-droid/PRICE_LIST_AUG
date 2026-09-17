@@ -13,6 +13,8 @@ import {
   formatReusablePrice,
   moveReusableIndex,
 } from "./reusable-search";
+import { showConfirm } from "./confirm";
+
 const blank = (partNumber = "") => ({
   partNumber,
   description: "",
@@ -332,7 +334,11 @@ export default function CustomLineForm({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                void add();
+                void (async () => {
+                  if (await showConfirm(t("Add custom item to quotation?", "إضافة صنف مخصص إلى عرض السعر؟"))) {
+                    add();
+                  }
+                })();
               }
             }}
           >

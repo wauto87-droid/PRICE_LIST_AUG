@@ -4165,3 +4165,7 @@
   }
 }
 
+
+.duplicate-line { background-color: #fff0f0; }
+.duplicate-line td { border-bottom-color: #f2bfc2; }
+.duplicate-line input { background-color: #fff !important; }

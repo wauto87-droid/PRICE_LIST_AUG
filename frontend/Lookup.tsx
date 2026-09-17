@@ -30,12 +30,14 @@ export default function Lookup({
   user,
   settings,
   online,
+  cartLines = [],
 }: {
   t: Translate;
   onAdd: (line: any) => void;
   user: any;
   settings: any;
   online: boolean;
+  cartLines?: any[];
 }) {
   const [query, setQuery] = useState(""),
     [results, setResults] = useState<any[]>([]),
@@ -58,12 +60,13 @@ export default function Lookup({
     [pricingBusy, setPricingBusy] = useState(false),
     [adding, setAdding] = useState(false),
     [requestBusy, setRequestBusy] = useState(false),
+    [allowRepeat, setAllowRepeat] = useState(false),
+    [requestDialogOpen, setRequestDialogOpen] = useState(false),
     [searching, setSearching] = useState(false),
     [suggestionsOpen, setSuggestionsOpen] = useState(false),
     [showRelatedMatches, setShowRelatedMatches] = useState(false),
     [highlightedIndex, setHighlightedIndex] = useState(-1),
     [stamp, setStamp] = useState(""),
-    [requestDialogOpen, setRequestDialogOpen] = useState(false),
     [discountRequestReason, setDiscountRequestReason] = useState(""),
     [requestFeedback, setRequestFeedback] = useState("");
   const lastCalculation = useRef<{ key: string; id: string } | null>(null);
@@ -311,6 +314,15 @@ export default function Lookup({
   }
   async function add() {
     if (!selected || adding) return;
+    if (!allowRepeat && cartLines.some(l => l.input?.partNumber === selected.partNumber)) {
+      setError(
+        t(
+          "Item already in quotation. Enable 'Allow item repeat' to add it again.",
+          "الصنف موجود بالفعل في عرض السعر. فعل 'السماح بتكرار الصنف' لإضافته مرة أخرى."
+        )
+      );
+      return;
+    }
     if (!online && (!settings.allowOfflineCache || staffMarkupMode)) return;
     let input;
     try {
@@ -1041,7 +1053,11 @@ export default function Lookup({
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          void add();
+                          void (async () => {
+                            if (await showConfirm(t("Add this item to quotation?", "إضافة هذا الصنف إلى عرض السعر؟"))) {
+                              add();
+                            }
+                          })();
                         }
                       }}
                     />
@@ -1061,7 +1077,14 @@ export default function Lookup({
                       value={quantity}
                       onChange={(e) => setQuantity(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") add();
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void (async () => {
+                            if (await showConfirm(t("Add this item to quotation?", "إضافة هذا الصنف إلى عرض السعر؟"))) {
+                              add();
+                            }
+                          })();
+                        }
                       }}
                     />
                   </label>
@@ -1226,6 +1249,14 @@ export default function Lookup({
                       {t("Request discount approval", "طلب اعتماد خصم")}
                     </button>
                   )}
+                  <label className="checkbox-label" style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={allowRepeat} 
+                      onChange={(e) => setAllowRepeat(e.target.checked)} 
+                    />
+                    {t("Allow item repeat", "السماح بتكرار الصنف")}
+                  </label>
                   <button
                     className="primary add-button"
                     onClick={add}

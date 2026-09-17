@@ -769,6 +769,12 @@ export default function Cart({
     }
   }
 
+  const partCounts = cart.lines.reduce((acc: Record<string, number>, l: any) => {
+    const pn = l.input?.partNumber || l.partNumber;
+    if (pn) acc[pn] = (acc[pn] || 0) + 1;
+    return acc;
+  }, {});
+
   return (
     <section className="card">
       <div className="section-title">
@@ -901,8 +907,11 @@ export default function Cart({
                   );
                 }}
               />
-              {cart.lines.map((l: any, i: number) => (
-                <tr key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+              {cart.lines.map((l: any, i: number) => {
+                const pn = l.input?.partNumber || l.partNumber;
+                const isDuplicate = pn && partCounts[pn] > 1;
+                return (
+                <tr className={isDuplicate ? "duplicate-line" : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
                   <td>
                     {l.input?.type === "CUSTOM" ? (
                       <>
@@ -1225,7 +1234,7 @@ export default function Cart({
                     </div>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
