@@ -149,7 +149,7 @@ export default function Quotations({
                     partNumber,
                     description,
                     price: { quantity, finalExcl: unitPriceExcl },
-                    input: { type: "CUSTOM", partNumber, description, unit: unitPriceExcl || undefined }
+                    input: { type: "CUSTOM", partNumber, description, quantity: String(quantity), unit: unitPriceExcl || undefined }
                   };
                 });
                 onUseTemplate({ customer: { number: "1", name: "", mobile: "", reference: "", notes: "" }, lines: importedLines }, t("Imported from CSV", "مستورد من ملف CSV"));
@@ -332,9 +332,9 @@ export default function Quotations({
                   <small>{l.description}</small>
                 </span>
                 <span>
-                  {l.price.quantity} × {l.price.finalExcl}
+                  {l.price?.quantity ?? l.input?.quantity ?? 1} × {l.price?.finalExcl ?? ""}
                 </span>
-                <b>{l.price.total}</b>
+                <b>{l.price?.total ?? ""}</b>
               </div>
             ))}
             <p className="text-end">
@@ -368,8 +368,8 @@ export default function Quotations({
                           )}
                     </small>
                     <span>
-                      {review.before.lines[i].price.finalExcl} →{" "}
-                      {l.price.finalExcl}
+                      {review.before.lines[i]?.price?.finalExcl ?? ""} →{" "}
+                      {l.price?.finalExcl ?? ""}
                     </span>
                   </div>
                 ))}
