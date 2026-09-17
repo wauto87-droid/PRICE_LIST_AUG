@@ -58,7 +58,7 @@ export function quotationHtml(q: any, settings: any, logo: string) {
     : "";
   const totalQuantity = q.lines
     .reduce(
-      (sum: Decimal, line: any) => sum.plus(line.price?.quantity ?? 0),
+      (sum: Decimal, line: any) => sum.plus(line.price?.quantity ?? line.input?.quantity ?? 1),
       new Decimal(0),
     )
     .toString();
@@ -77,7 +77,7 @@ export function quotationHtml(q: any, settings: any, logo: string) {
  <table><thead><tr><th>Ref / المرجع</th><th>Part / الصنف</th><th>Description / الوصف</th><th>Qty / الكمية</th><th>Unit ${incl ? "incl." : "excl."} VAT${both ? "<small>Incl. VAT</small>" : ""}</th><th>Excl. VAT<br>قبل الضريبة</th><th>VAT<br>الضريبة</th><th>Total<br>الإجمالي</th></tr></thead><tbody>${q.lines.map((l: any, index: number) => {
   const meta = l.importMeta?.source === "DELIVERY_NOTE" ? l.importMeta : l.input?.importMeta?.source === "DELIVERY_NOTE" ? l.input.importMeta : null;
   const deliveryInfo = meta && (meta.docNo || meta.docDate) ? `<small>DN: ${e(meta.docNo)}${meta.docDate ? ` · Date: ${e(meta.docDate)}` : ""}</small>` : "";
-  return `<tr><td class="num">${index + 1}</td><td>${e(l.partNumber)}${l.source === "CUSTOM" || l.input?.type === "CUSTOM" ? "<small>Custom / مخصص</small>" : ""}${deliveryInfo}</td><td>${e(l.description)}</td><td class="num">${e(l.price.quantity)} ${e(l.unit)}</td><td class="num">${e(incl ? l.price.finalIncl : l.price.finalExcl)}${both ? `<small>${e(l.price.finalIncl)}</small>` : ""}</td><td class="num">${e(l.price.subtotal)}</td><td class="num">${e(l.price.vatAmount)}<small>${e(l.price.vatRate)}%</small></td><td class="num">${e(l.price.total)}</td></tr>`;
+  return `<tr><td class="num">${index + 1}</td><td>${e(l.partNumber)}${l.source === "CUSTOM" || l.input?.type === "CUSTOM" ? "<small>Custom / مخصص</small>" : ""}${deliveryInfo}</td><td>${e(l.description)}</td><td class="num">${e(l.price?.quantity ?? l.input?.quantity ?? 1)} ${e(l.unit)}</td><td class="num">${e(incl ? l.price?.finalIncl : l.price?.finalExcl)}${both && l.price ? `<small>${e(l.price.finalIncl)}</small>` : ""}</td><td class="num">${e(l.price?.subtotal)}</td><td class="num">${e(l.price?.vatAmount)}${l.price ? `<small>${e(l.price.vatRate)}%</small>` : ""}</td><td class="num">${e(l.price?.total)}</td></tr>`;
 }).join("")}</tbody></table>
  <div class="totals"><div><span>Total Quantity / إجمالي الكمية</span><span>${e(totalQuantity)}</span></div><div><span>Subtotal / المجموع</span><span>${e(q.totals.subtotal)}</span></div><div><span>VAT / الضريبة</span><span>${e(q.totals.vat)}</span></div><div class="grand"><span>Total / الإجمالي</span><span>${e(s.currency)} ${e(q.totals.total)}</span></div></div>${customerNotes}${terms ? `<div class="terms">${terms}</div>` : ""}<footer>${footer}</footer></main></body></html>`;
 }

@@ -27,7 +27,8 @@ export default function Quotations({
     [shareLink, setShareLink] = useState(""),
     [sharing, setSharing] = useState(false),
     [availableUsers, setAvailableUsers] = useState<any[]>([]),
-    [sharedWith, setSharedWith] = useState<string[]>([]);
+    [sharedWith, setSharedWith] = useState<string[]>([]),
+    [shareSearch, setShareSearch] = useState("");
   const [filters, setFilters] = useState({
     q: "",
     status: "",
@@ -403,12 +404,23 @@ export default function Quotations({
                 <h3>{t("Share Quotation", "مشاركة عرض السعر")}</h3>
                 <fieldset>
                   <legend>{t("Select Users", "اختيار المستخدمين")}</legend>
-                  {availableUsers.map((u: any) => (
-                    <label key={u.id} style={{ display: "block" }}>
-                      <input type="checkbox" checked={sharedWith.includes(u.id)} onChange={(e) => setSharedWith(e.target.checked ? [...sharedWith, u.id] : sharedWith.filter((id) => id !== u.id))} />
-                      {u.name} ({u.username})
-                    </label>
-                  ))}
+                  <input
+                    type="search"
+                    placeholder={t("Search internal users...", "البحث عن المستخدمين الداخليين...")}
+                    value={shareSearch}
+                    onChange={(e) => setShareSearch(e.target.value)}
+                    style={{ marginBottom: "1rem", width: "100%" }}
+                  />
+                  <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+                    {availableUsers
+                      .filter((u) => !shareSearch || u.name.toLowerCase().includes(shareSearch.toLowerCase()) || u.username.toLowerCase().includes(shareSearch.toLowerCase()))
+                      .map((u: any) => (
+                        <label key={u.id} style={{ display: "block", padding: "0.25rem 0" }}>
+                          <input type="checkbox" checked={sharedWith.includes(u.id)} onChange={(e) => setSharedWith(e.target.checked ? [...sharedWith, u.id] : sharedWith.filter((id) => id !== u.id))} />
+                          {" "}{u.name} ({u.username})
+                        </label>
+                    ))}
+                  </div>
                 </fieldset>
                 <div className="actions">
                   <button disabled={busy} onClick={() => setSharing(false)}>{t("Cancel", "إلغاء")}</button>

@@ -172,6 +172,7 @@ export const quoteHasUnresolvedLines = (q: any) =>
   Array.isArray(q?.lines) && q.lines.some((line: any) => !line?.price);
 
 export function assertQuoteReadyForOutput(q: any) {
+  if (q.status === "DRAFT") return;
   assert(
     !quoteHasUnresolvedLines(q),
     409,
