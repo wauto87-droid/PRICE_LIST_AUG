@@ -22,6 +22,8 @@ import {
   relatedLookupResults,
 } from "./lookup-view";
 import CustomLineForm from "./CustomLineForm";
+import { showConfirm } from "./confirm";
+
 export default function Lookup({
   t,
   onAdd,
@@ -713,7 +715,18 @@ export default function Lookup({
                       );
                     } else if (selected && !suggestionsOpen) {
                       e.preventDefault();
-                      void add();
+                      void (async () => {
+                        if (
+                          await showConfirm(
+                            t(
+                              "Add this item to quotation?",
+                              "إضافة هذا الصنف إلى عرض السعر؟"
+                            )
+                          )
+                        ) {
+                          add();
+                        }
+                      })();
                     }
                     return;
                   }

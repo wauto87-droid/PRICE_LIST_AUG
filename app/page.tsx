@@ -560,14 +560,15 @@ export default function App() {
                   setCart={setCart}
                   settings={session.settings}
                   online={online}
-                  onSaved={(q) =>
+                  onSaved={(q) => {
+                    setCart(emptyCart());
                     setMessage(
                       t(
                         "Saved quotation " + q.number,
                         "تم حفظ عرض السعر " + q.number,
                       ),
-                    )
-                  }
+                    );
+                  }}
                   onTemplates={() => setTab("quotations")}
                 />
                 <div className="actions footer-actions">
