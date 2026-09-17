@@ -327,7 +327,15 @@ export default function CustomLineForm({
               </button>
             </div>
           )}
-          <div className="form-grid custom-line-fields">
+          <div
+            className="form-grid custom-line-fields"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void add();
+              }
+            }}
+          >
             <label>
               {t("Part / reference (optional)", "الصنف / المرجع (اختياري)")}
               <input

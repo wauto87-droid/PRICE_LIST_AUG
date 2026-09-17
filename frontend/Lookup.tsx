@@ -711,6 +711,9 @@ export default function Lookup({
                           )
                         ],
                       );
+                    } else if (selected && !suggestionsOpen) {
+                      e.preventDefault();
+                      void add();
                     }
                     return;
                   }
@@ -1023,22 +1026,9 @@ export default function Lookup({
                           : setDiscount(e.target.value)
                       }
                       onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        revealFinalPriceAfterValidation.current = true;
-                        if (!pricingBusy && displayPrice) {
-                          const node = finalPriceRef.current;
-                          const bounds = node?.getBoundingClientRect();
-                          if (
-                            node &&
-                            bounds &&
-                            (bounds.top < 0 ||
-                              bounds.bottom > window.innerHeight)
-                          )
-                            node.scrollIntoView({
-                              behavior: "smooth",
-                              block: "nearest",
-                            });
-                          revealFinalPriceAfterValidation.current = false;
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void add();
                         }
                       }}
                     />

@@ -24,7 +24,10 @@ export default function Quotations({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [pdf, setPdf] = useState<any>(null),
-    [shareLink, setShareLink] = useState("");
+    [shareLink, setShareLink] = useState(""),
+    [sharing, setSharing] = useState(false),
+    [availableUsers, setAvailableUsers] = useState<any[]>([]),
+    [sharedWith, setSharedWith] = useState<string[]>([]);
   const [filters, setFilters] = useState({
     q: "",
     status: "",
@@ -88,6 +91,8 @@ export default function Quotations({
       t("Part Number", "رقم الصنف"),
       t("Description", "الوصف"),
       t("Quantity", "الكمية"),
+      t("Unit Price (Excl. VAT)", "سعر الوحدة (غير شامل الضريبة)"),
+      t("Total (Excl. VAT)", "الإجمالي (غير شامل الضريبة)"),
       t("Unit Price", "سعر الوحدة"),
       t("Total", "الإجمالي")
     ].join(",");
@@ -95,9 +100,11 @@ export default function Quotations({
       const part = `"${(l.partNumber || "").replace(/"/g, '""')}"`;
       const desc = `"${(l.description || "").replace(/"/g, '""')}"`;
       const qty = l.price?.quantity || 0;
-      const unit = l.price?.finalExcl || l.price?.unit || 0;
+      const unitExcl = l.price?.finalExcl || l.price?.unit || 0;
+      const totalExcl = l.price?.subtotal || 0;
+      const unit = l.price?.final || 0;
       const total = l.price?.total || 0;
-      return [part, desc, qty, unit, total].join(",");
+      return [part, desc, qty, unitExcl, totalExcl, unit, total].join(",");
     });
     const csv = [header, ...csvRows].join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
@@ -116,7 +123,43 @@ export default function Quotations({
           <div className="eyebrow">AMT ELECTRIC</div>
           <h2>{t("Quotations", "عروض الأسعار")}</h2>
         </div>
-        <button onClick={load}>{t("Refresh", "تحديث")}</button>
+        <div className="actions">
+          <label className="button">
+            {t("Import Quotation", "استيراد عرض")}
+            <input type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = (evt) => {
+                const text = evt.target?.result as string;
+                const rows = text.split("\n").map(r => r.trim()).filter(Boolean);
+                const importedLines = rows.slice(1).map(row => {
+                  let cols = [];
+                  let regex = /(?:\"([^\"]*)\"|([^,]*))(?:,|$)/g;
+                  let m;
+                  while ((m = regex.exec(row)) !== null && m[0] !== "") cols.push(m[1] !== undefined ? m[1] : m[2]);
+                  
+                  const partNumber = cols[0] || "";
+                  const description = cols[1] || "";
+                  const quantity = Number(cols[2] || 1);
+                  const unitPriceExcl = cols[3] || "";
+                  
+                  return {
+                    source: "CUSTOM",
+                    partNumber,
+                    description,
+                    price: { quantity, finalExcl: unitPriceExcl },
+                    input: { type: "CUSTOM", partNumber, description, unit: unitPriceExcl || undefined }
+                  };
+                });
+                onUseTemplate({ customer: { number: "1", name: "", mobile: "", reference: "", notes: "" }, lines: importedLines }, t("Imported from CSV", "مستورد من ملف CSV"));
+              };
+              reader.readAsText(file);
+              e.target.value = "";
+            }} />
+          </label>
+          <button onClick={load}>{t("Refresh", "تحديث")}</button>
+        </div>
       </div>
       <QuotationTemplates t={t} cart={cart} onUse={onUseTemplate} />
       <form
@@ -260,6 +303,7 @@ export default function Quotations({
                 onClick={() => {
                   setSelected(null);
                   setReview(null);
+                  setSharing(false);
                 }}
               >
                 ×
@@ -354,6 +398,35 @@ export default function Quotations({
                 </button>
               </div>
             )}
+            {sharing && (
+              <div className="review-panel">
+                <h3>{t("Share Quotation", "مشاركة عرض السعر")}</h3>
+                <fieldset>
+                  <legend>{t("Select Users", "اختيار المستخدمين")}</legend>
+                  {availableUsers.map((u: any) => (
+                    <label key={u.id} style={{ display: "block" }}>
+                      <input type="checkbox" checked={sharedWith.includes(u.id)} onChange={(e) => setSharedWith(e.target.checked ? [...sharedWith, u.id] : sharedWith.filter((id) => id !== u.id))} />
+                      {u.name} ({u.username})
+                    </label>
+                  ))}
+                </fieldset>
+                <div className="actions">
+                  <button disabled={busy} onClick={() => setSharing(false)}>{t("Cancel", "إلغاء")}</button>
+                  <button className="primary" disabled={busy} onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await api(`quotations/${selected.id}/share`, "PUT", { sharedWith });
+                      setSharing(false);
+                      setSelected({ ...selected, sharedWith });
+                      await load();
+                    } catch(e) { setError((e as Error).message); }
+                    finally { setBusy(false); }
+                  }}>
+                    {t("Save", "حفظ")}
+                  </button>
+                </div>
+              </div>
+            )}
             <small className="muted">
               {t("Internal reference", "المرجع الداخلي")}:{" "}
               {selected.internalReference}
@@ -367,6 +440,20 @@ export default function Quotations({
                   >
                     {t("Edit quotation", "تعديل عرض السعر")}
                   </button>
+                  {user.permissions.includes("QUOTE_CREATE") && (
+                    <button disabled={busy} onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const res = await api("quotation-templates");
+                        setAvailableUsers(res.availableUsers || []);
+                        setSharedWith(selected.sharedWith || []);
+                        setSharing(true);
+                      } catch(e) { setError((e as Error).message); }
+                      finally { setBusy(false); }
+                    }}>
+                      {t("Share", "مشاركة")}
+                    </button>
+                  )}
                   {user.permissions.includes("QUOTE_ISSUE") &&
                     selected.status === "APPROVED" && (
                       <button

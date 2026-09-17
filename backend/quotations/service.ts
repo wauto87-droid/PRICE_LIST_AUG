@@ -310,6 +310,7 @@ export function publicQuote(q: any, actor: Actor) {
   return {
     ...q,
     internalReference: q.internal_reference,
+    sharedWith: q.shared_with || [],
     totals: {
       quoteDiscount: "0.00",
       targetTotal: "",
@@ -324,6 +325,7 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
   assert(q && q.status !== "DELETED", 404, "Quotation not found");
   assert(
     q.owner_id === actor.id ||
+      q.shared_with?.includes(actor.id) ||
       has(actor, edit ? "QUOTE_EDIT_ALL" : "QUOTE_VIEW_ALL"),
     403,
     "This quotation belongs to another user",

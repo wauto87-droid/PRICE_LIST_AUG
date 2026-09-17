@@ -1591,7 +1591,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(
           (
             await db.query(
-              `SELECT id,number,status,customer,totals,version,created_at FROM quotations WHERE status<>'DELETED' AND ($1 OR owner_id=$2) AND ($3='' OR number ILIKE $3||'%') AND ($4='' OR status=$4) AND ($5::date IS NULL OR created_at >= ($5::date::timestamp AT TIME ZONE 'Asia/Riyadh')) AND ($6::date IS NULL OR created_at < (($6::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh')) ORDER BY CASE WHEN upper(number)=$7 THEN 0 ELSE 1 END,created_at DESC LIMIT 200`,
+              `SELECT id,number,status,customer,totals,version,created_at FROM quotations WHERE status<>'DELETED' AND ($1 OR owner_id=$2 OR $2 = ANY(shared_with)) AND ($3='' OR number ILIKE $3||'%') AND ($4='' OR status=$4) AND ($5::date IS NULL OR created_at >= ($5::date::timestamp AT TIME ZONE 'Asia/Riyadh')) AND ($6::date IS NULL OR created_at < (($6::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh')) ORDER BY CASE WHEN upper(number)=$7 THEN 0 ELSE 1 END,created_at DESC LIMIT 200`,
               [
                 scope === "all",
                 actor.id,
@@ -1671,6 +1671,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
               settings,
             ),
           );
+        }
+        if (action === "share" && method === "PUT") {
+          const { sharedWith } = z.object({ sharedWith: z.array(z.string().uuid()) }).parse(await body(req));
+          const q = await quotes.getQuote(db, actor, id, true);
+          assert(q.owner_id === actor.id || auth.has(actor, "QUOTE_EDIT_ALL"), 403, "Not allowed to share this quotation");
+          await db.query("UPDATE quotations SET shared_with=$2, version=version+1, updated_at=now() WHERE id=$1", [id, sharedWith]);
+          await audit(db, actor.id, "QUOTATION_EDIT", "quotations", id, null, { action: "share", sharedWith }, "Updated shared access");
+          return response({ ok: true });
         }
         if (action === "review" && method === "POST")
           return response(await quotes.reviewIssue(db, actor, id, settings));

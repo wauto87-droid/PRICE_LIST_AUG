@@ -285,18 +285,18 @@ export default function StoreOrders({
         <base href="${window.location.origin}" />
         <title>Order Invoice ${order.number}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; background: #fff; line-height: 1.5; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 15px; margin-bottom: 20px; }
-          .title { font-size: 24px; font-weight: 800; color: #0f172a; }
-          .meta { font-size: 13px; color: #64748b; line-height: 1.6; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 30px; color: #333; background: #fff; line-height: 1.5; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #cc0000; padding-bottom: 15px; margin-bottom: 20px; }
+          .title { font-size: 24px; font-weight: 800; color: #cc0000; }
+          .meta { font-size: 13px; color: #666; line-height: 1.6; }
           .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; }
-          .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; }
-          .card h4 { margin: 0 0 10px; color: #0f172a; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+          .card { background: #fff; border: 1px solid #ffe6e6; border-radius: 8px; padding: 15px; font-size: 13px; box-shadow: 0 1px 3px rgba(204,0,0,0.05); }
+          .card h4 { margin: 0 0 10px; color: #cc0000; font-size: 14px; border-bottom: 1px solid #ffe6e6; padding-bottom: 5px; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 13px; }
-          th { background: #f1f5f9; padding: 10px; text-align: left; border-bottom: 2px solid #cbd5e1; }
-          .totals { width: 340px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; font-size: 13px; }
+          th { background: #fff5f5; padding: 10px; text-align: left; border-bottom: 2px solid #cc0000; color: #cc0000; font-weight: 600; }
+          .totals { width: 340px; margin-left: auto; background: #fff; border: 1px solid #ffe6e6; border-radius: 8px; padding: 15px; font-size: 13px; box-shadow: 0 1px 3px rgba(204,0,0,0.05); }
           .totals-row { display: flex; justify-content: space-between; padding: 5px 0; }
-          .totals-total { font-size: 16px; font-weight: 800; border-top: 2px solid #0f172a; padding-top: 10px; margin-top: 5px; color: #0284c7; }
+          .totals-total { font-size: 16px; font-weight: 800; border-top: 2px solid #cc0000; padding-top: 10px; margin-top: 5px; color: #cc0000; }
           @media print { body { padding: 0; } }
         </style>
       </head>
@@ -309,7 +309,7 @@ export default function StoreOrders({
             <div class="meta">Order Status: <strong>${stage.labelEn || stage.labelAr}</strong></div>
           </div>
           <div style="text-align: right;">
-            ${storefrontSettings?.invoiceLogoUrl ? `<img src="${storefrontSettings.invoiceLogoUrl}" alt="Logo" style="max-height: 80px; max-width: 250px; margin-bottom: 10px;" />` : `<div style="font-size: 20px; font-weight: 700; color: #0284c7;">${storefrontSettings?.companyName || "STORE INVOICE"}</div>`}
+            <img src="/logo.svg" alt="Logo" style="max-height: 80px; max-width: 250px; margin-bottom: 10px;" />
             <div class="meta">${storefrontSettings?.invoiceAddress ? storefrontSettings.invoiceAddress.replace(/\\n/g, '<br/>') : ""}</div>
             ${storefrontSettings?.invoiceCrNumber ? `<div class="meta">CR No: ${storefrontSettings.invoiceCrNumber}</div>` : ""}
             ${storefrontSettings?.invoiceVatNumber ? `<div class="meta">VAT Registration No: ${storefrontSettings.invoiceVatNumber}</div>` : ""}
