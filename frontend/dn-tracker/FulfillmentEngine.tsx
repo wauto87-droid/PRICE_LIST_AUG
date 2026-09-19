@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef } from 'react';
-import { Upload, Download, Printer, Settings } from 'lucide-react';
+import { Upload, Download, Printer, Settings, Trash2 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { detectColumnIndices, deriveItemStatus } from './engineLogic';
 import { exportToExcelCsv, printToPdf } from './exportLogic';
@@ -86,7 +86,12 @@ export default function FulfillmentEngine() {
       newItems.push(item as OrderItem);
     });
 
-    setItems(newItems);
+    setItems(prev => [...prev, ...newItems]);
+    
+    // Clear the input value so the same file can be uploaded again if needed
+    if (e.target) {
+      e.target.value = '';
+    }
   };
 
   const activeItems = items; // In a real app, apply presets here if activePresetId is set
@@ -101,6 +106,9 @@ export default function FulfillmentEngine() {
           <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
           <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
             <Upload size={16} /> Upload Data
+          </button>
+          <button onClick={() => setItems([])} className="btn btn-secondary" style={{ color: 'red' }}>
+            <Trash2 size={16} /> Clear Data
           </button>
           <button onClick={() => exportToExcelCsv(activeItems, 'Export')} className="btn btn-secondary">
             <Download size={16} /> Export CSV
