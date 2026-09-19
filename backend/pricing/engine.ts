@@ -54,6 +54,8 @@ export const productInput = z
         productName: z.string().trim().max(300).default(""),
         productType: z.string().trim().max(200).default(""),
         series: z.string().trim().max(200).default(""),
+        shortDescription: z.string().trim().max(1000).default(""),
+        detailedDescription: z.string().trim().max(10000).default(""),
         specifications: z
           .array(
             z

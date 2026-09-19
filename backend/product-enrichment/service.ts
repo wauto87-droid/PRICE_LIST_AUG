@@ -19,6 +19,8 @@ const suggestionSchema = z
     status: z.enum(["FOUND", "UNCERTAIN", "NOT_FOUND"]),
     reason: z.string().trim().max(500).default(""),
     description: z.string().trim().max(1000).default(""),
+    shortDescription: z.string().trim().max(1000).default(""),
+    detailedDescription: z.string().trim().max(10000).default(""),
     manufacturer: z.string().trim().max(200).default(""),
     productName: z.string().trim().max(300).default(""),
     productType: z.string().trim().max(200).default(""),
@@ -64,7 +66,7 @@ function encryptionKey() {
   );
   return Buffer.from(raw, "hex");
 }
-async function saveSecret(db: DB, actor: Actor, value: string) {
+async function saveSecret(db: DB, actor: Actor, keyName: string, value: string) {
   const iv = randomBytes(12),
     cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const ciphertext = Buffer.concat([
@@ -72,17 +74,17 @@ async function saveSecret(db: DB, actor: Actor, value: string) {
     cipher.final(),
   ]);
   await db.query(
-    `INSERT INTO app_secrets(key,ciphertext,iv,auth_tag,updated_by) VALUES('OPENAI_API_KEY',$1,$2,$3,$4)
-    ON CONFLICT(key) DO UPDATE SET ciphertext=$1,iv=$2,auth_tag=$3,updated_by=$4,updated_at=now()`,
-    [ciphertext, iv, cipher.getAuthTag(), actor.id],
+    `INSERT INTO app_secrets(key,ciphertext,iv,auth_tag,updated_by) VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(key) DO UPDATE SET ciphertext=$2,iv=$3,auth_tag=$4,updated_by=$5,updated_at=now()`,
+    [keyName, ciphertext, iv, cipher.getAuthTag(), actor.id],
   );
 }
-async function secret(db: DB) {
+async function secret(db: DB, keyName: string) {
   const row = await one(
     db,
-    "SELECT ciphertext,iv,auth_tag FROM app_secrets WHERE key='OPENAI_API_KEY'",
+    "SELECT ciphertext,iv,auth_tag FROM app_secrets WHERE key=$1", [keyName]
   );
-  assert(row, 409, "Configure the OpenAI API key before starting AI research");
+  if (!row) return null;
   try {
     const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), row.iv);
     decipher.setAuthTag(row.auth_tag);
@@ -93,9 +95,18 @@ async function secret(db: DB) {
   } catch {
     throw new AppError(
       503,
-      "The saved AI key cannot be decrypted with this server configuration",
+      `The saved AI key cannot be decrypted with this server configuration`,
     );
   }
+}
+async function getAvailableApiKey(db: DB) {
+  const gemini = await secret(db, "GEMINI_API_KEY");
+  if (gemini) return { provider: "gemini", key: gemini };
+  
+  const openai = await secret(db, "OPENAI_API_KEY");
+  if (openai) return { provider: "openai", key: openai };
+  
+  throw new AppError(409, "Configure the OpenAI or Gemini API key before starting AI research");
 }
 async function model(db: DB) {
   const row = await one(
@@ -106,20 +117,16 @@ async function model(db: DB) {
 }
 export async function configuration(db: DB, actor: Actor) {
   permission(actor);
+  const openaiExists = Boolean(await one(db, "SELECT 1 FROM app_secrets WHERE key='OPENAI_API_KEY'"));
+  const geminiExists = Boolean(await one(db, "SELECT 1 FROM app_secrets WHERE key='GEMINI_API_KEY'"));
   return {
-    configured: Boolean(
-      await one(db, "SELECT 1 FROM app_secrets WHERE key='OPENAI_API_KEY'"),
-    ),
+    configured: openaiExists || geminiExists,
     encryptionConfigured: /^[a-f0-9]{64}$/i.test(
       process.env.AI_SECRET_ENCRYPTION_KEY ?? "",
     ),
     model: await model(db),
-    maskedKey: (await one(
-      db,
-      "SELECT 1 FROM app_secrets WHERE key='OPENAI_API_KEY'",
-    ))
-      ? "••••••••"
-      : "",
+    maskedKey: openaiExists ? "••••••••" : "",
+    geminiMaskedKey: geminiExists ? "••••••••" : "",
   };
 }
 export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
@@ -127,6 +134,7 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
   const input = z
     .object({
       apiKey: z.string().trim().min(20).max(500).optional(),
+      geminiApiKey: z.string().trim().min(20).max(500).optional(),
       model: z
         .string()
         .trim()
@@ -136,7 +144,8 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
     .strict()
     .parse(raw);
   await db.transaction(async (tx) => {
-    if (input.apiKey) await saveSecret(tx, actor, input.apiKey);
+    if (input.apiKey) await saveSecret(tx, actor, "OPENAI_API_KEY", input.apiKey);
+    if (input.geminiApiKey) await saveSecret(tx, actor, "GEMINI_API_KEY", input.geminiApiKey);
     await tx.query(
       "UPDATE settings SET data=jsonb_set(data,'{aiProductModel}',to_jsonb($1::text),true),version=version+1 WHERE id=1",
       [input.model],
@@ -155,22 +164,29 @@ export async function saveConfiguration(db: DB, actor: Actor, raw: unknown) {
 }
 export async function testConfiguration(db: DB, actor: Actor) {
   permission(actor);
-  const key = await secret(db),
+  const apiConfig = await getAvailableApiKey(db),
     modelName = await model(db),
     controller = new AbortController(),
     timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(
-      `https://api.openai.com/v1/models/${encodeURIComponent(modelName)}`,
-      {
-        headers: { Authorization: `Bearer ${key}` },
+    let response;
+    if (apiConfig.provider === "gemini") {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName.includes("gemini") ? modelName : "gemini-1.5-flash"}?key=${apiConfig.key}`, {
         signal: controller.signal,
-      },
-    );
+      });
+    } else {
+      response = await fetch(
+        `https://api.openai.com/v1/models/${encodeURIComponent(modelName)}`,
+        {
+          headers: { Authorization: `Bearer ${apiConfig.key}` },
+          signal: controller.signal,
+        },
+      );
+    }
     assert(
       response.ok,
       409,
-      `OpenAI connection test failed (${response.status})`,
+      `${apiConfig.provider === "gemini" ? "Gemini" : "OpenAI"} connection test failed (${response.status})`,
     );
     await audit(
       db,
@@ -433,6 +449,8 @@ export async function confirm(
           productName: suggestion.productName,
           productType: suggestion.productType,
           series: suggestion.series,
+          shortDescription: suggestion.shortDescription,
+          detailedDescription: suggestion.detailedDescription,
           specifications: suggestion.specifications,
           applications: suggestion.applications,
         }) ?? {};
@@ -476,15 +494,57 @@ export async function remove(db: DB, actor: Actor, id: string) {
   return { deleted: true };
 }
 
-async function research(apiKey: string, modelName: string, p: any) {
+async function research(apiConfig: {provider: string, key: string}, modelName: string, p: any) {
   const controller = new AbortController(),
     timer = setTimeout(() => controller.abort(), 60000);
   try {
+    if (apiConfig.provider === "gemini") {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName.includes("gemini") ? modelName : "gemini-1.5-flash"}:generateContent?key=${apiConfig.key}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: "Research electrical products conservatively. Match the exact manufacturer part number. Never guess or merge a similar code. Return NOT_FOUND when evidence is absent and UNCERTAIN when sources conflict. Write concise factual English. Generate a concise shortDescription for listing cards, and a comprehensive detailedDescription for the product page." }] },
+          contents: [{ role: "user", parts: [{ text: `Exact part number: ${p.part_number}\nKnown brand: ${p.brand ?? ""}\nKnown category: ${p.category ?? ""}\nCurrent description: ${p.description ?? ""}` }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                status: { type: "STRING", enum: ["FOUND", "UNCERTAIN", "NOT_FOUND"] },
+                reason: { type: "STRING" },
+                description: { type: "STRING" },
+                shortDescription: { type: "STRING" },
+                detailedDescription: { type: "STRING" },
+                manufacturer: { type: "STRING" },
+                productName: { type: "STRING" },
+                productType: { type: "STRING" },
+                series: { type: "STRING" },
+                specifications: { type: "ARRAY", items: { type: "OBJECT", properties: { label: { type: "STRING" }, value: { type: "STRING" } } } },
+                applications: { type: "ARRAY", items: { type: "STRING" } },
+                confidence: { type: "STRING", enum: ["HIGH", "MEDIUM", "LOW"] }
+              },
+              required: ["status", "reason", "description", "shortDescription", "detailedDescription", "manufacturer", "productName", "productType", "series", "specifications", "applications", "confidence"]
+            }
+          }
+        })
+      });
+      if (!response.ok) {
+        const error = new Error(`Gemini request failed (${response.status})`) as Error & { retryable?: boolean };
+        error.retryable = response.status === 429 || response.status >= 500;
+        throw error;
+      }
+      const raw = await response.json();
+      const text = raw.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = suggestionSchema.parse(JSON.parse(text));
+      return { parsed, sources: [] };
+    }
+
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiConfig.key}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -495,7 +555,7 @@ async function research(apiKey: string, modelName: string, p: any) {
         tools: [{ type: "web_search" }],
         include: ["web_search_call.action.sources"],
         instructions:
-          "Research electrical products conservatively. Match the exact manufacturer part number. Never guess or merge a similar code. Return NOT_FOUND when evidence is absent and UNCERTAIN when sources conflict. Write concise factual English.",
+          "Research electrical products conservatively. Match the exact manufacturer part number. Never guess or merge a similar code. Return NOT_FOUND when evidence is absent and UNCERTAIN when sources conflict. Write concise factual English. Generate a concise shortDescription for listing cards, and a comprehensive detailedDescription for the product page.",
         input: `Exact part number: ${p.part_number}\nKnown brand: ${p.brand ?? ""}\nKnown category: ${p.category ?? ""}\nCurrent description: ${p.description ?? ""}`,
         text: {
           format: {
@@ -509,6 +569,8 @@ async function research(apiKey: string, modelName: string, p: any) {
                 "status",
                 "reason",
                 "description",
+                "shortDescription",
+                "detailedDescription",
                 "manufacturer",
                 "productName",
                 "productType",
@@ -524,6 +586,8 @@ async function research(apiKey: string, modelName: string, p: any) {
                 },
                 reason: { type: "string" },
                 description: { type: "string" },
+                shortDescription: { type: "string" },
+                detailedDescription: { type: "string" },
                 manufacturer: { type: "string" },
                 productName: { type: "string" },
                 productType: { type: "string" },
@@ -579,10 +643,10 @@ async function research(apiKey: string, modelName: string, p: any) {
     clearTimeout(timer);
   }
 }
-async function researchWithRetry(apiKey: string, modelName: string, p: any) {
+async function researchWithRetry(apiConfig: {provider: string, key: string}, modelName: string, p: any) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return await research(apiKey, modelName, p);
+      return await research(apiConfig, modelName, p);
     } catch (error) {
       const retryable =
         (error as Error & { retryable?: boolean }).retryable ||
@@ -600,7 +664,7 @@ export async function processJob(db: DB, id: string) {
     [id],
   );
   if (!job || !["PENDING", "RUNNING"].includes(job.status)) return;
-  const apiKey = await secret(db);
+  const apiConfig = await getAvailableApiKey(db);
   await db.query(
     "UPDATE product_enrichment_jobs SET status='RUNNING',progress=jsonb_set(progress,'{phase}','\"RESEARCHING\"'),updated_at=now() WHERE id=$1",
     [id],
@@ -620,7 +684,7 @@ export async function processJob(db: DB, id: string) {
       [row.id],
     );
     try {
-      const result = await researchWithRetry(apiKey, job.model, row);
+      const result = await researchWithRetry(apiConfig, job.model, row);
       await db.query(
         "UPDATE product_enrichment_rows SET status=$2,suggestion=$3,sources=$4,confidence=$5,error=NULL,updated_at=now() WHERE id=$1",
         [
@@ -673,4 +737,62 @@ export async function processJob(db: DB, id: string) {
       }),
     ],
   );
+}
+
+export async function generateAiImage(db: DB, actor: Actor, productId: string, prompt: string, imageId?: string) {
+  requirePermission(actor, "PRODUCT_EDIT");
+  const apiConfig = await getAvailableApiKey(db);
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    if (apiConfig.provider === "gemini") {
+      throw new AppError(400, "Image generation is not currently supported with Gemini API. Please configure an OpenAI API key.");
+    }
+    const apiKey = apiConfig.key;
+    
+    let finalPrompt = prompt;
+    if (imageId) {
+      // Use Vision API to describe the existing image to improve the DALL-E 3 prompt
+      const productImages = await import("../products/images");
+      const { data, mime } = await productImages.file(db, actor, imageId, false);
+      const b64 = Buffer.from(data).toString("base64");
+      const visionRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: `Analyze this product image. I want to generate a new version with a clean white or professional background, infographic style, similar to Amazon product images. Provide a highly detailed prompt for an image generator to recreate this product but with the improved background and presentation. Include any relevant text or features from my instructions: ${prompt}` },
+                { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } }
+              ]
+            }
+          ]
+        })
+      });
+      if (!visionRes.ok) throw new Error(`OpenAI Vision request failed (${visionRes.status})`);
+      const visionData = await visionRes.json();
+      finalPrompt = visionData.choices[0].message.content;
+    }
+
+    const response = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "dall-e-3", prompt: finalPrompt.slice(0, 4000), n: 1, size: "1024x1024", response_format: "b64_json" })
+    });
+    if (!response.ok) throw new Error(`OpenAI request failed (${response.status})`);
+    const data = await response.json();
+    const b64 = data.data[0].b64_json;
+    const buffer = Buffer.from(b64, "base64");
+    
+    // Create File object compatible with Node.js 20 File API
+    const file = new File([buffer], "ai-generated.png", { type: "image/png" });
+    const productImages = await import("../products/images");
+    return await productImages.upload(db, actor, productId, file, "AI Generated Image");
+  } finally {
+    clearTimeout(timer);
+  }
 }

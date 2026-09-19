@@ -17,6 +17,7 @@ export default function ProductEnrichmentPanel({
 }) {
   const [config, setConfig] = useState<any>(null),
     [key, setKey] = useState(""),
+    [geminiKey, setGeminiKey] = useState(""),
     [model, setModel] = useState("gpt-5.4-nano"),
     [randomCount, setRandomCount] = useState("20"),
     [jobs, setJobs] = useState<any[]>([]),
@@ -65,6 +66,8 @@ export default function ProductEnrichmentPanel({
     const s = suggestion(row);
     return {
       description: s.description || "",
+      shortDescription: s.shortDescription || "",
+      detailedDescription: s.detailedDescription || "",
       manufacturer: s.manufacturer || "",
       productName: s.productName || "",
       productType: s.productType || "",
@@ -146,22 +149,36 @@ export default function ProductEnrichmentPanel({
             />
           </label>
           <label>
+            {t("Gemini API key", "مفتاح Gemini API")}
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={geminiKey}
+              placeholder={config?.geminiMaskedKey || "AIzaSy…"}
+              onChange={(e) => setGeminiKey(e.target.value)}
+            />
+          </label>
+          <label>
             {t("Model", "النموذج")}
             <input value={model} onChange={(e) => setModel(e.target.value)} />
           </label>
         </div>
         <div className="actions wrap">
           <button
-            disabled={busy || (!key && !config?.configured)}
+            disabled={busy || (!key && !geminiKey && !config?.configured)}
             onClick={() =>
               void run(async () => {
+                const payload: any = { model };
+                if (key) payload.apiKey = key;
+                if (geminiKey) payload.geminiApiKey = geminiKey;
                 const next = await api(
                   "product-enrichment/configuration",
                   "PUT",
-                  { ...(key ? { apiKey: key } : {}), model },
+                  payload,
                 );
                 setConfig(next);
                 setKey("");
+                setGeminiKey("");
                 setMessage(
                   t(
                     "AI configuration saved.",
@@ -179,7 +196,7 @@ export default function ProductEnrichmentPanel({
               void run(async () => {
                 await api("product-enrichment/configuration/test", "POST", {});
                 setMessage(
-                  t("OpenAI connection succeeded.", "نجح الاتصال بـ OpenAI."),
+                  t("API connection succeeded.", "نجح الاتصال بالـ API."),
                 );
               })
             }
@@ -348,6 +365,24 @@ export default function ProductEnrichmentPanel({
                           value={s.description || ""}
                           onChange={(e) =>
                             updateLocal(row.id, { description: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="span-all">
+                        {t("Short Description (Listings)", "وصف قصير")}
+                        <textarea
+                          value={s.shortDescription || ""}
+                          onChange={(e) =>
+                            updateLocal(row.id, { shortDescription: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="span-all">
+                        {t("Detailed Description (Product Page)", "وصف مفصل")}
+                        <textarea
+                          value={s.detailedDescription || ""}
+                          onChange={(e) =>
+                            updateLocal(row.id, { detailedDescription: e.target.value })
                           }
                         />
                       </label>

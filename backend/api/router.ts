@@ -1522,6 +1522,24 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         }
       }
+      if (id && action === "generate-ai-image" && method === "POST") {
+        const input = z
+          .object({
+            prompt: z.string().trim().min(1).max(2000),
+            imageId: z.string().uuid().optional(),
+          })
+          .strict()
+          .parse(await body(req));
+        return response(
+          await productEnrichment.generateAiImage(
+            db,
+            actor,
+            uuid(id),
+            input.prompt,
+            input.imageId
+          )
+        );
+      }
       if (id && action === "aliases" && method === "POST") {
         const input = await body(req);
         return response(

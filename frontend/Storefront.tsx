@@ -910,6 +910,11 @@ export default function Storefront() {
                             >
                               {item.description}
                             </button>
+                            {typeof item.content?.shortDescription === "string" && (
+                              <p className="sf-short-description" style={{ fontSize: '0.85em', color: '#666', margin: '4px 0', lineHeight: 1.4 }}>
+                                {item.content.shortDescription}
+                              </p>
+                            )}
                             <code>{item.part_number}</code>
                             <div className="sf-price">
                               <small>SAR</small>{" "}
@@ -1097,8 +1102,11 @@ export default function Storefront() {
               <button className="sf-primary" onClick={() => add(detail)}>
                 {detail.purchasable===false?t('Request a quote','طلب عرض سعر'):t("Add to cart", "أضف للسلة")}
               </button>
-              {typeof detail.content?.description === "string" && (
-                <p>{detail.content.description}</p>
+              {typeof detail.content?.detailedDescription === "string" && (
+                <p style={{marginTop: '1rem', lineHeight: 1.6}}>{detail.content.detailedDescription}</p>
+              )}
+              {typeof detail.content?.description === "string" && !detail.content?.detailedDescription && (
+                <p style={{marginTop: '1rem', lineHeight: 1.6}}>{detail.content.description}</p>
               )}
               <dl>
                 <dt>{t("Part number", "رقم الصنف")}</dt>

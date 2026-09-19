@@ -5,17 +5,31 @@ import { appPath } from "@/shared/paths";
 import { showConfirm } from "./confirm";
 
 export function ProductImageManager({ productId, t }: { productId: string; t: Translate }) {
-  const [items,setItems]=useState<any[]>([]), [error,setError]=useState(""), [busy,setBusy]=useState(false);
+  const [items,setItems]=useState<any[]>([]), [error,setError]=useState(""), [busy,setBusy]=useState(false), [aiPrompt,setAiPrompt]=useState("");
   const load=()=>api(`products/${productId}/images`).then(setItems).catch(e=>setError(e.message));
   useEffect(()=>{ void load(); },[productId]);
   async function upload(file?:File){ if(!file)return; setBusy(true);setError(""); try { const form=new FormData();form.set("file",file); await api(`products/${productId}/images`,"POST",form); await load(); } catch(e){setError((e as Error).message)} finally{setBusy(false)} }
   async function save(next=items){setBusy(true);setError("");try{setItems(await api(`products/${productId}/images`,"PUT",{images:next.map(x=>({id:x.id,caption:x.caption??"",version:x.version}))}));}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+  async function generateAi(imageId?: string) { if (!aiPrompt) return setError(t("Please enter instructions for the AI.", "الرجاء إدخال تعليمات للذكاء الاصطناعي.")); setBusy(true); setError(""); try { await api(`products/${productId}/generate-ai-image`, "POST", { prompt: aiPrompt, imageId }); await load(); setAiPrompt(""); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <fieldset className="product-image-manager"><legend>{t("Product images","صور الصنف")}</legend>
     <p className="muted">{t("Up to 5 JPEG, PNG, or WebP images; 5 MB each.","حتى 5 صور JPEG أو PNG أو WebP؛ 5 ميجابايت لكل صورة.")}</p>
+    
+    <details className="ai-image-generator" style={{marginBottom: "1rem"}}>
+      <summary style={{cursor: "pointer", fontWeight: "bold"}}>{t("AI Image Generator", "مولد الصور بالذكاء الاصطناعي")}</summary>
+      <p className="muted" style={{marginTop: "0.5rem"}}>{t("Generate a new image or edit an existing one based on your description.", "قم بتوليد صورة جديدة أو تعديل صورة حالية بناءً على وصفك.")}</p>
+      <div className="form-grid">
+        <label className="span-all">
+          {t("AI Instructions", "تعليمات الذكاء الاصطناعي")}
+          <textarea value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder={t("e.g., A professional clean photo with a white background...", "مثال: صورة احترافية نظيفة بخلفية بيضاء...")}/>
+        </label>
+        <button type="button" disabled={busy||!aiPrompt} onClick={()=>void generateAi()}>{t("Generate New Image", "توليد صورة جديدة")}</button>
+      </div>
+    </details>
+
     <div className="product-image-grid">{items.map((item,index)=><div className="product-image-edit" key={item.id}>
       <img src={appPath(`/api/v1/product-images/${item.id}/thumbnail`)} alt={item.caption||item.original_name}/>
       <input value={item.caption??""} placeholder={t("Caption","وصف الصورة")} onChange={e=>setItems(v=>v.map(x=>x.id===item.id?{...x,caption:e.target.value}:x))}/>
-      <div className="actions">{index===0 ? <span>{t("Cover image","الصورة الرئيسية")}</span> : <button type="button" disabled={busy} onClick={()=>void save([item,...items.filter(x=>x.id!==item.id)])}>{t("Make cover","تعيين كصورة رئيسية")}</button>}<button type="button" aria-label={t("Move image earlier","تقديم الصورة")} disabled={busy||index===0} onClick={()=>{const n=[...items];[n[index-1],n[index]]=[n[index],n[index-1]];void save(n)}}>↑</button><button type="button" disabled={busy||index===items.length-1} onClick={()=>{const n=[...items];[n[index+1],n[index]]=[n[index],n[index+1]];void save(n)}}>↓</button><button type="button" disabled={busy} onClick={async()=>{if(!await showConfirm(t("Delete this image?","حذف هذه الصورة؟"),{tone:"danger",confirmText:t("Delete","حذف"),title:t("Delete Image","حذف الصورة")}))return;setBusy(true);try{await api(`products/${productId}/images`,"DELETE",{imageId:item.id,version:item.version});await load()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}}>×</button></div>
+      <div className="actions">{index===0 ? <span>{t("Cover image","الصورة الرئيسية")}</span> : <button type="button" disabled={busy} onClick={()=>void save([item,...items.filter(x=>x.id!==item.id)])}>{t("Make cover","تعيين كصورة رئيسية")}</button>}<button type="button" aria-label={t("Move image earlier","تقديم الصورة")} disabled={busy||index===0} onClick={()=>{const n=[...items];[n[index-1],n[index]]=[n[index],n[index-1]];void save(n)}}>↑</button><button type="button" disabled={busy||index===items.length-1} onClick={()=>{const n=[...items];[n[index+1],n[index]]=[n[index],n[index+1]];void save(n)}}>↓</button><button type="button" disabled={busy} onClick={async()=>{if(!await showConfirm(t("Delete this image?","حذف هذه الصورة؟"),{tone:"danger",confirmText:t("Delete","حذف"),title:t("Delete Image","حذف الصورة")}))return;setBusy(true);try{await api(`products/${productId}/images`,"DELETE",{imageId:item.id,version:item.version});await load()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}}>×</button><button type="button" disabled={busy||!aiPrompt} onClick={()=>void generateAi(item.id)}>{t("AI Enhance", "تحسين بالذكاء الاصطناعي")}</button></div>
     </div>)}</div>
     <div className="actions"><label className="button"><input hidden type="file" accept="image/jpeg,image/png,image/webp" disabled={busy||items.length>=5} onChange={e=>{const file=e.target.files?.[0];e.target.value="";void upload(file)}}/>{t("Upload image","رفع صورة")}</label>{items.length>0&&<button type="button" disabled={busy} onClick={()=>void save()}>{t("Save captions","حفظ الأوصاف")}</button>}</div>{error&&<div className="notice error">{error}</div>}
   </fieldset>;
