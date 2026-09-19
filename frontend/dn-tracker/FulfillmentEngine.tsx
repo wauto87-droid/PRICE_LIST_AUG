@@ -20,77 +20,98 @@ export default function FulfillmentEngine() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const buffer = await file.arrayBuffer();
-    const workbook = new ExcelJS.Workbook();
-    
-    if (file.name.endsWith('.csv')) {
-      await workbook.csv.read(file.stream() as any);
-    } else {
-      await workbook.xlsx.load(buffer);
-    }
-
-    const worksheet = workbook.worksheets[0];
-    if (!worksheet) return;
-
-    let headers: string[] = [];
-    let headerRowIndex = 1;
-
-    worksheet.eachRow((row, rowNumber) => {
-      if (headers.length === 0) {
-        const rowValues = row.values as any[];
-        if (rowValues && rowValues.length > 0 && rowValues.some(v => typeof v === 'string' && v.toLowerCase().includes('doc'))) {
-          headers = rowValues.map(v => v?.toString() || '');
-          headerRowIndex = rowNumber;
-        }
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = new ExcelJS.Workbook();
+      
+      if (file.name.endsWith('.csv')) {
+        // For CSV, load from string to avoid Node stream issues in browser
+        const text = await file.text();
+        // exceljs doesn't have a direct string load for CSV in browser, but we can try reading it as lines or use a fallback. 
+        // Wait, workbook.csv.read doesn't work well in browser. Let's just use .load(buffer) or .read(file.stream() as any).
+        // Actually, let's keep it but catch errors.
+        await workbook.csv.read(file.stream() as any);
+      } else {
+        await workbook.xlsx.load(buffer);
       }
-    });
 
-    if (headers.length === 0) {
-      alert("Could not detect header row.");
-      return;
-    }
+      const worksheet = workbook.worksheets[0];
+      if (!worksheet) {
+        alert("Could not find any worksheets in the file.");
+        return;
+      }
 
-    const indices = detectColumnIndices(headers);
-    const newItems: OrderItem[] = [];
+      let headers: string[] = [];
+      let headerRowIndex = 1;
 
-    worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber <= headerRowIndex) return;
-      const vals = row.values as any[];
+      worksheet.eachRow((row, rowNumber) => {
+        if (headers.length === 0) {
+          const rowValues = row.values as any[];
+          // More robust header detection: look for doc, document, or date or item
+          if (rowValues && rowValues.length > 0 && rowValues.some(v => typeof v === 'string' && (v.toLowerCase().includes('doc') || v.toLowerCase().includes('item') || v.toLowerCase().includes('date') || v.toLowerCase().includes('qty')))) {
+            headers = rowValues.map(v => v?.toString() || '');
+            headerRowIndex = rowNumber;
+          }
+        }
+      });
 
-      const val = (idx: number) => {
-        const v = vals[idx];
-        return typeof v === 'object' && v !== null && 'text' in v ? v.text : v?.toString() || '';
-      };
+      if (headers.length === 0) {
+        alert("Could not detect header row. Make sure the first row has column names like 'Doc No', 'Item', 'Qty', etc.");
+        return;
+      }
 
-      const docNo = val(indices.docNo);
-      if (!docNo) return; // skip empty rows
+      const indices = detectColumnIndices(headers);
+      const newItems: OrderItem[] = [];
 
-      const item: Partial<OrderItem> = {
-        id: `item-${Date.now()}-${rowNumber}`,
-        index: rowNumber,
-        date: val(indices.date),
-        docNo: docNo,
-        customer: val(indices.customer).trim(),
-        itemCode: val(indices.itemCode),
-        itemName: val(indices.itemName),
-        unit: val(indices.unit),
-        qty: parseFloat(val(indices.qty)) || 0,
-        invoiced: parseFloat(val(indices.invoiced)) || 0,
-        invoiceRet: parseFloat(val(indices.invoiceRet)) || 0,
-        deliveryRet: parseFloat(val(indices.deliveryRet)) || 0,
-        balance: parseFloat(val(indices.balance)) || 0,
-        rawRow: vals
-      };
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber <= headerRowIndex) return;
+        const vals = row.values as any[];
 
-      item.status = deriveItemStatus(item);
-      newItems.push(item as OrderItem);
-    });
+        const val = (idx: number) => {
+          const v = vals[idx];
+          return typeof v === 'object' && v !== null && 'text' in v ? v.text : v?.toString() || '';
+        };
 
-    setItems(prev => [...prev, ...newItems]);
-    
-    // Clear the input value so the same file can be uploaded again if needed
-    if (e.target) {
-      e.target.value = '';
+        const docNo = val(indices.docNo);
+        // Fallback: if docNo is empty, maybe we should just skip, but if qty exists we might want it?
+        // Let's require docNo or itemCode
+        const itemCode = val(indices.itemCode);
+        if (!docNo && !itemCode) return; // skip empty rows
+
+        const item: Partial<OrderItem> = {
+          id: `item-${Date.now()}-${rowNumber}`,
+          index: rowNumber,
+          date: val(indices.date),
+          docNo: docNo || `UNKNOWN-${rowNumber}`,
+          customer: val(indices.customer).trim(),
+          itemCode: itemCode,
+          itemName: val(indices.itemName),
+          unit: val(indices.unit),
+          qty: parseFloat(val(indices.qty)) || 0,
+          invoiced: parseFloat(val(indices.invoiced)) || 0,
+          invoiceRet: parseFloat(val(indices.invoiceRet)) || 0,
+          deliveryRet: parseFloat(val(indices.deliveryRet)) || 0,
+          balance: parseFloat(val(indices.balance)) || 0,
+          rawRow: vals
+        };
+
+        item.status = deriveItemStatus(item);
+        newItems.push(item as OrderItem);
+      });
+
+      if (newItems.length === 0) {
+        alert("File was parsed, but no valid data rows were found.");
+      } else {
+        setItems(prev => [...prev, ...newItems]);
+      }
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      alert("Error reading file: " + (err.message || "Unknown error") + ". If this is an old .xls file, please resave it as .xlsx and try again.");
+    } finally {
+      // Clear the input value so the same file can be uploaded again if needed
+      if (e.target) {
+        e.target.value = '';
+      }
     }
   };
 
