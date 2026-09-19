@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { api, type Translate } from "./api";
 import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
@@ -769,11 +769,21 @@ export default function Cart({
     }
   }
 
-  const partCounts = cart.lines.reduce((acc: Record<string, number>, l: any) => {
-    const pn = l.input?.partNumber || l.partNumber;
-    if (pn) acc[pn] = (acc[pn] || 0) + 1;
-    return acc;
-  }, {});
+  const { partCounts, duplicateIndices } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const l of cart.lines) {
+      const pn = l.input?.partNumber || l.partNumber;
+      if (pn) counts[pn] = (counts[pn] || 0) + 1;
+    }
+    let colorIndex = 1;
+    const indices: Record<string, number> = {};
+    for (const [pn, count] of Object.entries(counts)) {
+      if (count > 1) {
+        indices[pn] = colorIndex++;
+      }
+    }
+    return { partCounts: counts, duplicateIndices: indices };
+  }, [cart.lines]);
 
   return (
     <section className="card">
@@ -910,8 +920,9 @@ export default function Cart({
               {cart.lines.map((l: any, i: number) => {
                 const pn = l.input?.partNumber || l.partNumber;
                 const isDuplicate = pn && partCounts[pn] > 1;
+                const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
                 return (
-                <tr className={isDuplicate ? "duplicate-line" : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                <tr className={isDuplicate ? `duplicate-line duplicate-color-${(dupIndex % 6) || 6}` : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
                   <td>
                     {l.input?.type === "CUSTOM" ? (
                       <>

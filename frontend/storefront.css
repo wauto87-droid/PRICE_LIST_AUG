@@ -4166,6 +4166,22 @@
 }
 
 
-.duplicate-line { background-color: #fff0f0; }
-.duplicate-line td { border-bottom-color: #f2bfc2; }
 .duplicate-line input { background-color: #fff !important; }
+
+.duplicate-color-1 { background-color: #fff0f0; }
+.duplicate-color-1 td { border-bottom-color: #f2bfc2; }
+
+.duplicate-color-2 { background-color: #f0f8ff; }
+.duplicate-color-2 td { border-bottom-color: #b3d4ff; }
+
+.duplicate-color-3 { background-color: #f0fff0; }
+.duplicate-color-3 td { border-bottom-color: #b3ffb3; }
+
+.duplicate-color-4 { background-color: #fffaf0; }
+.duplicate-color-4 td { border-bottom-color: #ffe4b3; }
+
+.duplicate-color-5 { background-color: #f8f0ff; }
+.duplicate-color-5 td { border-bottom-color: #dcb3ff; }
+
+.duplicate-color-6 { background-color: #f0ffff; }
+.duplicate-color-6 td { border-bottom-color: #b3ffff; }
