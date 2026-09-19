@@ -1,0 +1,296 @@
+.fulfillment-engine {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #f8fafc;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #0f172a;
+}
+
+.fe-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.fe-brand h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.fe-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background-color: #3b82f6;
+  color: white;
+}
+.btn-primary:hover { background-color: #2563eb; }
+
+.btn-secondary {
+  background-color: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+.btn-secondary:hover { background-color: #f1f5f9; }
+
+.btn-danger {
+  background-color: #ef4444;
+  color: white;
+}
+.btn-danger:hover { background-color: #dc2626; }
+
+.fe-tabs {
+  display: flex;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0 1.5rem;
+}
+
+.fe-tab {
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+}
+.fe-tab:hover { color: #0f172a; }
+.fe-tab.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+}
+
+.fe-viewport {
+  flex: 1;
+  overflow: auto;
+  padding: 1.5rem;
+}
+
+/* Kanban Board */
+.kanban-board {
+  display: flex;
+  gap: 1.5rem;
+  height: 100%;
+  overflow-x: auto;
+}
+
+.kanban-col {
+  flex: 1;
+  min-width: 300px;
+  background-color: #f1f5f9;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.col-header {
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+}
+.col-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.badge {
+  background-color: #e2e8f0;
+  color: #475569;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.col-body {
+  padding: 1rem;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Kanban Cards */
+.kanban-card {
+  background-color: #ffffff;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border: 1px solid #e2e8f0;
+  cursor: grab;
+}
+.kanban-card:active { cursor: grabbing; }
+.kanban-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+.kanban-card .date { color: #64748b; font-size: 0.75rem; }
+.kanban-card .customer { font-weight: 600; margin-bottom: 0.25rem; font-size: 0.875rem; }
+.kanban-card .item-name { color: #475569; font-size: 0.75rem; margin-bottom: 0.75rem; line-height: 1.4; }
+.kanban-card .metrics {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: #f8fafc;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+}
+
+/* Column Colors */
+.kanban-col.amber { border-top: 3px solid #f59e0b; }
+.kanban-col.sky { border-top: 3px solid #0ea5e9; }
+.kanban-col.rose { border-top: 3px solid #f43f5e; }
+.kanban-col.emerald { border-top: 3px solid #10b981; }
+
+/* Tables & Customer Sheets */
+.customer-sheets {
+  display: flex;
+  gap: 1.5rem;
+  height: 100%;
+}
+.sidebar {
+  width: 250px;
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar h3 {
+  padding: 1rem;
+  margin: 0;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 1rem;
+}
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.sidebar li {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+}
+.sidebar li:hover { background-color: #f8fafc; }
+.sidebar li.active { background-color: #eff6ff; color: #1d4ed8; font-weight: 500; }
+
+.sheet-content {
+  flex: 1;
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  overflow: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.data-table th, .data-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.875rem;
+}
+.data-table th {
+  background-color: #f8fafc;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.data-table tr:hover { background-color: #f8fafc; }
+
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.status-badge.pending { background-color: #fef3c7; color: #b45309; }
+.status-badge.partial { background-color: #e0f2fe; color: #0369a1; }
+.status-badge.returned { background-color: #ffe4e6; color: #be123c; }
+.status-badge.completed { background-color: #d1fae5; color: #047857; }
+
+/* Presets */
+.preset-manager {
+  background-color: #ffffff;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  max-width: 600px;
+}
+.preset-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.preset-form input {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+}
+.preset-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.preset-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  margin-bottom: 0.5rem;
+}
+.preset-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+@media print {
+  .fe-topbar, .fe-tabs, .sidebar { display: none !important; }
+  .fe-viewport { padding: 0 !important; overflow: visible !important; }
+  .kanban-board { flex-direction: column; overflow: visible !important; }
+  .data-table th { position: static !important; }
+  .customer-sheets { display: block; }
+}
