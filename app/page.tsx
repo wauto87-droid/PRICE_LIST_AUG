@@ -6,6 +6,8 @@ import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
 import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
 import Admin from "@/frontend/Admin";
+import { TrackerProvider } from "@/frontend/dn-tracker/TrackerContext";
+import FulfillmentEngine from "@/frontend/dn-tracker/FulfillmentEngine";
 import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
 import Commercial from "@/frontend/Commercial";
@@ -485,7 +487,10 @@ export default function App() {
                 ? [["commercial", "Commercial", "التجاري"]]
                 : []),
               ...(session.user.permissions.includes("ADMIN_VIEW")
-                ? [["admin", "Admin", "الإدارة"]]
+                ? [
+                    ["dntracker", "DN Tracker", "متتبع أذونات التسليم"],
+                    ["admin", "Admin", "الإدارة"],
+                  ]
                 : []),
             ].map(([key, en, ar]) => (
               <button
@@ -526,6 +531,8 @@ export default function App() {
                           )
                       : tab === "commercial"
                         ? t("Commercial operations", "العمليات التجارية")
+                      : tab === "dntracker"
+                        ? t("DN Tracker", "متتبع أذونات التسليم")
                       : tab === "admin"
                         ? t("Administration", "الإدارة")
                         : t("Your quotations", "عروض أسعارك")}
@@ -649,6 +656,21 @@ export default function App() {
                   {t(
                     "Reconnect to access saved quotations.",
                     "أعد الاتصال للوصول إلى العروض المحفوظة.",
+                  )}
+                </div>
+              ))}
+            {tab === "dntracker" &&
+              (online ? (
+                <div style={{ height: "calc(100vh - 120px)", overflow: "auto" }}>
+                  <TrackerProvider>
+                    <FulfillmentEngine />
+                  </TrackerProvider>
+                </div>
+              ) : (
+                <div className="card notice">
+                  {t(
+                    "DN Tracker requires an active connection.",
+                    "متتبع أذونات التسليم يتطلب اتصالاً نشطاً.",
                   )}
                 </div>
               ))}
