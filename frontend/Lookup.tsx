@@ -89,6 +89,7 @@ export default function Lookup({
   }
   const searchRef = useRef<HTMLInputElement>(null),
     discountRef = useRef<HTMLInputElement>(null),
+    qtyRef = useRef<HTMLInputElement>(null),
     finalPriceRef = useRef<HTMLDivElement>(null),
     revealFinalPriceAfterValidation = useRef(false),
     comboboxId = useRef(
@@ -1053,11 +1054,8 @@ export default function Lookup({
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          void (async () => {
-                            if (await showConfirm(t("Add this item to quotation?", "إضافة هذا الصنف إلى عرض السعر؟"))) {
-                              add();
-                            }
-                          })();
+                          qtyRef.current?.focus();
+                          qtyRef.current?.select();
                         }
                       }}
                     />
@@ -1065,6 +1063,7 @@ export default function Lookup({
                   <label>
                     {t("QUANTITY", "الكمية")} · {selected.unit}
                     <input
+                      ref={qtyRef}
                       inputMode="decimal"
                       type="number"
                       min={selected.quantityPrecision ? "0.001" : "1"}
