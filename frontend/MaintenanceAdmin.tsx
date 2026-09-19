@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { showAlert } from "./confirm";
 
 export default function MaintenanceAdmin({ t }: { t: Translate }) {
   const [data, setData] = useState<any>(null);
@@ -139,7 +140,7 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
                       workspace: { ...data.workspace, workspaceMaintenanceImage: b64 },
                     });
                   } catch (err: any) {
-                    alert(err.message);
+                    await showAlert(err.message, { tone: "danger" });
                   }
                 }
               }}
@@ -257,7 +258,7 @@ export default function MaintenanceAdmin({ t }: { t: Translate }) {
                       },
                     });
                   } catch (err: any) {
-                    alert(err.message);
+                    await showAlert(err.message, { tone: "danger" });
                   }
                 }
               }}

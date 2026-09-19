@@ -315,7 +315,7 @@ export default function Lookup({
   }
   async function add() {
     if (!selected || adding) return;
-    if (!allowRepeat && cartLines.some(l => l.input?.partNumber === selected.partNumber)) {
+    if (!allowRepeat && cartLines.some(l => (l.input?.partNumber || l.partNumber) === selected.partNumber)) {
       setError(
         t(
           "Item already in quotation. Enable 'Allow item repeat' to add it again.",
@@ -1078,6 +1078,15 @@ export default function Lookup({
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
+                          if (!allowRepeat && cartLines.some(l => (l.input?.partNumber || l.partNumber) === selected.partNumber)) {
+                            setError(
+                              t(
+                                "Item already in quotation. Enable 'Allow item repeat' to add it again.",
+                                "الصنف موجود بالفعل في عرض السعر. فعل 'السماح بتكرار الصنف' لإضافته مرة أخرى."
+                              )
+                            );
+                            return;
+                          }
                           void (async () => {
                             if (await showConfirm(t("Add this item to quotation?", "إضافة هذا الصنف إلى عرض السعر؟"))) {
                               add();

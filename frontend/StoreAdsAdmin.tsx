@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
+import { showConfirm, showAlert } from "./confirm";
 
 export type AdItem = {
   id: string;
@@ -132,13 +133,13 @@ export default function StoreAdsAdmin({
     }
   }
 
-  function handleSaveAd(ad: AdItem) {
+  async function handleSaveAd(ad: AdItem) {
     if (!ad.title.trim() && !ad.titleAr?.trim()) {
-      alert(t("Please provide at least one title", "يرجى كتابة عنوان للإعلان"));
+      await showAlert(t("Please provide at least one title", "يرجى كتابة عنوان للإعلان"));
       return;
     }
     if (!ad.mediaUrl.trim()) {
-      alert(t("Please upload an image/video or enter a media URL", "يرجى رفع صورة/فيديو أو إدخال رابط وسائط"));
+      await showAlert(t("Please upload an image/video or enter a media URL", "يرجى رفع صورة/فيديو أو إدخال رابط وسائط"));
       return;
     }
 
@@ -154,8 +155,8 @@ export default function StoreAdsAdmin({
     saveAdsList(next);
   }
 
-  function handleDeleteAd(id: string) {
-    if (!confirm(t("Are you sure you want to delete this ad?", "هل أنت متأكد من رغبتك في حذف هذا الإعلان؟"))) {
+  async function handleDeleteAd(id: string) {
+    if (!(await showConfirm(t("Are you sure you want to delete this ad?", "هل أنت متأكد من رغبتك في حذف هذا الإعلان؟")))) {
       return;
     }
     const next = ads.filter((x) => x.id !== id);
@@ -693,7 +694,7 @@ export default function StoreAdsAdmin({
                           const b64 = await toBase64(file);
                           setEditing({ ...editing, mediaUrl: b64 });
                         } catch (err: any) {
-                          alert(err.message);
+                          await showAlert(err.message);
                         }
                       }
                     }}
@@ -876,8 +877,8 @@ export default function StoreAdsAdmin({
                 <button
                   type="button"
                   className="primary"
-                  onClick={() => {
-                    alert(t("CTA Clicked! Link: ", "تم الضغط على الزر! الرابط: ") + (previewAd.ctaLink || "#"));
+                  onClick={async () => {
+                    await showAlert(t("CTA Clicked! Link: ", "تم الضغط على الزر! الرابط: ") + (previewAd.ctaLink || "#"));
                     setPreviewAd(null);
                   }}
                   style={{

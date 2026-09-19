@@ -2,6 +2,7 @@
 import { useState, useMemo } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
+import { showConfirm } from "./confirm";
 
 export interface StoreOrdersProps {
   t: Translate;
@@ -983,9 +984,9 @@ export default function StoreOrders({
                 <button
                   type="button"
                   className="action-btn cancel"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      confirm(
+                      await showConfirm(
                         t(
                           "Are you sure you want to cancel this order? Holds will be released.",
                           "هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟ سيتم فك حجز المنتجات.",
