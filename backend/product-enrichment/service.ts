@@ -272,7 +272,7 @@ export async function queue(db: DB, actor: Actor, raw: unknown) {
     })
     .strict()
     .parse(raw);
-  await secret(db);
+  await getAvailableApiKey(db);
   const ids = [...new Set(input.items.map((x) => x.id))];
   assert(ids.length === input.items.length, 400, "Duplicate products selected");
   const jobId = randomUUID(),
