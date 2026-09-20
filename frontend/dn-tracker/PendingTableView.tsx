@@ -29,7 +29,7 @@ export default function PendingTableView() {
               <tr key={item.id}>
                 <td>{item.date}</td>
                 <td>{item.docNo}</td>
-                <td>{item.customer}</td>
+                <td>{item.customer}{item.customerCode ? ` (${item.customerCode})` : ''}</td>
                 <td>{item.itemCode}</td>
                 <td>{item.itemName}</td>
                 <td>{item.qty}</td>

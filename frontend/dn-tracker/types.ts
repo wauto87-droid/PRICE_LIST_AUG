@@ -4,6 +4,7 @@ export interface OrderItem {
   date: string; // YYYY-MM-DD or raw string
   docNo: string | number; // Document / invoice number
   customer: string; // Customer / Company Name (trimmed)
+  customerCode?: string; // Optional customer code
   itemCode: string; // SKU or Item Code
   itemName: string; // Full Item Description
   unit: string; // PCS, MTR, BOX, ROLL, etc.

@@ -1,7 +1,7 @@
 'use client';
 import React, { useRef } from 'react';
 import { Upload, Download, Printer, Settings, Trash2 } from 'lucide-react';
-import ExcelJS from 'exceljs';
+import * as XLSX from 'xlsx';
 import { detectColumnIndices, deriveItemStatus } from './engineLogic';
 import { exportToExcelCsv, printToPdf } from './exportLogic';
 import { useTracker } from './TrackerContext';
@@ -22,38 +22,35 @@ export default function FulfillmentEngine() {
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = new ExcelJS.Workbook();
+      const workbook = XLSX.read(buffer, { type: 'array' });
       
-      if (file.name.endsWith('.csv')) {
-        // For CSV, load from string to avoid Node stream issues in browser
-        const text = await file.text();
-        // exceljs doesn't have a direct string load for CSV in browser, but we can try reading it as lines or use a fallback. 
-        // Wait, workbook.csv.read doesn't work well in browser. Let's just use .load(buffer) or .read(file.stream() as any).
-        // Actually, let's keep it but catch errors.
-        await workbook.csv.read(file.stream() as any);
-      } else {
-        await workbook.xlsx.load(buffer);
-      }
-
-      const worksheet = workbook.worksheets[0];
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      
       if (!worksheet) {
         alert("Could not find any worksheets in the file.");
         return;
       }
 
-      let headers: string[] = [];
-      let headerRowIndex = 1;
+      const rows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
 
-      worksheet.eachRow((row, rowNumber) => {
-        if (headers.length === 0) {
-          const rowValues = row.values as any[];
+      let headers: string[] = [];
+      let headerRowIndex = 0;
+
+      for (let i = 0; i < rows.length; i++) {
+        const rowValues = rows[i];
+        if (headers.length === 0 && rowValues && rowValues.length > 0) {
           // More robust header detection: look for doc, document, or date or item
-          if (rowValues && rowValues.length > 0 && rowValues.some(v => typeof v === 'string' && (v.toLowerCase().includes('doc') || v.toLowerCase().includes('item') || v.toLowerCase().includes('date') || v.toLowerCase().includes('qty')))) {
+          const hasTargetHeader = rowValues.some(v => 
+            typeof v === 'string' && (v.toLowerCase().includes('doc') || v.toLowerCase().includes('item') || v.toLowerCase().includes('date') || v.toLowerCase().includes('qty'))
+          );
+          if (hasTargetHeader) {
             headers = rowValues.map(v => v?.toString() || '');
-            headerRowIndex = rowNumber;
+            headerRowIndex = i;
+            break;
           }
         }
-      });
+      }
 
       if (headers.length === 0) {
         alert("Could not detect header row. Make sure the first row has column names like 'Doc No', 'Item', 'Qty', etc.");
@@ -63,11 +60,11 @@ export default function FulfillmentEngine() {
       const indices = detectColumnIndices(headers);
       const newItems: OrderItem[] = [];
 
-      worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber <= headerRowIndex) return;
-        const vals = row.values as any[];
-
+      for (let i = headerRowIndex + 1; i < rows.length; i++) {
+        const vals = rows[i];
+        
         const val = (idx: number) => {
+          if (idx < 0) return '';
           const v = vals[idx];
           return typeof v === 'object' && v !== null && 'text' in v ? v.text : v?.toString() || '';
         };
@@ -76,14 +73,15 @@ export default function FulfillmentEngine() {
         // Fallback: if docNo is empty, maybe we should just skip, but if qty exists we might want it?
         // Let's require docNo or itemCode
         const itemCode = val(indices.itemCode);
-        if (!docNo && !itemCode) return; // skip empty rows
+        if (!docNo && !itemCode) continue; // skip empty rows
 
         const item: Partial<OrderItem> = {
-          id: `item-${Date.now()}-${rowNumber}`,
-          index: rowNumber,
+          id: `item-${Date.now()}-${i}`,
+          index: i,
           date: val(indices.date),
-          docNo: docNo || `UNKNOWN-${rowNumber}`,
+          docNo: docNo || `UNKNOWN-${i}`,
           customer: val(indices.customer).trim(),
+          customerCode: val(indices.customerCode).trim(),
           itemCode: itemCode,
           itemName: val(indices.itemName),
           unit: val(indices.unit),
@@ -97,7 +95,7 @@ export default function FulfillmentEngine() {
 
         item.status = deriveItemStatus(item);
         newItems.push(item as OrderItem);
-      });
+      }
 
       if (newItems.length === 0) {
         alert("File was parsed, but no valid data rows were found.");

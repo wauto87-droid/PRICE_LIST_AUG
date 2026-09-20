@@ -12,7 +12,7 @@ export const exportToExcelCsv = (items: OrderItem[], filename: string) => {
   const rows = items.map((it) => [
     escapeCell(it.date),
     escapeCell(it.docNo),
-    escapeCell(it.customer),
+    escapeCell(it.customer + (it.customerCode ? ` (${it.customerCode})` : '')),
     escapeCell(it.itemCode),
     escapeCell(it.itemName),
     escapeCell(it.unit),
