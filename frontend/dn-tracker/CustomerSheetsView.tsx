@@ -8,8 +8,8 @@ interface CustomerSheetsViewProps {
 }
 
 export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewProps) {
-  const { filters } = useTracker();
-  const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const { filters, updateFilter } = useTracker();
+  const selectedCustomer = filters.customerFilter || null;
   const [sidebarSearch, setSidebarSearch] = useState('');
 
   // Extract unique customers from the globally filtered items
@@ -38,7 +38,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
           <h3 style={{ margin: 0 }}>Directory</h3>
         </div>
         <ul>
-          <li className={selectedCustomer === null ? 'active' : ''} onClick={() => setSelectedCustomer(null)}>
+          <li className={selectedCustomer === null ? 'active' : ''} onClick={() => updateFilter('customerFilter', null)}>
             All Companies <span className="badge">{activeItems.length}</span>
           </li>
           <div style={{ padding: '0.5rem 1rem' }}>
@@ -54,7 +54,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
             <li 
               key={c.name} 
               className={selectedCustomer === c.name ? 'active' : ''} 
-              onClick={() => setSelectedCustomer(c.name)}
+              onClick={() => updateFilter('customerFilter', c.name)}
               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>

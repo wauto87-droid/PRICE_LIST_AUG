@@ -47,9 +47,9 @@ const generateHtmlReport = (items: OrderItem[], scope: string, excludedCount: nu
     
     return `
       <tr>
-        <td style="width: 65px; text-align: center; font-family: monospace;">${item.date}</td>
-        <td style="width: 55px; text-align: center; font-family: monospace; font-weight: bold;">${item.docNo}</td>
-        <td style="width: 160px; font-weight: bold;"><div dir="auto">${item.customer}</div></td>
+        <td style="width: 75px; text-align: center; font-family: monospace; white-space: nowrap;">${item.date}</td>
+        <td style="width: 65px; text-align: center; font-family: monospace; font-weight: bold; white-space: nowrap;">${item.docNo}</td>
+        <td style="width: 150px; font-weight: bold;"><div dir="auto">${item.customer}</div></td>
         <td>
           <div dir="auto">${item.itemName || '-'}</div>
           <div style="font-family: monospace; color: #64748b; font-size: 8pt;">${item.itemCode || '-'}</div>
@@ -197,9 +197,9 @@ const generateHtmlReport = (items: OrderItem[], scope: string, excludedCount: nu
       <table>
         <thead>
           <tr>
-            <th style="width: 65px; text-align: center;">Date</th>
-            <th style="width: 55px; text-align: center;">Doc #</th>
-            <th style="width: 160px;">Customer Name</th>
+            <th style="width: 75px; text-align: center; white-space: nowrap;">Date</th>
+            <th style="width: 65px; text-align: center; white-space: nowrap;">Doc #</th>
+            <th style="width: 150px;">Customer Name</th>
             <th>Item Description & Code</th>
             <th style="width: 40px; text-align: right;">Qty</th>
             <th style="width: 35px; text-align: center;">Unit</th>

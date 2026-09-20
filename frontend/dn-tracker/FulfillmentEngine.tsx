@@ -15,7 +15,7 @@ import './fulfillment.css';
 import MultiVectorToolbar from './MultiVectorToolbar';
 
 export default function FulfillmentEngine() {
-  const { items, setItems, activeTab, setActiveTab, filters } = useTracker();
+  const { items, setItems, activeTab, setActiveTab, filters, presets } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -135,8 +135,16 @@ export default function FulfillmentEngine() {
     let result = items;
 
     // 1. Exclude companies
-    if (filters.excludedCustomers?.length > 0) {
-      const excludedSet = new Set(filters.excludedCustomers);
+    let excludedList = filters.excludedCustomers || [];
+    if (filters.activePresetId) {
+      const activePreset = presets.find(p => p.id === filters.activePresetId);
+      if (activePreset) {
+        excludedList = activePreset.excludedCompanies;
+      }
+    }
+
+    if (excludedList.length > 0) {
+      const excludedSet = new Set(excludedList);
       result = result.filter(i => !excludedSet.has(i.customer));
     }
 
@@ -185,7 +193,7 @@ export default function FulfillmentEngine() {
     }
 
     return result;
-  }, [items, filters]);
+  }, [items, filters, presets]);
 
   return (
     <div className="fulfillment-engine">
@@ -196,7 +204,23 @@ export default function FulfillmentEngine() {
         allRawItems={items}
         onUploadClick={() => fileInputRef.current?.click()}
         onClearClick={handleClear}
-        onPrintPdfClick={() => printToPdf(activeItems, filters.searchQuery || filters.activePresetId || 'All Companies', filters.excludedCustomers?.length || 0)}
+        onPrintPdfClick={() => {
+          let printableItems = activeItems;
+          let docTitle = filters.searchQuery || filters.activePresetId || 'All Companies';
+          
+          if (activeTab === 'pending') {
+            printableItems = activeItems.filter(i => i.balance >= 1 && i.status === 'pending');
+            docTitle = 'Actionable Pending Deliveries';
+          } else if (activeTab === 'customers' && filters.customerFilter) {
+            printableItems = activeItems.filter(i => i.customer === filters.customerFilter);
+            docTitle = filters.customerFilter;
+          }
+
+          const excludedList = filters.activePresetId 
+            ? presets.find(p => p.id === filters.activePresetId)?.excludedCompanies || [] 
+            : filters.excludedCustomers || [];
+          printToPdf(printableItems, docTitle, excludedList.length);
+        }}
       />
 
       <div className="fe-tabs">

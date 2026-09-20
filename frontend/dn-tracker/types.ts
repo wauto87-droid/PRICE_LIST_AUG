@@ -31,4 +31,5 @@ export interface GlobalFilters {
   sortOrder: 'asc' | 'desc';
   excludedCustomers: string[];
   activePresetId: string | null;
+  customerFilter?: string | null;
 }

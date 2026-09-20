@@ -25,7 +25,8 @@ const defaultFilters: GlobalFilters = {
   sortField: '',
   sortOrder: 'asc',
   excludedCustomers: [],
-  activePresetId: null
+  activePresetId: null,
+  customerFilter: null
 };
 
 export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

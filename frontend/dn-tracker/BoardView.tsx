@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { DndContext, DragEndEvent, closestCorners, useDroppable } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
@@ -65,15 +65,36 @@ export default function BoardView({ activeItems }: BoardViewProps) {
     const itemId = active.id as string;
     const overId = over.id as string;
 
+    if (itemId === overId) return;
+
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
 
-    // The overId is either the column ID or another item's ID
-    const targetStatus = columns.find(c => c.id === overId)?.id || items.find(i => i.id === overId)?.status;
+    const isOverColumn = columns.some(c => c.id === overId);
+    const targetStatus = isOverColumn ? overId : items.find(i => i.id === overId)?.status;
 
     if (targetStatus && targetStatus !== item.status) {
       const updatedItem = transitionItemStatus(item, targetStatus as any);
-      setItems((prev) => prev.map((i) => (i.id === itemId ? updatedItem : i)));
+      setItems((prev) => {
+        const newItems = prev.map((i) => (i.id === itemId ? updatedItem : i));
+        if (!isOverColumn) {
+          const oldIndex = newItems.findIndex(i => i.id === itemId);
+          const newIndex = newItems.findIndex(i => i.id === overId);
+          if (oldIndex !== -1 && newIndex !== -1) {
+            return arrayMove(newItems, oldIndex, newIndex);
+          }
+        }
+        return newItems;
+      });
+    } else if (targetStatus && targetStatus === item.status && !isOverColumn) {
+      setItems((prev) => {
+        const oldIndex = prev.findIndex(i => i.id === itemId);
+        const newIndex = prev.findIndex(i => i.id === overId);
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          return arrayMove(prev, oldIndex, newIndex);
+        }
+        return prev;
+      });
     }
   };
 
