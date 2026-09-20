@@ -6,7 +6,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
 import { transitionItemStatus } from './engineLogic';
-import CompanyPresetMenu from './CompanyPresetMenu';
 
 const columns = [
   { id: 'pending', title: 'Pending Balance', color: 'amber' },
@@ -32,9 +31,6 @@ function SortableItem({ item }: { item: OrderItem }) {
       </div>
       <div className="customer flex justify-between items-center pr-1">
         <span className="truncate" title={item.customer}>{item.customer}{item.customerCode ? ` (${item.customerCode})` : ''}</span>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-          <CompanyPresetMenu company={item.customer} />
-        </div>
       </div>
       <div className="item-name">{item.itemName}</div>
       <div className="metrics">

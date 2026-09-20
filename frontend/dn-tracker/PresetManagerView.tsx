@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { useTracker } from './TrackerContext';
 import { Preset } from './types';
 import { Search, Plus, Trash2, Filter } from 'lucide-react';
+import CompanyPresetMenu from './CompanyPresetMenu';
 
 export default function PresetManagerView() {
   const { presets, setPresets, activePresetId, setActivePresetId, items } = useTracker();
@@ -111,9 +112,12 @@ export default function PresetManagerView() {
                   {filteredCompanies.map(comp => (
                     <div 
                       key={comp} 
-                      className="px-3 py-1.5 rounded-md bg-white border border-slate-200 text-slate-700 text-sm font-medium select-none"
+                      className="px-3 py-1.5 rounded-md bg-white border border-slate-200 text-slate-700 text-sm font-medium select-none flex items-center justify-between gap-2 group"
                     >
-                      {comp}
+                      <span>{comp}</span>
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <CompanyPresetMenu company={comp} />
+                      </div>
                     </div>
                   ))}
                 </div>
