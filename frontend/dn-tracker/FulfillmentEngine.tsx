@@ -134,18 +134,23 @@ export default function FulfillmentEngine() {
   const activeItems = React.useMemo(() => {
     let result = items;
 
-    // 1. Exclude companies
-    let excludedList = filters.excludedCustomers || [];
+    // 1. Filter by specific included companies (if any)
+    let includedList = filters.includedCustomers || [];
+    let hasPresetOrInclusion = false;
+
     if (filters.activePresetId) {
+      hasPresetOrInclusion = true;
       const activePreset = presets.find(p => p.id === filters.activePresetId);
       if (activePreset) {
-        excludedList = activePreset.excludedCompanies;
+        includedList = activePreset.includedCompanies || [];
       }
+    } else if (includedList.length > 0) {
+      hasPresetOrInclusion = true;
     }
 
-    if (excludedList.length > 0) {
-      const excludedSet = new Set(excludedList);
-      result = result.filter(i => !excludedSet.has(i.customer));
+    if (hasPresetOrInclusion) {
+      const includedSet = new Set(includedList);
+      result = result.filter(i => includedSet.has(i.customer));
     }
 
     // 2. Balance Filter
@@ -216,10 +221,10 @@ export default function FulfillmentEngine() {
             docTitle = filters.customerFilter;
           }
 
-          const excludedList = filters.activePresetId 
-            ? presets.find(p => p.id === filters.activePresetId)?.excludedCompanies || [] 
-            : filters.excludedCustomers || [];
-          printToPdf(printableItems, docTitle, excludedList.length);
+          const includedList = filters.activePresetId 
+            ? presets.find(p => p.id === filters.activePresetId)?.includedCompanies || [] 
+            : filters.includedCustomers || [];
+          printToPdf(printableItems, docTitle, includedList.length);
         }}
       />
 

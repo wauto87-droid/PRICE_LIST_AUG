@@ -24,7 +24,7 @@ const defaultFilters: GlobalFilters = {
   searchQuery: '',
   sortField: '',
   sortOrder: 'asc',
-  excludedCustomers: [],
+  includedCustomers: [],
   activePresetId: null,
   customerFilter: null
 };
@@ -74,16 +74,19 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (savedPresets) {
         try {
           const parsed = JSON.parse(savedPresets);
-          setPresets(parsed);
+          setPresets(parsed.map((p: any) => ({
+            ...p,
+            includedCompanies: p.includedCompanies || p.excludedCompanies || []
+          })));
         } catch (e) {
           console.error('Failed to parse amt-dn-presets', e);
         }
       } else {
         // Init default preset
         const defaultPreset: Preset = {
-          id: 'preset-heavy-industrial',
-          name: 'Exclude Heavy Industrial Clients',
-          excludedCompanies: ['PETROLUBE OIL COMPANY', 'ALHAMRANI COMPANY FOR INDUSTRY']
+          id: 'preset-vip',
+          name: 'VIP Clients',
+          includedCompanies: []
         };
         setPresets([defaultPreset]);
       }

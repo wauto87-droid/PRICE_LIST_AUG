@@ -19,7 +19,7 @@ export default function PresetManagerView() {
     const preset: Preset = {
       id: `preset-${Date.now()}`,
       name: newPresetName.trim(),
-      excludedCompanies: []
+      includedCompanies: []
     };
     setPresets([...presets, preset]);
     setNewPresetName('');
@@ -31,13 +31,13 @@ export default function PresetManagerView() {
     if (activePresetId === id) setActivePresetId(null);
   };
 
-  const toggleExclusion = (presetId: string, company: string) => {
+  const toggleInclusion = (presetId: string, company: string) => {
     setPresets(presets.map(p => {
       if (p.id !== presetId) return p;
-      const excluded = p.excludedCompanies.includes(company)
-        ? p.excludedCompanies.filter(c => c !== company)
-        : [...p.excludedCompanies, company];
-      return { ...p, excludedCompanies: excluded };
+      const included = p.includedCompanies.includes(company)
+        ? p.includedCompanies.filter(c => c !== company)
+        : [...p.includedCompanies, company];
+      return { ...p, includedCompanies: included };
     }));
   };
 
@@ -48,7 +48,7 @@ export default function PresetManagerView() {
           <Filter className="text-blue-600" />
           Filter Presets
         </h2>
-        <p className="text-slate-500">Create presets to quickly hide or show specific companies across all views.</p>
+        <p className="text-slate-500">Create presets to quickly select specific groups of companies to show across all views.</p>
       </div>
 
       <form onSubmit={addPreset} className="flex gap-2 mb-8 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
@@ -148,7 +148,7 @@ export default function PresetManagerView() {
                   </div>
                   <span className="font-semibold text-lg text-slate-800">{preset.name}</span>
                   <span className="text-xs font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded-full ml-2">
-                    {preset.excludedCompanies.length} hidden
+                    {preset.includedCompanies?.length || 0} companies
                   </span>
                 </div>
                 <button 
@@ -163,7 +163,7 @@ export default function PresetManagerView() {
               {isActive && (
                 <div className="mt-4 pt-4 border-t border-slate-200">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                    <span className="font-medium text-slate-700">Select companies to hide from views:</span>
+                    <span className="font-medium text-slate-700">Select companies to include in this preset:</span>
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                       <input 
@@ -183,20 +183,20 @@ export default function PresetManagerView() {
                   ) : (
                     <div className="flex flex-wrap gap-2 max-h-[300px] overflow-y-auto p-1">
                       {filteredCompanies.map(comp => {
-                        const isExcluded = preset.excludedCompanies.includes(comp);
+                        const isIncluded = preset.includedCompanies?.includes(comp) || false;
                         return (
                           <label 
                             key={comp} 
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-all select-none
-                              ${isExcluded 
-                                ? 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100' 
+                              ${isIncluded 
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100' 
                                 : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'} border`}
                           >
                             <input
                               type="checkbox"
-                              className="w-3.5 h-3.5 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
-                              checked={isExcluded}
-                              onChange={() => toggleExclusion(preset.id, comp)}
+                              className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                              checked={isIncluded}
+                              onChange={() => toggleInclusion(preset.id, comp)}
                             />
                             {comp}
                           </label>

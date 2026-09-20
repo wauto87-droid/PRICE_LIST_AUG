@@ -20,7 +20,7 @@ export interface OrderItem {
 export interface Preset {
   id: string;
   name: string;
-  excludedCompanies: string[];
+  includedCompanies: string[];
 }
 
 export interface GlobalFilters {
@@ -29,7 +29,7 @@ export interface GlobalFilters {
   searchQuery: string;
   sortField: 'customer' | 'docNo' | 'date' | 'balance' | '';
   sortOrder: 'asc' | 'desc';
-  excludedCustomers: string[];
+  includedCustomers: string[];
   activePresetId: string | null;
   customerFilter?: string | null;
 }
