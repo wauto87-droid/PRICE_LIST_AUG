@@ -36,20 +36,20 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
       if (p.id === filters.activePresetId) {
         return {
           ...p,
-          includedCompanies: filters.includedCustomers
+          excludedCompanies: filters.excludedCustomers
         };
       }
       return p;
     }));
-    alert('Preset updated with current selections!');
+    alert('Preset updated with current exclusions!');
   };
 
-  const handleClearInclusions = () => {
-    updateFilter('includedCustomers', []);
+  const handleClearExclusions = () => {
+    updateFilter('excludedCustomers', []);
   };
 
-  const handleRemoveInclusion = (company: string) => {
-    updateFilter('includedCustomers', (filters.includedCustomers || []).filter(c => c !== company));
+  const handleRemoveExclusion = (company: string) => {
+    updateFilter('excludedCustomers', filters.excludedCustomers.filter(c => c !== company));
   };
 
   const toggleSortOrder = () => {
@@ -88,7 +88,7 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
             if (val) {
               const preset = presets.find(p => p.id === val);
               if (preset) {
-                updateFilter('includedCustomers', preset.includedCompanies || []);
+                updateFilter('excludedCustomers', preset.excludedCompanies);
               }
             }
           }}
@@ -115,15 +115,15 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
           <BookmarkCheck size={16} /> Update Preset
         </button>
 
-        {/* Inclusions Badge */}
+        {/* Exclusions Badge */}
         <button 
           onClick={() => setShowExclusions(true)}
           style={{ 
             display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', 
-            borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#eff6ff', color: '#1e40af', cursor: 'pointer'
+            borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fef2f2', color: '#991b1b', cursor: 'pointer'
           }}
         >
-          Selected Group ({filters.includedCustomers?.length || 0})
+          Excluded ({filters.excludedCustomers?.length || 0})
         </button>
 
         <div style={{ flex: 1 }} />
@@ -201,17 +201,17 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
         </div>
       </div>
 
-      {/* Inclusion Strip */}
-      {filters.includedCustomers?.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', gap: '8px', backgroundColor: '#f0f9ff', flexWrap: 'wrap', borderTop: '1px solid #e0f2fe' }}>
-          <span style={{ fontSize: '12px', color: '#0369a1', fontWeight: 'bold' }}>Selected:</span>
-          {filters.includedCustomers.map(c => (
-            <span key={c} style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', border: '1px solid #7dd3fc', color: '#0c4a6e' }}>
+      {/* Exclusion Strip */}
+      {filters.excludedCustomers?.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', gap: '8px', backgroundColor: '#fff1f2', flexWrap: 'wrap', borderTop: '1px solid #ffe4e6' }}>
+          <span style={{ fontSize: '12px', color: '#9f1239', fontWeight: 'bold' }}>Excluded:</span>
+          {filters.excludedCustomers.map(c => (
+            <span key={c} style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', border: '1px solid #fda4af', color: '#881337' }}>
               {c}
-              <X size={12} style={{ cursor: 'pointer' }} onClick={() => handleRemoveInclusion(c)} />
+              <X size={12} style={{ cursor: 'pointer' }} onClick={() => handleRemoveExclusion(c)} />
             </span>
           ))}
-          <button onClick={handleClearInclusions} style={{ background: 'none', border: 'none', color: '#0284c7', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer' }}>
+          <button onClick={handleClearExclusions} style={{ background: 'none', border: 'none', color: '#e11d48', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer' }}>
             Clear All
           </button>
         </div>

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTracker } from './TrackerContext';
-import { ListPlus, Plus, Check } from 'lucide-react';
+import { EyeOff, Plus, Check } from 'lucide-react';
 import { Preset } from './types';
 
 interface CompanyPresetMenuProps {
@@ -25,14 +25,14 @@ export default function CompanyPresetMenu({ company }: CompanyPresetMenuProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  const toggleInclusion = (presetId: string, e: React.MouseEvent) => {
+  const toggleExclusion = (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setPresets(presets.map(p => {
       if (p.id !== presetId) return p;
-      const included = p.includedCompanies?.includes(company)
-        ? p.includedCompanies.filter(c => c !== company)
-        : [...(p.includedCompanies || []), company];
-      return { ...p, includedCompanies: included };
+      const excluded = p.excludedCompanies.includes(company)
+        ? p.excludedCompanies.filter(c => c !== company)
+        : [...p.excludedCompanies, company];
+      return { ...p, excludedCompanies: excluded };
     }));
   };
 
@@ -42,7 +42,7 @@ export default function CompanyPresetMenu({ company }: CompanyPresetMenuProps) {
     const preset: Preset = {
       id: `preset-${Date.now()}`,
       name: newPresetName.trim(),
-      includedCompanies: [company]
+      excludedCompanies: [company]
     };
     setPresets([...presets, preset]);
     setNewPresetName('');
@@ -56,15 +56,15 @@ export default function CompanyPresetMenu({ company }: CompanyPresetMenuProps) {
           setIsOpen(!isOpen);
         }}
         className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-        title="Add to group / preset"
+        title="Hide company / Add to preset"
       >
-        <ListPlus size={14} />
+        <EyeOff size={14} />
       </button>
 
       {isOpen && (
         <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-slate-200 shadow-xl rounded-md z-50 py-2 text-sm text-slate-800">
           <div className="px-3 pb-2 border-b border-slate-100 mb-2 font-medium">
-            Include "{company}" in preset:
+            Hide "{company}" in preset:
           </div>
           
           <div className="max-h-48 overflow-y-auto">
@@ -72,16 +72,16 @@ export default function CompanyPresetMenu({ company }: CompanyPresetMenuProps) {
               <div className="px-3 py-2 text-slate-500 italic">No presets exist yet.</div>
             ) : (
               presets.map(p => {
-                const isIncluded = p.includedCompanies?.includes(company);
+                const isExcluded = p.excludedCompanies.includes(company);
                 return (
                   <div 
                     key={p.id} 
                     className="px-3 py-1.5 hover:bg-slate-50 cursor-pointer flex items-center justify-between group"
-                    onClick={(e) => toggleInclusion(p.id, e)}
+                    onClick={(e) => toggleExclusion(p.id, e)}
                   >
                     <span className="truncate pr-2">{p.name}</span>
-                    {isIncluded ? (
-                      <span className="text-blue-600 text-xs font-medium">Included</span>
+                    {isExcluded ? (
+                      <span className="text-red-500 text-xs font-medium">Hidden</span>
                     ) : (
                       <span className="text-slate-300 group-hover:text-slate-400">
                         <Check size={14} opacity={0} className="group-hover:opacity-100 transition-opacity" />
