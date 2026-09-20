@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, X, BookmarkCheck, Upload, Download, Printer, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, X, Upload, Download, Printer, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { useTracker } from './TrackerContext';
-import ExclusionsModal from './ExclusionsModal';
 import { exportToExcelCsv, downloadHtmlReport } from './exportLogic';
 import { OrderItem } from './types';
 
@@ -14,9 +13,8 @@ interface MultiVectorToolbarProps {
 }
 
 export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadClick, onClearClick, onPrintPdfClick }: MultiVectorToolbarProps) {
-  const { filters, updateFilter, presets, setPresets } = useTracker();
+  const { filters, updateFilter, groups } = useTracker();
   const [localSearch, setLocalSearch] = useState(filters.searchQuery);
-  const [showExclusions, setShowExclusions] = useState(false);
 
   // Debounce search
   useEffect(() => {
@@ -29,28 +27,6 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
   const uniqueUnits = useMemo(() => {
     return Array.from(new Set(allRawItems.map(i => i.unit).filter(Boolean))).sort();
   }, [allRawItems]);
-
-  const handleUpdatePreset = () => {
-    if (!filters.activePresetId) return;
-    setPresets(prev => prev.map(p => {
-      if (p.id === filters.activePresetId) {
-        return {
-          ...p,
-          excludedCompanies: filters.excludedCustomers
-        };
-      }
-      return p;
-    }));
-    alert('Preset updated with current exclusions!');
-  };
-
-  const handleClearExclusions = () => {
-    updateFilter('excludedCustomers', []);
-  };
-
-  const handleRemoveExclusion = (company: string) => {
-    updateFilter('excludedCustomers', filters.excludedCustomers.filter(c => c !== company));
-  };
 
   const toggleSortOrder = () => {
     updateFilter('sortOrder', filters.sortOrder === 'asc' ? 'desc' : 'asc');
@@ -79,52 +55,37 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
           )}
         </div>
 
-        {/* Preset Selector */}
-        <select 
-          value={filters.activePresetId || ''} 
-          onChange={(e) => {
-            const val = e.target.value;
-            updateFilter('activePresetId', val || null);
-            if (val) {
-              const preset = presets.find(p => p.id === val);
-              if (preset) {
-                updateFilter('excludedCustomers', preset.excludedCompanies);
-              }
-            }
-          }}
-          style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-        >
-          <option value="">No Preset (Show All)</option>
-          {presets.map(p => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-
-        {/* Update Preset */}
-        <button 
-          onClick={handleUpdatePreset}
-          disabled={!filters.activePresetId}
-          style={{ 
-            display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', 
-            borderRadius: '6px', border: '1px solid #cbd5e1', 
-            backgroundColor: filters.activePresetId ? '#f0fdf4' : '#f1f5f9',
-            color: filters.activePresetId ? '#166534' : '#94a3b8',
-            cursor: filters.activePresetId ? 'pointer' : 'not-allowed'
-          }}
-        >
-          <BookmarkCheck size={16} /> Update Preset
-        </button>
-
-        {/* Exclusions Badge */}
-        <button 
-          onClick={() => setShowExclusions(true)}
-          style={{ 
-            display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', 
-            borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fef2f2', color: '#991b1b', cursor: 'pointer'
-          }}
-        >
-          Excluded ({filters.excludedCustomers?.length || 0})
-        </button>
+        {/* Group Filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px' }}>
+          <select 
+            value={filters.activeGroupId || ''} 
+            onChange={(e) => updateFilter('activeGroupId', e.target.value || null)}
+            style={{ padding: '4px', border: 'none', outline: 'none', background: 'transparent' }}
+          >
+            <option value="">No Group Filter</option>
+            {groups.length > 0 && <optgroup label="Your Groups">
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </optgroup>}
+          </select>
+          
+          {filters.activeGroupId && (
+            <select
+              value={filters.groupFilterMode}
+              onChange={(e) => updateFilter('groupFilterMode', e.target.value as any)}
+              style={{ 
+                padding: '4px', border: 'none', outline: 'none', 
+                backgroundColor: filters.groupFilterMode === 'include' ? '#eff6ff' : '#fef2f2',
+                color: filters.groupFilterMode === 'include' ? '#1e40af' : '#991b1b',
+                borderRadius: '4px', fontWeight: 500
+              }}
+            >
+              <option value="include">Show Only</option>
+              <option value="exclude">Exclude</option>
+            </select>
+          )}
+        </div>
 
         <div style={{ flex: 1 }} />
 
@@ -200,24 +161,6 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
           </button>
         </div>
       </div>
-
-      {/* Exclusion Strip */}
-      {filters.excludedCustomers?.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', gap: '8px', backgroundColor: '#fff1f2', flexWrap: 'wrap', borderTop: '1px solid #ffe4e6' }}>
-          <span style={{ fontSize: '12px', color: '#9f1239', fontWeight: 'bold' }}>Excluded:</span>
-          {filters.excludedCustomers.map(c => (
-            <span key={c} style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', border: '1px solid #fda4af', color: '#881337' }}>
-              {c}
-              <X size={12} style={{ cursor: 'pointer' }} onClick={() => handleRemoveExclusion(c)} />
-            </span>
-          ))}
-          <button onClick={handleClearExclusions} style={{ background: 'none', border: 'none', color: '#e11d48', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer' }}>
-            Clear All
-          </button>
-        </div>
-      )}
-
-      {showExclusions && <ExclusionsModal onClose={() => setShowExclusions(false)} />}
     </div>
   );
 }

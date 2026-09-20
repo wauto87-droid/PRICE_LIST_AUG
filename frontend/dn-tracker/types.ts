@@ -17,19 +17,19 @@ export interface OrderItem {
   rawRow?: any[];
 }
 
-export interface Preset {
+export interface CompanyGroup {
   id: string;
   name: string;
-  excludedCompanies: string[];
+  companies: string[];
 }
 
 export interface GlobalFilters {
   balanceFilter: 'ALL' | 'PENDING' | 'SETTLED';
   unitFilter: string;
   searchQuery: string;
-  sortField: 'customer' | 'docNo' | 'date' | 'balance' | '';
+  sortField: string;
   sortOrder: 'asc' | 'desc';
-  excludedCustomers: string[];
-  activePresetId: string | null;
-  customerFilter?: string | null;
+  activeGroupId: string | null;
+  groupFilterMode: 'include' | 'exclude';
+  customerFilter: string | null;
 }

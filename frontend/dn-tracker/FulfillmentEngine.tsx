@@ -8,14 +8,14 @@ import { useTracker } from './TrackerContext';
 import BoardView from './BoardView';
 import CustomerSheetsView from './CustomerSheetsView';
 import PendingTableView from './PendingTableView';
-import PresetManagerView from './PresetManagerView';
+import GroupManagerView from './GroupManagerView';
 import { OrderItem } from './types';
 import './fulfillment.css';
 
 import MultiVectorToolbar from './MultiVectorToolbar';
 
 export default function FulfillmentEngine() {
-  const { items, setItems, activeTab, setActiveTab, filters, presets } = useTracker();
+  const { items, setItems, activeTab, setActiveTab, filters, groups } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,6 +112,13 @@ export default function FulfillmentEngine() {
         alert("File was parsed, but no valid data rows were found.");
       } else {
         setItems(prev => {
+          if (prev.length > 0) {
+            const replace = window.confirm("You are uploading a new file. Do you want to REPLACE the existing data (Fresh Start)? \n\nClick OK to replace all data.\nClick Cancel to append to existing data.");
+            if (replace) {
+              return newItems;
+            }
+          }
+          
           const existingKeys = new Set(prev.map(p => `${p.docNo}|${p.itemCode}|${p.date}`));
           const trulyNewItems = newItems.filter(n => !existingKeys.has(`${n.docNo}|${n.itemCode}|${n.date}`));
           return [...prev, ...trulyNewItems];
@@ -134,18 +141,17 @@ export default function FulfillmentEngine() {
   const activeItems = React.useMemo(() => {
     let result = items;
 
-    // 1. Exclude companies
-    let excludedList = filters.excludedCustomers || [];
-    if (filters.activePresetId) {
-      const activePreset = presets.find(p => p.id === filters.activePresetId);
-      if (activePreset) {
-        excludedList = activePreset.excludedCompanies;
+    // 1. Group filtering
+    if (filters.activeGroupId) {
+      const activeGroup = groups.find(g => g.id === filters.activeGroupId);
+      if (activeGroup && activeGroup.companies.length > 0) {
+        const groupSet = new Set(activeGroup.companies);
+        if (filters.groupFilterMode === 'include') {
+          result = result.filter(i => groupSet.has(i.customer));
+        } else {
+          result = result.filter(i => !groupSet.has(i.customer));
+        }
       }
-    }
-
-    if (excludedList.length > 0) {
-      const excludedSet = new Set(excludedList);
-      result = result.filter(i => !excludedSet.has(i.customer));
     }
 
     // 2. Balance Filter
@@ -193,7 +199,7 @@ export default function FulfillmentEngine() {
     }
 
     return result;
-  }, [items, filters, presets]);
+  }, [items, filters, groups]);
 
   return (
     <div className="fulfillment-engine">
@@ -206,7 +212,7 @@ export default function FulfillmentEngine() {
         onClearClick={handleClear}
         onPrintPdfClick={() => {
           let printableItems = activeItems;
-          let docTitle = filters.searchQuery || filters.activePresetId || 'All Companies';
+          let docTitle = filters.searchQuery || filters.activeGroupId || 'All Companies';
           
           if (activeTab === 'pending') {
             printableItems = activeItems.filter(i => i.balance >= 1 && i.status === 'pending');
@@ -216,10 +222,8 @@ export default function FulfillmentEngine() {
             docTitle = filters.customerFilter;
           }
 
-          const excludedList = filters.activePresetId 
-            ? presets.find(p => p.id === filters.activePresetId)?.excludedCompanies || [] 
-            : filters.excludedCustomers || [];
-          printToPdf(printableItems, docTitle, excludedList.length);
+          const filteredOutCount = items.length - activeItems.length;
+          printToPdf(printableItems, docTitle, filteredOutCount);
         }}
       />
 
@@ -227,14 +231,14 @@ export default function FulfillmentEngine() {
         <button className={`fe-tab ${activeTab === 'kanban' ? 'active' : ''}`} onClick={() => setActiveTab('kanban')}>Kanban Board</button>
         <button className={`fe-tab ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>Customer Sheets</button>
         <button className={`fe-tab ${activeTab === 'pending' ? 'active' : ''}`} onClick={() => setActiveTab('pending')}>Pending Table</button>
-        <button className={`fe-tab ${activeTab === 'presets' ? 'active' : ''}`} onClick={() => setActiveTab('presets')}><Settings size={14} style={{display:'inline', marginRight: 4, verticalAlign: 'middle'}}/> Presets</button>
+        <button className={`fe-tab ${activeTab === 'presets' ? 'active' : ''}`} onClick={() => setActiveTab('presets')}><Settings size={14} style={{display:'inline', marginRight: 4, verticalAlign: 'middle'}}/> Groups</button>
       </div>
 
       <div className="fe-viewport">
         {activeTab === 'kanban' && <BoardView activeItems={activeItems} />}
         {activeTab === 'customers' && <CustomerSheetsView activeItems={activeItems} />}
         {activeTab === 'pending' && <PendingTableView activeItems={activeItems} />}
-        {activeTab === 'presets' && <PresetManagerView />}
+        {activeTab === 'presets' && <GroupManagerView />}
       </div>
     </div>
   );
