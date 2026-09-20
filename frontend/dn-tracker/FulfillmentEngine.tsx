@@ -8,14 +8,14 @@ import { useTracker } from './TrackerContext';
 import BoardView from './BoardView';
 import CustomerSheetsView from './CustomerSheetsView';
 import PendingTableView from './PendingTableView';
-import GroupManagerView from './GroupManagerView';
+import PresetManagerView from './PresetManagerView';
 import { OrderItem } from './types';
 import './fulfillment.css';
 
 import MultiVectorToolbar from './MultiVectorToolbar';
 
 export default function FulfillmentEngine() {
-  const { items, setItems, activeTab, setActiveTab, filters, groups } = useTracker();
+  const { items, setItems, activeTab, setActiveTab, filters, presets } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,23 +141,23 @@ export default function FulfillmentEngine() {
   const activeItems = React.useMemo(() => {
     let result = items;
 
-    // 1. Group filtering
-    if (filters.activeGroupId) {
-      const activeGroup = groups.find(g => g.id === filters.activeGroupId);
-      if (activeGroup && activeGroup.companies.length > 0) {
-        const groupSet = new Set(activeGroup.companies);
-        if (filters.groupFilterMode === 'include') {
-          result = result.filter(i => groupSet.has(i.customer));
-        } else {
-          result = result.filter(i => !groupSet.has(i.customer));
-        }
-      }
+    const activePreset = filters.activePresetId ? presets.find(p => p.id === filters.activePresetId) : null;
+
+    // 1. Preset exclusions
+    if (activePreset && activePreset.excludedCompanies.length > 0) {
+      const excludedSet = new Set(activePreset.excludedCompanies);
+      result = result.filter(i => !excludedSet.has(i.customer));
     }
 
     // 2. Balance Filter
-    if (filters.balanceFilter === 'PENDING') {
+    let activeBalanceFilter = filters.balanceFilter;
+    if (activePreset && activePreset.balanceFilterOverride) {
+      activeBalanceFilter = activePreset.balanceFilterOverride;
+    }
+
+    if (activeBalanceFilter === 'PENDING') {
       result = result.filter(i => i.balance >= 1);
-    } else if (filters.balanceFilter === 'SETTLED') {
+    } else if (activeBalanceFilter === 'SETTLED') {
       result = result.filter(i => i.balance === 0);
     }
 
@@ -199,7 +199,7 @@ export default function FulfillmentEngine() {
     }
 
     return result;
-  }, [items, filters, groups]);
+  }, [items, filters, presets]);
 
   return (
     <div className="fulfillment-engine">
@@ -212,7 +212,7 @@ export default function FulfillmentEngine() {
         onClearClick={handleClear}
         onPrintPdfClick={() => {
           let printableItems = activeItems;
-          let docTitle = filters.searchQuery || filters.activeGroupId || 'All Companies';
+          let docTitle = filters.searchQuery || filters.activePresetId || 'All Companies';
           
           if (activeTab === 'pending') {
             printableItems = activeItems.filter(i => i.balance >= 1 && i.status === 'pending');
@@ -231,14 +231,14 @@ export default function FulfillmentEngine() {
         <button className={`fe-tab ${activeTab === 'kanban' ? 'active' : ''}`} onClick={() => setActiveTab('kanban')}>Kanban Board</button>
         <button className={`fe-tab ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>Customer Sheets</button>
         <button className={`fe-tab ${activeTab === 'pending' ? 'active' : ''}`} onClick={() => setActiveTab('pending')}>Pending Table</button>
-        <button className={`fe-tab ${activeTab === 'presets' ? 'active' : ''}`} onClick={() => setActiveTab('presets')}><Settings size={14} style={{display:'inline', marginRight: 4, verticalAlign: 'middle'}}/> Groups</button>
+        <button className={`fe-tab ${activeTab === 'presets' ? 'active' : ''}`} onClick={() => setActiveTab('presets')}><Settings size={14} style={{display:'inline', marginRight: 4, verticalAlign: 'middle'}}/> Profiles</button>
       </div>
 
       <div className="fe-viewport">
         {activeTab === 'kanban' && <BoardView activeItems={activeItems} />}
         {activeTab === 'customers' && <CustomerSheetsView activeItems={activeItems} />}
         {activeTab === 'pending' && <PendingTableView activeItems={activeItems} />}
-        {activeTab === 'presets' && <GroupManagerView />}
+        {activeTab === 'presets' && <PresetManagerView />}
       </div>
     </div>
   );

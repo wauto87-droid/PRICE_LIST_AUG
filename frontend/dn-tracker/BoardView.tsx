@@ -1,6 +1,5 @@
-'use client';
-import React from 'react';
-import { DndContext, DragEndEvent, closestCorners, useDroppable } from '@dnd-kit/core';
+import React, { useState } from 'react';
+import { DndContext, DragEndEvent, DragStartEvent, closestCorners, useDroppable, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useTracker } from './TrackerContext';
@@ -14,17 +13,9 @@ const columns = [
   { id: 'completed', title: 'Fully Invoiced', color: 'emerald' },
 ] as const;
 
-function SortableItem({ item }: { item: OrderItem }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
-  const style = { 
-    transform: CSS.Transform.toString(transform), 
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 999 : 1
-  };
-
+function KanbanCard({ item, isOverlay = false }: { item: OrderItem, isOverlay?: boolean }) {
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="kanban-card group">
+    <div className={`kanban-card group ${isOverlay ? 'shadow-2xl ring-2 ring-blue-500 cursor-grabbing' : 'cursor-grab'}`}>
       <div className="card-header">
         <strong>{item.docNo}</strong>
         <span className="date">{item.date}</span>
@@ -38,6 +29,23 @@ function SortableItem({ item }: { item: OrderItem }) {
         <span>Inv: {item.invoiced}</span>
         <span>Bal: {item.balance}</span>
       </div>
+    </div>
+  );
+}
+
+function SortableItem({ item }: { item: OrderItem }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const style: React.CSSProperties = { 
+    transform: CSS.Transform.toString(transform), 
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    zIndex: isDragging ? 999 : 1,
+    touchAction: 'none'
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <KanbanCard item={item} />
     </div>
   );
 }
@@ -59,8 +67,14 @@ interface BoardViewProps {
 
 export default function BoardView({ activeItems }: BoardViewProps) {
   const { items, setItems } = useTracker();
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
+  };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
     const { active, over } = event;
     if (!over) return;
 
@@ -101,10 +115,11 @@ export default function BoardView({ activeItems }: BoardViewProps) {
   };
 
   const getItemsByStatus = (status: OrderItem['status']) => activeItems.filter((i) => i.status === status);
+  const activeDragItem = activeId ? items.find(i => i.id === activeId) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <DndContext collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+      <DndContext collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         <div className="kanban-board">
           {columns.map((col) => {
             const colItems = getItemsByStatus(col.id);
@@ -123,6 +138,9 @@ export default function BoardView({ activeItems }: BoardViewProps) {
             );
           })}
         </div>
+        <DragOverlay>
+          {activeDragItem ? <KanbanCard item={activeDragItem} isOverlay /> : null}
+        </DragOverlay>
       </DndContext>
     </div>
   );

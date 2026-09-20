@@ -13,7 +13,7 @@ interface MultiVectorToolbarProps {
 }
 
 export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadClick, onClearClick, onPrintPdfClick }: MultiVectorToolbarProps) {
-  const { filters, updateFilter, groups } = useTracker();
+  const { filters, updateFilter, presets, setPresets } = useTracker();
   const [localSearch, setLocalSearch] = useState(filters.searchQuery);
 
   // Debounce search
@@ -30,6 +30,18 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
 
   const toggleSortOrder = () => {
     updateFilter('sortOrder', filters.sortOrder === 'asc' ? 'desc' : 'asc');
+  };
+
+  const activePreset = presets.find(p => p.id === filters.activePresetId);
+
+  const removeExclusion = (company: string) => {
+    if (!activePreset) return;
+    setPresets(prev => prev.map(p => {
+      if (p.id === activePreset.id) {
+        return { ...p, excludedCompanies: p.excludedCompanies.filter(c => c !== company) };
+      }
+      return p;
+    }));
   };
 
   return (
@@ -55,36 +67,20 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
           )}
         </div>
 
-        {/* Group Filter */}
+        {/* Preset Dropdown */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px' }}>
           <select 
-            value={filters.activeGroupId || ''} 
-            onChange={(e) => updateFilter('activeGroupId', e.target.value || null)}
+            value={filters.activePresetId || ''} 
+            onChange={(e) => updateFilter('activePresetId', e.target.value || null)}
             style={{ padding: '4px', border: 'none', outline: 'none', background: 'transparent' }}
           >
-            <option value="">No Group Filter</option>
-            {groups.length > 0 && <optgroup label="Your Groups">
-              {groups.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
+            <option value="">No Profile (Raw)</option>
+            {presets.length > 0 && <optgroup label="Profiles">
+              {presets.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </optgroup>}
           </select>
-          
-          {filters.activeGroupId && (
-            <select
-              value={filters.groupFilterMode}
-              onChange={(e) => updateFilter('groupFilterMode', e.target.value as any)}
-              style={{ 
-                padding: '4px', border: 'none', outline: 'none', 
-                backgroundColor: filters.groupFilterMode === 'include' ? '#eff6ff' : '#fef2f2',
-                color: filters.groupFilterMode === 'include' ? '#1e40af' : '#991b1b',
-                borderRadius: '4px', fontWeight: 500
-              }}
-            >
-              <option value="include">Show Only</option>
-              <option value="exclude">Exclude</option>
-            </select>
-          )}
         </div>
 
         <div style={{ flex: 1 }} />
@@ -111,21 +107,29 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
         
         {/* Balance Segmented Control */}
         <div style={{ display: 'flex', backgroundColor: '#e2e8f0', borderRadius: '6px', padding: '2px' }}>
-          {(['ALL', 'PENDING', 'SETTLED'] as const).map(opt => (
-            <button 
-              key={opt}
-              onClick={() => updateFilter('balanceFilter', opt)}
-              style={{
-                padding: '4px 12px', borderRadius: '4px', border: 'none', fontSize: '13px', fontWeight: 500, cursor: 'pointer',
-                backgroundColor: filters.balanceFilter === opt ? 
-                  (opt === 'PENDING' ? '#fbbf24' : opt === 'SETTLED' ? '#34d399' : 'white') 
-                  : 'transparent',
-                color: filters.balanceFilter === opt ? (opt === 'ALL' ? '#0f172a' : '#fff') : '#64748b'
-              }}
-            >
-              {opt === 'ALL' ? 'All Records' : opt === 'PENDING' ? 'Balance ≥ 1' : 'Balance == 0'}
-            </button>
-          ))}
+          {(['ALL', 'PENDING', 'SETTLED'] as const).map(opt => {
+            const isOverride = activePreset?.balanceFilterOverride === opt;
+            const isSelected = filters.balanceFilter === opt;
+            
+            return (
+              <button 
+                key={opt}
+                onClick={() => updateFilter('balanceFilter', opt)}
+                disabled={!!activePreset?.balanceFilterOverride}
+                style={{
+                  padding: '4px 12px', borderRadius: '4px', border: 'none', fontSize: '13px', fontWeight: 500, 
+                  cursor: activePreset?.balanceFilterOverride ? 'not-allowed' : 'pointer',
+                  backgroundColor: isSelected ? 
+                    (opt === 'PENDING' ? '#fbbf24' : opt === 'SETTLED' ? '#34d399' : 'white') 
+                    : 'transparent',
+                  color: isSelected ? (opt === 'ALL' ? '#0f172a' : '#fff') : '#64748b',
+                  opacity: activePreset?.balanceFilterOverride && !isOverride ? 0.5 : 1
+                }}
+              >
+                {opt === 'ALL' ? 'All Records' : opt === 'PENDING' ? 'Balance ≥ 1' : 'Balance == 0'}
+              </button>
+            );
+          })}
         </div>
 
         {/* Unit Selector */}
@@ -160,6 +164,21 @@ export default function MultiVectorToolbar({ activeItems, allRawItems, onUploadC
             {filters.sortOrder === 'asc' ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
           </button>
         </div>
+
+        {/* Active Exclusions Chip Strip */}
+        {activePreset && activePreset.excludedCompanies.length > 0 && (
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginLeft: 'auto' }}>
+            <span style={{ fontSize: '12px', color: '#64748b', alignSelf: 'center', marginRight: '4px' }}>Excluded:</span>
+            {activePreset.excludedCompanies.map(company => (
+              <div key={company} style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 500 }}>
+                {company}
+                <button onClick={() => removeExclusion(company)} style={{ background: 'none', border: 'none', padding: '0 0 0 4px', cursor: 'pointer', color: '#991b1b' }}>
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

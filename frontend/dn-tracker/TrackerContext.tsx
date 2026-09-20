@@ -1,16 +1,14 @@
 'use client';
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { OrderItem, CompanyGroup, GlobalFilters } from './types';
+import { OrderItem, Preset, GlobalFilters } from './types';
 
 interface TrackerContextType {
   items: OrderItem[];
   setItems: React.Dispatch<React.SetStateAction<OrderItem[]>>;
-  groups: CompanyGroup[];
-  setGroups: React.Dispatch<React.SetStateAction<CompanyGroup[]>>;
-  activeGroupId: string | null;
-  setActiveGroupId: (id: string | null) => void;
-  groupFilterMode: 'include' | 'exclude';
-  setGroupFilterMode: (mode: 'include' | 'exclude') => void;
+  presets: Preset[];
+  setPresets: React.Dispatch<React.SetStateAction<Preset[]>>;
+  activePresetId: string | null;
+  setActivePresetId: (id: string | null) => void;
   activeTab: string;
   setActiveTab: React.Dispatch<React.SetStateAction<string>>;
   filters: GlobalFilters;
@@ -26,26 +24,26 @@ const defaultFilters: GlobalFilters = {
   searchQuery: '',
   sortField: '',
   sortOrder: 'asc',
-  activeGroupId: null,
-  groupFilterMode: 'exclude',
+  activePresetId: 'default',
   customerFilter: null
 };
 
+const builtInPresets: Preset[] = [
+  { id: 'default', name: 'Standard View (Default)', excludedCompanies: [] },
+  { id: 'strict_pending', name: 'Balance ≥ 1 Only', excludedCompanies: [], balanceFilterOverride: 'PENDING' },
+  { id: 'heavy_industrial', name: 'Exclude Heavy Industrial Clients', excludedCompanies: ['AL ENMAA FOOD COMPANY LIMITED', 'AL ASISAT'] }
+];
+
 export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<OrderItem[]>([]);
-  const [groups, setGroups] = useState<CompanyGroup[]>([]);
+  const [presets, setPresets] = useState<Preset[]>(builtInPresets);
   const [activeTab, setActiveTab] = useState<string>('kanban');
   const [filters, setFilters] = useState<GlobalFilters>(defaultFilters);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  const activeGroupId = filters.activeGroupId;
-  const setActiveGroupId = (id: string | null) => {
-    setFilters(prev => ({ ...prev, activeGroupId: id }));
-  };
-
-  const groupFilterMode = filters.groupFilterMode;
-  const setGroupFilterMode = (mode: 'include' | 'exclude') => {
-    setFilters(prev => ({ ...prev, groupFilterMode: mode }));
+  const activePresetId = filters.activePresetId;
+  const setActivePresetId = (id: string | null) => {
+    setFilters(prev => ({ ...prev, activePresetId: id }));
   };
 
   const updateFilter = <K extends keyof GlobalFilters>(key: K, value: GlobalFilters[K]) => {
@@ -53,7 +51,6 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   useEffect(() => {
-    // Attempt to load items
     const savedItems = localStorage.getItem('amt-dn-tracker-items');
     if (savedItems) {
       try {
@@ -63,24 +60,24 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
-    // Attempt to load unified filters v2
-    const savedFilters = localStorage.getItem('kanban_persistent_active_filters_v2');
+    const savedFilters = localStorage.getItem('kanban_persistent_active_filters_v3');
     if (savedFilters) {
       try {
         setFilters({ ...defaultFilters, ...JSON.parse(savedFilters) });
       } catch (e) {
-        console.error('Failed to parse kanban_persistent_active_filters_v2', e);
+        console.error('Failed to parse kanban_persistent_active_filters_v3', e);
       }
-    } else {
-      // Migration from old presets to unified logic
-      const savedGroups = localStorage.getItem('amt-dn-groups');
-      if (savedGroups) {
-        try {
-          const parsed = JSON.parse(savedGroups);
-          setGroups(parsed);
-        } catch (e) {
-          console.error('Failed to parse amt-dn-groups', e);
+    }
+
+    const savedPresets = localStorage.getItem('kanban_persistent_saved_profiles_v2');
+    if (savedPresets) {
+      try {
+        const parsed = JSON.parse(savedPresets);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPresets(parsed);
         }
+      } catch (e) {
+        console.error('Failed to parse kanban_persistent_saved_profiles_v2', e);
       }
     }
     
@@ -92,29 +89,28 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
       try {
         localStorage.setItem('amt-dn-tracker-items', JSON.stringify(items));
       } catch (e) {
-        console.error('Failed to save items to localStorage', e);
+        console.error('Failed to save items', e);
       }
     }
   }, [items, isLoaded]);
 
   useEffect(() => {
     if (isLoaded) {
-      localStorage.setItem('kanban_persistent_active_filters_v2', JSON.stringify(filters));
+      localStorage.setItem('kanban_persistent_active_filters_v3', JSON.stringify(filters));
     }
   }, [filters, isLoaded]);
 
   useEffect(() => {
     if (isLoaded) {
-      localStorage.setItem('amt-dn-groups', JSON.stringify(groups));
+      localStorage.setItem('kanban_persistent_saved_profiles_v2', JSON.stringify(presets));
     }
-  }, [groups, isLoaded]);
+  }, [presets, isLoaded]);
 
   return (
     <TrackerContext.Provider value={{ 
       items, setItems, 
-      groups, setGroups, 
-      activeGroupId, setActiveGroupId, 
-      groupFilterMode, setGroupFilterMode,
+      presets, setPresets, 
+      activePresetId, setActivePresetId, 
       activeTab, setActiveTab,
       filters, setFilters, updateFilter
     }}>

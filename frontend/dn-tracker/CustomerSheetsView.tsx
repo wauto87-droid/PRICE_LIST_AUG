@@ -1,14 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
-import CompanyGroupMenu from './CompanyGroupMenu';
 
 interface CustomerSheetsViewProps {
   activeItems: OrderItem[];
 }
 
 export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewProps) {
-  const { filters, updateFilter, groups } = useTracker();
+  const { filters, updateFilter, presets } = useTracker();
   const selectedCustomer = filters.customerFilter || null;
   const [sidebarSearch, setSidebarSearch] = useState('');
 
@@ -37,13 +36,13 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0 }}>Directory</h3>
           <select 
-            value={filters.activeGroupId || ''} 
-            onChange={e => updateFilter('activeGroupId', e.target.value || null)}
+            value={filters.activePresetId || ''} 
+            onChange={e => updateFilter('activePresetId', e.target.value || null)}
             style={{ padding: '0.25rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.8rem', maxWidth: '120px' }}
           >
-            <option value="">No Group</option>
-            {groups.map(g => (
-              <option key={g.id} value={g.id}>{g.name}</option>
+            <option value="">No Profile</option>
+            {presets.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
         </div>
@@ -71,9 +70,6 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                  <CompanyGroupMenu company={c.name} />
-                </div>
                 <span className="badge">{c.count}</span>
               </div>
             </li>

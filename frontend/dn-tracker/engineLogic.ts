@@ -48,19 +48,18 @@ export const transitionItemStatus = (item: OrderItem, targetStatus: OrderItem['s
     case 'completed':
       updated.invoiced = qty;
       updated.balance = 0;
-      updated.deliveryRet = 0;
-      updated.invoiceRet = 0;
+      // Do not wipe deliveryRet or invoiceRet
       break;
     case 'pending':
       updated.balance = qty;
       updated.invoiced = 0;
-      updated.deliveryRet = 0;
-      updated.invoiceRet = 0;
+      // Do not wipe deliveryRet or invoiceRet
       break;
     case 'returned':
       updated.deliveryRet = qty;
       updated.balance = 0;
       updated.invoiced = 0;
+      // Do not wipe invoiceRet
       break;
     case 'partial':
       const half = Math.max(1, Math.floor(qty / 2));

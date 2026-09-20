@@ -17,10 +17,11 @@ export interface OrderItem {
   rawRow?: any[];
 }
 
-export interface CompanyGroup {
+export interface Preset {
   id: string;
   name: string;
-  companies: string[];
+  excludedCompanies: string[];
+  balanceFilterOverride?: 'ALL' | 'PENDING' | 'SETTLED';
 }
 
 export interface GlobalFilters {
@@ -29,7 +30,6 @@ export interface GlobalFilters {
   searchQuery: string;
   sortField: string;
   sortOrder: 'asc' | 'desc';
-  activeGroupId: string | null;
-  groupFilterMode: 'include' | 'exclude';
+  activePresetId: string | null;
   customerFilter: string | null;
 }
