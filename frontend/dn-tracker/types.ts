@@ -22,3 +22,13 @@ export interface Preset {
   name: string;
   excludedCompanies: string[];
 }
+
+export interface GlobalFilters {
+  balanceFilter: 'ALL' | 'PENDING' | 'SETTLED';
+  unitFilter: string;
+  searchQuery: string;
+  sortField: 'customer' | 'docNo' | 'date' | 'balance' | '';
+  sortOrder: 'asc' | 'desc';
+  excludedCustomers: string[];
+  activePresetId: string | null;
+}

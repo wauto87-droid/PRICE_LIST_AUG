@@ -12,8 +12,10 @@ import PresetManagerView from './PresetManagerView';
 import { OrderItem } from './types';
 import './fulfillment.css';
 
+import MultiVectorToolbar from './MultiVectorToolbar';
+
 export default function FulfillmentEngine() {
-  const { items, setItems, activeTab, setActiveTab } = useTracker();
+  const { items, setItems, activeTab, setActiveTab, filters } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,8 +72,6 @@ export default function FulfillmentEngine() {
         };
 
         const docNo = val(indices.docNo);
-        // Fallback: if docNo is empty, maybe we should just skip, but if qty exists we might want it?
-        // Let's require docNo or itemCode
         const itemCode = val(indices.itemCode);
         if (!docNo && !itemCode) continue; // skip empty rows
 
@@ -121,42 +121,83 @@ export default function FulfillmentEngine() {
       console.error("Upload error:", err);
       alert("Error reading file: " + (err.message || "Unknown error") + ". If this is an old .xls file, please resave it as .xlsx and try again.");
     } finally {
-      // Clear the input value so the same file can be uploaded again if needed
       if (e.target) {
         e.target.value = '';
       }
     }
   };
 
+  const handleClear = () => {
+    if(window.confirm('Are you sure you want to clear all data?')) setItems([]);
+  };
+
   const activeItems = React.useMemo(() => {
-    const { presets, activePresetId } = useTracker();
-    const activePreset = presets.find(p => p.id === activePresetId);
-    if (!activePreset) return items;
-    return items.filter(i => !activePreset.excludedCompanies.includes(i.customer));
-  }, [items]);
+    let result = items;
+
+    // 1. Exclude companies
+    if (filters.excludedCustomers?.length > 0) {
+      const excludedSet = new Set(filters.excludedCustomers);
+      result = result.filter(i => !excludedSet.has(i.customer));
+    }
+
+    // 2. Balance Filter
+    if (filters.balanceFilter === 'PENDING') {
+      result = result.filter(i => i.balance >= 1);
+    } else if (filters.balanceFilter === 'SETTLED') {
+      result = result.filter(i => i.balance === 0);
+    }
+
+    // 3. Unit Filter
+    if (filters.unitFilter) {
+      result = result.filter(i => i.unit === filters.unitFilter);
+    }
+
+    // 4. Search Filter
+    if (filters.searchQuery) {
+      const query = filters.searchQuery.toLowerCase();
+      result = result.filter(i => 
+        String(i.docNo).toLowerCase().includes(query) ||
+        (i.customer || '').toLowerCase().includes(query) ||
+        (i.itemCode || '').toLowerCase().includes(query) ||
+        (i.itemName || '').toLowerCase().includes(query)
+      );
+    }
+
+    // 5. Sort
+    if (filters.sortField) {
+      result = [...result].sort((a, b) => {
+        let valA: any = a[filters.sortField as keyof OrderItem];
+        let valB: any = b[filters.sortField as keyof OrderItem];
+        
+        // Handle numeric parsing if docNo or balance
+        if (filters.sortField === 'balance' || filters.sortField === 'docNo') {
+          valA = parseFloat(valA) || 0;
+          valB = parseFloat(valB) || 0;
+        } else if (typeof valA === 'string' && typeof valB === 'string') {
+          valA = valA.toLowerCase();
+          valB = valB.toLowerCase();
+        }
+
+        if (valA < valB) return filters.sortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return filters.sortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return result;
+  }, [items, filters]);
 
   return (
     <div className="fulfillment-engine">
-      <div className="fe-topbar">
-        <div className="fe-brand">
-          <h2>Find Non-Invoiced Companies from DN</h2>
-        </div>
-        <div className="fe-actions">
-          <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
-          <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
-            <Upload size={16} /> Upload Data
-          </button>
-          <button onClick={() => { if(window.confirm('Are you sure you want to clear all data?')) setItems([]); }} className="btn btn-secondary" style={{ color: 'red' }}>
-            <Trash2 size={16} /> Clear Data
-          </button>
-          <button onClick={() => exportToExcelCsv(activeItems, 'Export')} className="btn btn-secondary">
-            <Download size={16} /> Export CSV
-          </button>
-          <button onClick={printToPdf} className="btn btn-secondary">
-            <Printer size={16} /> Print PDF
-          </button>
-        </div>
-      </div>
+      <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+      
+      <MultiVectorToolbar 
+        activeItems={activeItems}
+        allRawItems={items}
+        onUploadClick={() => fileInputRef.current?.click()}
+        onClearClick={handleClear}
+        onPrintPdfClick={() => printToPdf(activeItems, filters.searchQuery || filters.activePresetId || 'All Companies', filters.excludedCustomers?.length || 0)}
+      />
 
       <div className="fe-tabs">
         <button className={`fe-tab ${activeTab === 'kanban' ? 'active' : ''}`} onClick={() => setActiveTab('kanban')}>Kanban Board</button>
@@ -166,9 +207,9 @@ export default function FulfillmentEngine() {
       </div>
 
       <div className="fe-viewport">
-        {activeTab === 'kanban' && <BoardView />}
-        {activeTab === 'customers' && <CustomerSheetsView />}
-        {activeTab === 'pending' && <PendingTableView />}
+        {activeTab === 'kanban' && <BoardView activeItems={activeItems} />}
+        {activeTab === 'customers' && <CustomerSheetsView activeItems={activeItems} />}
+        {activeTab === 'pending' && <PendingTableView activeItems={activeItems} />}
         {activeTab === 'presets' && <PresetManagerView />}
       </div>
     </div>

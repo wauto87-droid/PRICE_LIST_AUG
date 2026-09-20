@@ -1,6 +1,6 @@
 'use client';
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { OrderItem, Preset } from './types';
+import { OrderItem, Preset, GlobalFilters } from './types';
 
 interface TrackerContextType {
   items: OrderItem[];
@@ -11,33 +11,90 @@ interface TrackerContextType {
   setActivePresetId: React.Dispatch<React.SetStateAction<string | null>>;
   activeTab: string;
   setActiveTab: React.Dispatch<React.SetStateAction<string>>;
+  filters: GlobalFilters;
+  setFilters: React.Dispatch<React.SetStateAction<GlobalFilters>>;
+  updateFilter: <K extends keyof GlobalFilters>(key: K, value: GlobalFilters[K]) => void;
 }
 
 const TrackerContext = createContext<TrackerContextType | undefined>(undefined);
 
+const defaultFilters: GlobalFilters = {
+  balanceFilter: 'ALL',
+  unitFilter: '',
+  searchQuery: '',
+  sortField: '',
+  sortOrder: 'asc',
+  excludedCustomers: [],
+  activePresetId: null
+};
+
 export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<OrderItem[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
-  const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('kanban');
+  const [filters, setFilters] = useState<GlobalFilters>(defaultFilters);
+
+  // Backward compatibility alias for parts of code that used it
+  const activePresetId = filters.activePresetId;
+  const setActivePresetId = (idOrUpdater: React.SetStateAction<string | null>) => {
+    setFilters(prev => ({
+      ...prev,
+      activePresetId: typeof idOrUpdater === 'function' ? idOrUpdater(prev.activePresetId) : idOrUpdater
+    }));
+  };
+
+  const updateFilter = <K extends keyof GlobalFilters>(key: K, value: GlobalFilters[K]) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
 
   useEffect(() => {
-    const savedPresets = localStorage.getItem('amt-dn-presets');
-    if (savedPresets) {
+    // Attempt to load unified filters v2
+    const savedFilters = localStorage.getItem('kanban_persistent_active_filters_v2');
+    if (savedFilters) {
       try {
-        setPresets(JSON.parse(savedPresets));
+        setFilters({ ...defaultFilters, ...JSON.parse(savedFilters) });
       } catch (e) {
-        console.error('Failed to parse presets', e);
+        console.error('Failed to parse kanban_persistent_active_filters_v2', e);
+      }
+    } else {
+      // Migration from old presets to unified logic
+      const savedPresets = localStorage.getItem('amt-dn-presets');
+      if (savedPresets) {
+        try {
+          const parsed = JSON.parse(savedPresets);
+          setPresets(parsed);
+        } catch (e) {
+          console.error('Failed to parse amt-dn-presets', e);
+        }
+      } else {
+        // Init default preset
+        const defaultPreset: Preset = {
+          id: 'preset-heavy-industrial',
+          name: 'Exclude Heavy Industrial Clients',
+          excludedCompanies: ['PETROLUBE OIL COMPANY', 'ALHAMRANI COMPANY FOR INDUSTRY']
+        };
+        setPresets([defaultPreset]);
       }
     }
   }, []);
+
+  useEffect(() => {
+    // Only persist if we have modified anything
+    localStorage.setItem('kanban_persistent_active_filters_v2', JSON.stringify(filters));
+  }, [filters]);
 
   useEffect(() => {
     localStorage.setItem('amt-dn-presets', JSON.stringify(presets));
   }, [presets]);
 
   return (
-    <TrackerContext.Provider value={{ items, setItems, presets, setPresets, activePresetId, setActivePresetId, activeTab, setActiveTab }}>
+    <TrackerContext.Provider value={{ 
+      items, setItems, 
+      presets, setPresets, 
+      activePresetId, setActivePresetId, 
+      activeTab, setActiveTab,
+      filters, setFilters, updateFilter
+    }}>
       {children}
     </TrackerContext.Provider>
   );
