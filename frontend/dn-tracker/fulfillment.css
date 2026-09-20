@@ -223,12 +223,14 @@
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
 }
 .data-table th, .data-table td {
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 0.5rem;
   text-align: left;
   border-bottom: 1px solid #e2e8f0;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  word-break: break-word;
 }
 .data-table th {
   background-color: #f8fafc;

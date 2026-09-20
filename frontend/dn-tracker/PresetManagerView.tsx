@@ -78,13 +78,48 @@ export default function PresetManagerView() {
               : 'border-transparent bg-white shadow-sm hover:border-slate-300 hover:shadow-md'
           }`}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mb-2">
             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${activePresetId === null ? 'border-blue-500' : 'border-slate-300'}`}>
               {activePresetId === null && <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
             </div>
             <span className="font-semibold text-lg text-slate-800">Show All Companies</span>
             <span className="text-sm text-slate-500 ml-auto">Default</span>
           </div>
+
+          {activePresetId === null && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                <span className="font-medium text-slate-700">All available companies:</span>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input 
+                    type="text"
+                    placeholder="Search companies..."
+                    value={companySearch}
+                    onChange={e => setCompanySearch(e.target.value)}
+                    className="pl-9 pr-4 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-64"
+                  />
+                </div>
+              </div>
+
+              {filteredCompanies.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 bg-slate-50 rounded-lg border border-slate-100">
+                  No companies match your search or no data uploaded yet.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 max-h-[300px] overflow-y-auto p-1">
+                  {filteredCompanies.map(comp => (
+                    <div 
+                      key={comp} 
+                      className="px-3 py-1.5 rounded-md bg-white border border-slate-200 text-slate-700 text-sm font-medium select-none"
+                    >
+                      {comp}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Dynamic Presets */}

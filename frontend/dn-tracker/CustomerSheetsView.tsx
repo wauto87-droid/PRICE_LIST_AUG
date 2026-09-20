@@ -1,7 +1,7 @@
-'use client';
 import React, { useMemo, useState } from 'react';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
+import CompanyPresetMenu from './CompanyPresetMenu';
 
 interface CustomerSheetsViewProps {
   activeItems: OrderItem[];
@@ -93,7 +93,14 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
                   <tr key={item.id}>
                     <td style={{ whiteSpace: 'nowrap' }}>{item.date}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{item.docNo}</td>
-                    <td>{item.customer}{item.customerCode ? ` (${item.customerCode})` : ''}</td>
+                    <td className="group relative pr-6">
+                      <div className="flex items-center justify-between">
+                        <span className="truncate">{item.customer}{item.customerCode ? ` (${item.customerCode})` : ''}</span>
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-1">
+                          <CompanyPresetMenu company={item.customer} />
+                        </div>
+                      </div>
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>{item.itemCode}</td>
                     <td>{item.itemName}</td>
                     <td>{item.qty}</td>
