@@ -6,8 +6,10 @@ import { Preset } from './types';
 export default function PresetManagerView() {
   const { presets, setPresets, activePresetId, setActivePresetId, items } = useTracker();
   const [newPresetName, setNewPresetName] = useState('');
+  const [companySearch, setCompanySearch] = useState('');
 
   const uniqueCompanies = Array.from(new Set(items.map(i => i.customer))).filter(Boolean).sort();
+  const filteredCompanies = uniqueCompanies.filter(c => c.toLowerCase().includes(companySearch.toLowerCase()));
 
   const addPreset = () => {
     if (!newPresetName.trim()) return;
@@ -75,10 +77,21 @@ export default function PresetManagerView() {
               <button className="btn btn-danger" onClick={() => removePreset(preset.id)}>Remove</button>
             </div>
             <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
-              <div style={{ marginBottom: '6px' }}><strong>Excluded Companies (Check to hide):</strong></div>
-              {uniqueCompanies.length === 0 && <span style={{color:'#888'}}>No companies available. Upload data first.</span>}
+              <div style={{ marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>Excluded Companies (Check to hide):</strong>
+                {activePresetId === preset.id && (
+                  <input 
+                    type="text"
+                    placeholder="Search companies..."
+                    value={companySearch}
+                    onChange={e => setCompanySearch(e.target.value)}
+                    style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem' }}
+                  />
+                )}
+              </div>
+              {filteredCompanies.length === 0 && <span style={{color:'#888'}}>No companies match your search or upload data first.</span>}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {uniqueCompanies.map(comp => (
+                {filteredCompanies.map(comp => (
                   <label key={comp} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: preset.excludedCompanies.includes(comp) ? '#ffebee' : '#f5f5f5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', border: preset.excludedCompanies.includes(comp) ? '1px solid #ffcdd2' : '1px solid transparent' }}>
                     <input
                       type="checkbox"

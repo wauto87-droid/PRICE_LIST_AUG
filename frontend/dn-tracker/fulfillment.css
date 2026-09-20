@@ -84,8 +84,10 @@
 
 .fe-viewport {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Kanban Board */
@@ -214,7 +216,9 @@
   background-color: #ffffff;
   border-radius: 0.5rem;
   border: 1px solid #e2e8f0;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .data-table {
   width: 100%;
@@ -295,7 +299,10 @@
   padding: 1.5rem;
   border-radius: 0.5rem;
   border: 1px solid #e2e8f0;
-  max-width: 600px;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 .preset-form {
   display: flex;
@@ -312,6 +319,8 @@
   list-style: none;
   padding: 0;
   margin: 0;
+  overflow-y: auto;
+  flex: 1;
 }
 .preset-list li {
   display: flex;
