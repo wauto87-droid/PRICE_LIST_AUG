@@ -26,11 +26,11 @@ export default function PendingTableView() {
     if (!searchQuery.trim()) return pendingItems;
     const lowerQ = searchQuery.toLowerCase();
     return pendingItems.filter(i => 
-      (i.customer || '').toLowerCase().includes(lowerQ) ||
-      (i.docNo || '').toLowerCase().includes(lowerQ) ||
-      (i.itemCode || '').toLowerCase().includes(lowerQ) ||
-      (i.itemName || '').toLowerCase().includes(lowerQ) ||
-      (i.customerCode || '').toLowerCase().includes(lowerQ)
+      String(i.customer || '').toLowerCase().includes(lowerQ) ||
+      String(i.docNo || '').toLowerCase().includes(lowerQ) ||
+      String(i.itemCode || '').toLowerCase().includes(lowerQ) ||
+      String(i.itemName || '').toLowerCase().includes(lowerQ) ||
+      String(i.customerCode || '').toLowerCase().includes(lowerQ)
     );
   }, [pendingItems, searchQuery]);
 
