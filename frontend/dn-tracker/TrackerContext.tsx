@@ -33,6 +33,7 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [presets, setPresets] = useState<Preset[]>([]);
   const [activeTab, setActiveTab] = useState<string>('kanban');
   const [filters, setFilters] = useState<GlobalFilters>(defaultFilters);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   // Backward compatibility alias for parts of code that used it
   const activePresetId = filters.activePresetId;
@@ -48,6 +49,16 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   useEffect(() => {
+    // Attempt to load items
+    const savedItems = localStorage.getItem('amt-dn-tracker-items');
+    if (savedItems) {
+      try {
+        setItems(JSON.parse(savedItems));
+      } catch (e) {
+        console.error('Failed to parse amt-dn-tracker-items', e);
+      }
+    }
+
     // Attempt to load unified filters v2
     const savedFilters = localStorage.getItem('kanban_persistent_active_filters_v2');
     if (savedFilters) {
@@ -76,16 +87,31 @@ export const TrackerProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setPresets([defaultPreset]);
       }
     }
+    
+    setIsLoaded(true);
   }, []);
 
   useEffect(() => {
-    // Only persist if we have modified anything
-    localStorage.setItem('kanban_persistent_active_filters_v2', JSON.stringify(filters));
-  }, [filters]);
+    if (isLoaded) {
+      try {
+        localStorage.setItem('amt-dn-tracker-items', JSON.stringify(items));
+      } catch (e) {
+        console.error('Failed to save items to localStorage', e);
+      }
+    }
+  }, [items, isLoaded]);
 
   useEffect(() => {
-    localStorage.setItem('amt-dn-presets', JSON.stringify(presets));
-  }, [presets]);
+    if (isLoaded) {
+      localStorage.setItem('kanban_persistent_active_filters_v2', JSON.stringify(filters));
+    }
+  }, [filters, isLoaded]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      localStorage.setItem('amt-dn-presets', JSON.stringify(presets));
+    }
+  }, [presets, isLoaded]);
 
   return (
     <TrackerContext.Provider value={{ 

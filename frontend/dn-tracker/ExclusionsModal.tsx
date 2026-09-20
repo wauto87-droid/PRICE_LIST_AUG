@@ -100,7 +100,7 @@ export default function ExclusionsModal({ onClose }: ExclusionsModalProps) {
                 {filters.activePresetId && (
                   <button 
                     onClick={(e) => addToPreset(company, e)}
-                    disabled={isInActivePreset}
+                    disabled={!!isInActivePreset}
                     title="Add to Preset"
                     style={{
                       background: isInActivePreset ? '#e2e8f0' : '#eff6ff',
