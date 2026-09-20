@@ -1135,7 +1135,7 @@ class Deployment:
         else:
             self.stage('Install host dependencies for PM2 runtime')
             run(['corepack', 'enable'], timeout=120, env=self.native_env(release=release), cwd=release)
-            run(limited_command(['corepack', 'pnpm', 'install', '--frozen-lockfile']), timeout=3600, live=True,
+            run(limited_command(['corepack', 'pnpm', 'install', '--no-frozen-lockfile']), timeout=3600, live=True,
                 env=self.native_env({'PLAYWRIGHT_BROWSERS_PATH': str(paths['browsers'])}, release=release), cwd=release)
             previous_cache = previous / '.next' / 'cache' if previous is not None else None
             if previous_cache is not None and previous_cache.is_dir():
