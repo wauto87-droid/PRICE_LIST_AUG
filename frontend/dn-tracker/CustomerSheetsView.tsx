@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
+import CompanyPresetMenu from './CompanyPresetMenu';
 
 interface CustomerSheetsViewProps {
   activeItems: OrderItem[];
 }
 
 export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewProps) {
-  const { filters, updateFilter } = useTracker();
+  const { filters, updateFilter, presets } = useTracker();
   const selectedCustomer = filters.customerFilter || null;
   const [sidebarSearch, setSidebarSearch] = useState('');
 
@@ -35,6 +36,16 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
       <div className="sidebar">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0 }}>Directory</h3>
+          <select 
+            value={filters.activePresetId || ''} 
+            onChange={e => updateFilter('activePresetId', e.target.value || null)}
+            style={{ padding: '0.25rem', borderRadius: '0.25rem', border: '1px solid #e2e8f0', fontSize: '0.8rem', maxWidth: '120px' }}
+          >
+            <option value="">Default Preset</option>
+            {presets.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
         </div>
         <ul>
           <li className={selectedCustomer === null ? 'active' : ''} onClick={() => updateFilter('customerFilter', null)}>
@@ -52,14 +63,19 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
           {filteredCustomers.map(c => (
             <li 
               key={c.name} 
-              className={selectedCustomer === c.name ? 'active' : ''} 
+              className={`group ${selectedCustomer === c.name ? 'active' : ''}`}
               onClick={() => updateFilter('customerFilter', c.name)}
               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1 }}>
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
               </div>
-              <span className="badge">{c.count}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                  <CompanyPresetMenu company={c.name} />
+                </div>
+                <span className="badge">{c.count}</span>
+              </div>
             </li>
           ))}
         </ul>
