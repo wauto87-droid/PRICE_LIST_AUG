@@ -75,10 +75,21 @@ export default function FulfillmentEngine() {
         const itemCode = val(indices.itemCode);
         if (!docNo && !itemCode) continue; // skip empty rows
 
+        let formattedDate = val(indices.date);
+        const rawDateStr = formattedDate;
+        if (!isNaN(Number(rawDateStr)) && Number(rawDateStr) > 20000 && Number(rawDateStr) < 60000) {
+          // Convert Excel serial date
+          const dateObj = new Date(Math.round((Number(rawDateStr) - 25569) * 86400 * 1000));
+          const yyyy = dateObj.getFullYear();
+          const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const dd = String(dateObj.getDate()).padStart(2, '0');
+          formattedDate = `${dd}-${mm}-${yyyy}`;
+        }
+
         const item: Partial<OrderItem> = {
           id: `item-${Date.now()}-${i}`,
           index: i,
-          date: val(indices.date),
+          date: formattedDate,
           docNo: docNo || `UNKNOWN-${i}`,
           customer: val(indices.customer).trim(),
           customerCode: val(indices.customerCode).trim(),
@@ -100,7 +111,11 @@ export default function FulfillmentEngine() {
       if (newItems.length === 0) {
         alert("File was parsed, but no valid data rows were found.");
       } else {
-        setItems(prev => [...prev, ...newItems]);
+        setItems(prev => {
+          const existingKeys = new Set(prev.map(p => `${p.docNo}|${p.itemCode}|${p.date}`));
+          const trulyNewItems = newItems.filter(n => !existingKeys.has(`${n.docNo}|${n.itemCode}|${n.date}`));
+          return [...prev, ...trulyNewItems];
+        });
       }
     } catch (err: any) {
       console.error("Upload error:", err);
@@ -113,7 +128,12 @@ export default function FulfillmentEngine() {
     }
   };
 
-  const activeItems = items; // In a real app, apply presets here if activePresetId is set
+  const activeItems = React.useMemo(() => {
+    const { presets, activePresetId } = useTracker();
+    const activePreset = presets.find(p => p.id === activePresetId);
+    if (!activePreset) return items;
+    return items.filter(i => !activePreset.excludedCompanies.includes(i.customer));
+  }, [items]);
 
   return (
     <div className="fulfillment-engine">
@@ -126,7 +146,7 @@ export default function FulfillmentEngine() {
           <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
             <Upload size={16} /> Upload Data
           </button>
-          <button onClick={() => setItems([])} className="btn btn-secondary" style={{ color: 'red' }}>
+          <button onClick={() => { if(window.confirm('Are you sure you want to clear all data?')) setItems([]); }} className="btn btn-secondary" style={{ color: 'red' }}>
             <Trash2 size={16} /> Clear Data
           </button>
           <button onClick={() => exportToExcelCsv(activeItems, 'Export')} className="btn btn-secondary">
