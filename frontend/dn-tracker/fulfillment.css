@@ -246,6 +246,49 @@
 .status-badge.returned { background-color: #ffe4e6; color: #be123c; }
 .status-badge.completed { background-color: #d1fae5; color: #047857; }
 
+/* Pending Table View */
+.pending-table-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.pt-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.pt-search {
+  padding: 0.5rem 1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  width: 300px;
+  font-size: 0.875rem;
+}
+
+.pt-table-container {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: white;
+}
+
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+.sortable-th:hover {
+  background-color: #f1f5f9;
+}
+
 /* Presets */
 .preset-manager {
   background-color: #ffffff;
