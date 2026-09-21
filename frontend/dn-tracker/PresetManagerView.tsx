@@ -63,14 +63,9 @@ export default function PresetManagerView() {
     const isIncludeMode = editingPreset.type === 'include';
     const selectedSet = new Set(editingPreset.excludedCompanies);
     
-    // Sort logic: selected first, then alphabetical
-    const sortedCompanies = [...allCompanies].sort((a, b) => {
-      const aSel = selectedSet.has(a);
-      const bSel = selectedSet.has(b);
-      if (aSel && !bSel) return -1;
-      if (!aSel && bSel) return 1;
-      return a.localeCompare(b);
-    });
+    // Pure alphabetical sort to prevent rows from instantly jumping around while editing.
+    // This also prevents users from thinking companies are missing from the A-Z list.
+    const sortedCompanies = [...allCompanies]; // allCompanies is already sorted alphabetically in useMemo
 
     const filteredCompanies = sortedCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
     
