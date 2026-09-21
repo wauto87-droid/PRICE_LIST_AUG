@@ -94,7 +94,10 @@ export default function PresetManagerView() {
               <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
                 Edit Companies: {editingPreset.name}
               </h2>
-              <p className="text-sm text-slate-500 mt-1">Select companies below to configure this profile.</p>
+              <p className="text-sm text-slate-500 mt-1">
+                Select companies below to configure this profile. <br/>
+                <strong className="text-indigo-600">Note:</strong> Your Excel file has <strong>{items.length} total item rows</strong>, belonging to <strong>{allCompanies.length} unique companies</strong>.
+              </p>
             </div>
           </div>
           <button 
