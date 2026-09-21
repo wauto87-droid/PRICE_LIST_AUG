@@ -148,8 +148,12 @@ export default function FulfillmentEngine() {
 
     // 1. Preset exclusions
     if (activePreset && activePreset.excludedCompanies.length > 0) {
-      const excludedSet = new Set(activePreset.excludedCompanies);
-      result = result.filter(i => !excludedSet.has(i.customer));
+      const companySet = new Set(activePreset.excludedCompanies);
+      if (activePreset.type === 'include') {
+        result = result.filter(i => companySet.has(i.customer));
+      } else {
+        result = result.filter(i => !companySet.has(i.customer));
+      }
     }
 
     // 2. Balance Filter

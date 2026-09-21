@@ -16,7 +16,8 @@ export default function PresetManagerView() {
     const newPreset: Preset = {
       id: newId,
       name: newPresetName.trim(),
-      excludedCompanies: []
+      excludedCompanies: [],
+      type: 'exclude'
     };
     setPresets([...presets, newPreset]);
     setNewPresetName('');
@@ -54,7 +55,19 @@ export default function PresetManagerView() {
   };
 
   if (editingPreset) {
-    const filteredCompanies = allCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
+    const isIncludeMode = editingPreset.type === 'include';
+    const selectedSet = new Set(editingPreset.excludedCompanies);
+    
+    // Sort logic: selected first, then alphabetical
+    const sortedCompanies = [...allCompanies].sort((a, b) => {
+      const aSel = selectedSet.has(a);
+      const bSel = selectedSet.has(b);
+      if (aSel && !bSel) return -1;
+      if (!aSel && bSel) return 1;
+      return a.localeCompare(b);
+    });
+
+    const filteredCompanies = sortedCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
     
     return (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full">
@@ -69,9 +82,9 @@ export default function PresetManagerView() {
             </button>
             <div>
               <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-                Edit Exclusions: {editingPreset.name}
+                Edit Companies: {editingPreset.name}
               </h2>
-              <p className="text-sm text-slate-500 mt-1">Select companies below to exclude them from this profile.</p>
+              <p className="text-sm text-slate-500 mt-1">Select companies below to configure this profile.</p>
             </div>
           </div>
           <button 
@@ -84,15 +97,31 @@ export default function PresetManagerView() {
         </div>
         
         <div className="p-4 border-b border-slate-200 bg-white">
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search companies to exclude..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm shadow-sm"
-            />
+          <div className="flex gap-4">
+            <div className="relative max-w-md flex-1">
+              <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search companies..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm shadow-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Profile Mode:</label>
+              <select
+                value={editingPreset.type || 'exclude'}
+                onChange={(e) => {
+                  const newType = e.target.value as 'include' | 'exclude';
+                  setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, type: newType } : p));
+                }}
+                className="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm font-medium text-slate-800"
+              >
+                <option value="exclude">Exclude Selected Companies</option>
+                <option value="include">Include ONLY Selected Companies</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -100,32 +129,47 @@ export default function PresetManagerView() {
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-24 text-center">Exclude</th>
+                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-24 text-center">Select</th>
                 <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200">Company Name</th>
               </tr>
             </thead>
             <tbody>
               {filteredCompanies.length > 0 ? (
                 filteredCompanies.map(company => {
-                  const isExcluded = editingPreset.excludedCompanies.includes(company);
+                  const isSelected = selectedSet.has(company);
+                  
+                  const rowClass = isSelected 
+                    ? (isIncludeMode ? "border-b border-indigo-100 bg-indigo-50/70 hover:bg-indigo-100/70 cursor-pointer transition-colors" : "border-b border-rose-100 bg-rose-50/70 hover:bg-rose-100/70 cursor-pointer transition-colors")
+                    : "border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors";
+                  
+                  const badgeClass = isIncludeMode
+                    ? "ml-3 text-[10px] uppercase font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full border border-indigo-200"
+                    : "ml-3 text-[10px] uppercase font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200";
+
+                  const badgeText = isIncludeMode ? "Included" : "Excluded";
+
+                  const checkboxClass = isSelected 
+                    ? (isIncludeMode ? "text-indigo-600" : "text-rose-500")
+                    : "text-slate-300";
+
                   return (
                     <tr 
                       key={company} 
                       onClick={() => toggleExclusion(company)}
-                      className="border-b border-slate-100 hover:bg-indigo-50/50 cursor-pointer transition-colors"
+                      className={rowClass}
                     >
                       <td className="py-3 px-6 text-center">
                         <div className="flex justify-center">
-                          {isExcluded ? (
-                            <CheckSquare size={20} className="text-indigo-600" />
+                          {isSelected ? (
+                            <CheckSquare size={20} className={checkboxClass} />
                           ) : (
-                            <Square size={20} className="text-slate-300" />
+                            <Square size={20} className={checkboxClass} />
                           )}
                         </div>
                       </td>
                       <td className="py-3 px-6 text-sm font-medium text-slate-700">
                         {company}
-                        {isExcluded && <span className="ml-3 text-[10px] uppercase font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100">Excluded</span>}
+                        {isSelected && <span className={badgeClass}>{badgeText}</span>}
                       </td>
                     </tr>
                   );
@@ -181,59 +225,69 @@ export default function PresetManagerView() {
 
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider mb-4">Saved Profiles</h3>
-          {presets.map(preset => (
-            <div key={preset.id} className="border border-slate-200 rounded-xl p-4 hover:border-indigo-300 transition-colors bg-white shadow-sm">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    {preset.name}
-                    {isBuiltIn(preset.id) && (
-                      <span className="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium border border-slate-200">Built-in</span>
+          {presets.map(preset => {
+            const isIncludeMode = preset.type === 'include';
+            const companiesText = isIncludeMode ? 'Included Companies' : 'Excluded Companies';
+            const modeBadgeClass = isIncludeMode 
+              ? "bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium ml-2"
+              : "bg-rose-50 border border-rose-200 text-rose-700 text-xs px-2 py-0.5 rounded-full font-medium ml-2";
+            const modeBadgeText = isIncludeMode ? "Include Mode" : "Exclude Mode";
+
+            return (
+              <div key={preset.id} className="border border-slate-200 rounded-xl p-4 hover:border-indigo-300 transition-colors bg-white shadow-sm">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h4 className="text-base font-bold text-slate-800 flex items-center">
+                      {preset.name}
+                      {isBuiltIn(preset.id) && (
+                        <span className="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium border border-slate-200 ml-2">Built-in</span>
+                      )}
+                      <span className={modeBadgeClass}>{modeBadgeText}</span>
+                    </h4>
+                    {preset.balanceFilterOverride && (
+                      <span className="inline-block mt-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-2 py-0.5 rounded-full font-medium">
+                        Forces Balance Filter: {preset.balanceFilterOverride}
+                      </span>
                     )}
-                  </h4>
-                  {preset.balanceFilterOverride && (
-                    <span className="inline-block mt-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                      Forces Balance Filter: {preset.balanceFilterOverride}
-                    </span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    type="button"
-                    onClick={() => { setEditingPresetId(preset.id); setSearchTerm(''); }}
-                    className="text-slate-500 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50 transition-colors border border-transparent hover:border-indigo-100"
-                    title="Edit Exclusions"
-                  >
-                    <Edit3 size={18} />
-                  </button>
-                  {!isBuiltIn(preset.id) && (
+                  </div>
+                  <div className="flex gap-2">
                     <button 
                       type="button"
-                      onClick={() => deletePreset(preset.id)}
-                      className="text-slate-500 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 transition-colors border border-transparent hover:border-rose-100"
-                      title="Delete Profile"
+                      onClick={() => { setEditingPresetId(preset.id); setSearchTerm(''); }}
+                      className="text-slate-500 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50 transition-colors border border-transparent hover:border-indigo-100"
+                      title="Configure Profile"
                     >
-                      <Trash2 size={18} />
+                      <Edit3 size={18} />
                     </button>
+                    {!isBuiltIn(preset.id) && (
+                      <button 
+                        type="button"
+                        onClick={() => deletePreset(preset.id)}
+                        className="text-slate-500 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 transition-colors border border-transparent hover:border-rose-100"
+                        title="Delete Profile"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3 text-sm border border-slate-100">
+                  <div className="font-medium text-slate-700 mb-2">{companiesText} ({preset.excludedCompanies.length})</div>
+                  {preset.excludedCompanies.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {preset.excludedCompanies.map(c => (
+                        <span key={c} className={`bg-white border text-slate-600 px-2.5 py-1 rounded-md text-xs shadow-sm font-medium ${isIncludeMode ? 'border-indigo-200 text-indigo-700' : 'border-rose-200 text-rose-700'}`}>
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 italic text-xs">No companies selected.</div>
                   )}
                 </div>
               </div>
-              <div className="bg-slate-50 rounded-lg p-3 text-sm border border-slate-100">
-                <div className="font-medium text-slate-700 mb-2">Excluded Companies ({preset.excludedCompanies.length})</div>
-                {preset.excludedCompanies.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {preset.excludedCompanies.map(c => (
-                      <span key={c} className="bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-md text-xs shadow-sm font-medium">
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-slate-400 italic text-xs">No companies excluded.</div>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

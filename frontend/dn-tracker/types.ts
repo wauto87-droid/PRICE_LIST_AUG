@@ -21,6 +21,7 @@ export interface Preset {
   id: string;
   name: string;
   excludedCompanies: string[];
+  type?: 'exclude' | 'include';
   balanceFilterOverride?: 'ALL' | 'PENDING' | 'SETTLED';
 }
 
