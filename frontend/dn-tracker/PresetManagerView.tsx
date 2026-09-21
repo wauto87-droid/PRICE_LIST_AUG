@@ -144,18 +144,21 @@ export default function PresetManagerView() {
                   const isSelected = selectedSet.has(company);
                   
                   const rowClass = isSelected 
-                    ? (isIncludeMode ? "border-b border-indigo-200 bg-indigo-100 hover:bg-indigo-200 cursor-pointer transition-colors" : "border-b border-red-200 bg-red-100 hover:bg-red-200 cursor-pointer transition-colors")
+                    ? (isIncludeMode ? "border-b border-indigo-200 cursor-pointer transition-colors" : "border-b border-red-200 cursor-pointer transition-colors")
                     : "border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors";
                   
                   const checkboxClass = isSelected 
                     ? (isIncludeMode ? "text-indigo-600" : "text-rose-500")
                     : "text-slate-300";
 
+                  const selectedBgColor = isIncludeMode ? "#e0e7ff" : "#fee2e2"; // indigo-100 or red-100
+
                   return (
                     <tr 
                       key={company} 
                       onClick={() => toggleExclusion(company)}
                       className={rowClass}
+                      style={isSelected ? { backgroundColor: selectedBgColor } : {}}
                     >
                       <td className="py-3 px-6 text-center">
                         <div className="flex justify-center">
