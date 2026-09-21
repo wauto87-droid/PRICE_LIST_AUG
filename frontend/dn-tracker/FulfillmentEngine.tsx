@@ -73,7 +73,11 @@ export default function FulfillmentEngine() {
 
         const docNo = val(indices.docNo);
         const itemCode = val(indices.itemCode);
-        if (!docNo && !itemCode) continue; // skip empty rows
+        const customer = val(indices.customer).trim();
+        const itemName = val(indices.itemName);
+        
+        // Only skip if ALL these critical fields are completely empty
+        if (!docNo && !itemCode && !customer && !itemName) continue; 
 
         let formattedDate = val(indices.date);
         const rawDateStr = formattedDate;

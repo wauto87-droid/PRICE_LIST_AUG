@@ -11,14 +11,27 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
   const selectedCustomer = filters.customerFilter || null;
   const [sidebarSearch, setSidebarSearch] = useState('');
 
-  // Extract unique customers from the globally filtered items
+  // Extract unique customers from all items to ensure no company disappears, 
+  // but only count the active items.
   const customers = useMemo(() => {
-    const counts: Record<string, number> = {};
-    activeItems.forEach(i => {
-      counts[i.customer] = (counts[i.customer] || 0) + 1;
+    const allNames = new Set<string>();
+    items.forEach(i => {
+      if (i.customer) allNames.add(i.customer);
     });
-    return Object.keys(counts).sort().map(c => ({ name: c, count: counts[c] }));
-  }, [activeItems]);
+
+    const counts: Record<string, number> = {};
+    allNames.forEach(name => {
+      counts[name] = 0;
+    });
+
+    activeItems.forEach(i => {
+      if (i.customer) {
+        counts[i.customer] += 1;
+      }
+    });
+
+    return Array.from(allNames).sort().map(c => ({ name: c, count: counts[c] }));
+  }, [items, activeItems]);
 
   const filteredCustomers = useMemo(() => {
     if (!sidebarSearch.trim()) return customers;
@@ -47,8 +60,9 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
           </select>
         </div>
         <ul>
-          <li className={selectedCustomer === null ? 'active' : ''} onClick={() => updateFilter('customerFilter', null)}>
-            All Companies <span className="badge">{activeItems.length}</span>
+          <li className={selectedCustomer === null ? 'active' : ''} onClick={() => updateFilter('customerFilter', null)} style={{ cursor: 'pointer', padding: '10px 15px', borderBottom: '1px solid #e2e8f0' }}>
+            <strong>All Companies</strong> 
+            <span className="badge" style={{ marginLeft: 10 }}>{activeItems.length} items</span>
           </li>
           <div style={{ padding: '0.5rem 1rem' }}>
             <input 
@@ -70,7 +84,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="badge">{c.count}</span>
+                <span className="badge">{c.count} {c.count === 1 ? 'item' : 'items'}</span>
               </div>
             </li>
           ))}
