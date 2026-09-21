@@ -51,6 +51,7 @@ export default function PresetManagerView() {
               className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             />
             <button 
+              type="button"
               onClick={createPreset}
               disabled={!newPresetName.trim()}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -80,6 +81,7 @@ export default function PresetManagerView() {
                 </div>
                 <div className="flex gap-2">
                   <button 
+                    type="button"
                     onClick={() => setEditingPresetId(preset.id)}
                     className="text-slate-500 hover:text-indigo-600 p-2 rounded-md hover:bg-indigo-50 transition-colors"
                     title="Edit Exclusions"
@@ -88,6 +90,7 @@ export default function PresetManagerView() {
                   </button>
                   {!isBuiltIn(preset.id) && (
                     <button 
+                      type="button"
                       onClick={() => deletePreset(preset.id)}
                       className="text-slate-500 hover:text-rose-600 p-2 rounded-md hover:bg-rose-50 transition-colors"
                       title="Delete Profile"

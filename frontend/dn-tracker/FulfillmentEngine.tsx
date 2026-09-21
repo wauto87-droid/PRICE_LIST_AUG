@@ -128,14 +128,17 @@ export default function FulfillmentEngine() {
       console.error("Upload error:", err);
       alert("Error reading file: " + (err.message || "Unknown error") + ". If this is an old .xls file, please resave it as .xlsx and try again.");
     } finally {
-      if (e.target) {
-        e.target.value = '';
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     }
   };
 
   const handleClear = () => {
-    if(window.confirm('Are you sure you want to clear all data?')) setItems([]);
+    if(window.confirm('Are you sure you want to clear all data?')) {
+      setItems([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const activeItems = React.useMemo(() => {

@@ -1,5 +1,6 @@
 'use client';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Search } from 'lucide-react';
 import { useTracker } from './TrackerContext';
 
@@ -11,6 +12,12 @@ interface ExclusionsModalProps {
 export default function ExclusionsModal({ presetId, onClose }: ExclusionsModalProps) {
   const { items, presets, setPresets } = useTracker();
   const [searchTerm, setSearchTerm] = useState('');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
   const preset = presets.find(p => p.id === presetId);
   
@@ -22,7 +29,7 @@ export default function ExclusionsModal({ presetId, onClose }: ExclusionsModalPr
     return Array.from(names).sort();
   }, [items]);
 
-  if (!preset) return null;
+  if (!preset || !mounted) return null;
 
   const filteredCompanies = allCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -38,12 +45,12 @@ export default function ExclusionsModal({ presetId, onClose }: ExclusionsModalPr
     }));
   };
 
-  return (
-    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+  const modalContent = (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[9999] p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
         <div className="flex justify-between items-center p-4 border-b border-slate-200">
           <h2 className="text-xl font-semibold text-slate-800">Edit Exclusions: {preset.name}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
             <X size={24} />
           </button>
         </div>
@@ -83,11 +90,13 @@ export default function ExclusionsModal({ presetId, onClose }: ExclusionsModalPr
         </div>
         
         <div className="p-4 border-t border-slate-200 flex justify-end">
-          <button onClick={onClose} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-colors text-sm">
+          <button type="button" onClick={onClose} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-colors text-sm">
             Done
           </button>
         </div>
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }
