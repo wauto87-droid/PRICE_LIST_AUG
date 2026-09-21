@@ -7,7 +7,7 @@ interface CustomerSheetsViewProps {
 }
 
 export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewProps) {
-  const { filters, updateFilter, presets } = useTracker();
+  const { items, filters, updateFilter, presets } = useTracker();
   const selectedCustomer = filters.customerFilter || null;
   const [sidebarSearch, setSidebarSearch] = useState('');
 
