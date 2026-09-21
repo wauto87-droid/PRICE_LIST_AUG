@@ -38,8 +38,13 @@ export default function PresetManagerView() {
     items.forEach(item => {
       if (item.customer) names.add(item.customer);
     });
+    // Ensure companies that are selected in profiles also show up, 
+    // even if they don't exist in the currently uploaded file.
+    presets.forEach(p => {
+      p.excludedCompanies.forEach(c => names.add(c));
+    });
     return Array.from(names).sort();
-  }, [items]);
+  }, [items, presets]);
 
   const toggleExclusion = (company: string) => {
     if (!editingPresetId) return;
@@ -139,7 +144,7 @@ export default function PresetManagerView() {
                   const isSelected = selectedSet.has(company);
                   
                   const rowClass = isSelected 
-                    ? (isIncludeMode ? "border-b border-indigo-100 bg-indigo-50/70 hover:bg-indigo-100/70 cursor-pointer transition-colors" : "border-b border-rose-100 bg-rose-50/70 hover:bg-rose-100/70 cursor-pointer transition-colors")
+                    ? (isIncludeMode ? "border-b border-indigo-100 bg-indigo-50 hover:bg-indigo-100 cursor-pointer transition-colors" : "border-b border-rose-100 bg-rose-50 hover:bg-rose-100 cursor-pointer transition-colors")
                     : "border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors";
                   
                   const badgeClass = isIncludeMode
@@ -272,18 +277,12 @@ export default function PresetManagerView() {
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-3 text-sm border border-slate-100">
-                  <div className="font-medium text-slate-700 mb-2">{companiesText} ({preset.excludedCompanies.length})</div>
-                  {preset.excludedCompanies.length > 0 ? (
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {preset.excludedCompanies.map(c => (
-                        <span key={c} className={`bg-white border text-slate-600 px-2.5 py-1 rounded-md text-xs shadow-sm font-medium ${isIncludeMode ? 'border-indigo-200 text-indigo-700' : 'border-rose-200 text-rose-700'}`}>
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-slate-400 italic text-xs">No companies selected.</div>
-                  )}
+                  <div className="font-medium text-slate-700">{companiesText}</div>
+                  <div className="text-slate-500 mt-1">
+                    {preset.excludedCompanies.length > 0 
+                      ? `${preset.excludedCompanies.length} companies selected. Click Edit to view or modify.`
+                      : 'No companies selected.'}
+                  </div>
                 </div>
               </div>
             );
