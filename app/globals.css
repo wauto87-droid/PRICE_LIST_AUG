@@ -892,48 +892,78 @@ kbd {
   border-end-start-radius: 0;
 }
 .reusable-custom-results {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   max-height: 310px;
   overflow-y: auto;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--soft);
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 .reusable-custom-results > button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   text-align: start;
-  background: var(--surface);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-height: 48px;
+  height: auto;
+  width: 100%;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    box-shadow 0.15s;
 }
 .reusable-custom-results > button.active,
 .reusable-custom-results > button:hover {
-  border-color: var(--accent);
-  background: var(--surface);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--red);
+  background: #fff8f8;
+  box-shadow: 0 0 0 2px rgba(201, 0, 22, 0.12);
 }
 .reusable-custom-results span {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+  justify-content: center;
 }
-.reusable-custom-results span strong,
-.reusable-custom-results span em {
+.reusable-custom-results span strong {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .reusable-custom-results span em {
-  color: var(--muted);
+  font-size: 12px;
   font-style: normal;
+  color: var(--muted);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .reusable-custom-results small {
   color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .reusable-custom-results b {
-  color: var(--accent);
+  color: var(--red);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .reusable-duplicate-warning {
   display: flex;
@@ -962,7 +992,9 @@ kbd {
     grid-column: auto;
   }
   .reusable-custom-results > button {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    padding: 8px 10px;
   }
 }
 .lookup-action-row {
