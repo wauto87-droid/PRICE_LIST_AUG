@@ -143,7 +143,7 @@ export default function PresetManagerView() {
                 onClick={() => {
                   setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [] } : p));
                 }}
-                style={{ padding: '4px 10px', fontSize: '0.75rem', fontWeight 600, color: '#334155', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                style={{ padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
               >
                 Clear All
               </button>

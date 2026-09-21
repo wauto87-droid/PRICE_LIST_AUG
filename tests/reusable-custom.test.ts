@@ -16,6 +16,7 @@ import {
   convert,
   resolveExact,
 } from "../backend/reusable-custom/service";
+import { handle } from "../backend/api/router";
 
 test("Reusable custom items are deduplicated, reusable, admin-managed, and safely converted", async () => {
   const db = await embedded();
@@ -92,6 +93,27 @@ test("Reusable custom items are deduplicated, reusable, admin-managed, and safel
     ).match!.id,
     reusableId,
   );
+  const origin = process.env.APP_ORIGIN || "http://localhost:18180";
+  const resolveReq = new Request(
+    `${origin}/api/v1/reusable-custom-items/resolve`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: origin,
+        "X-CSRF-Token": actor.csrf,
+        Cookie: sessionCookie(logged.token).split(";")[0],
+      },
+      body: JSON.stringify({
+        reference: "4X16MM RUBBER HO7RN NEXANS",
+        description: "NEXANS 4CX16M2  RUBER XTREM H07RN 450/750V TOP CABLES",
+      }),
+    },
+  );
+  const resolveRes = await handle(resolveReq, db);
+  assert.equal(resolveRes.status, 200);
+  const resolveData: any = await resolveRes.json();
+  assert.equal(resolveData.match, null);
   for (let index = 0; index < 10; index++)
     await db.query(
       "INSERT INTO reusable_custom_items(id,reference,normalized_reference,description,normalized_description,unit,suggested_unit_price,suggested_discount,created_by) VALUES($1,$2,$3,$4,$5,'pcs','1','0',$6)",

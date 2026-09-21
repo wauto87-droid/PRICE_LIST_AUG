@@ -16,3 +16,42 @@ test("Custom line errors mention the failing line and field clearly", () => {
     "Line 2: Discount cannot be more than 100%.",
   );
 });
+
+test("Client-side Zod JSON errors are humanized properly", () => {
+  assert.equal(
+    humanizeCustomLineError(
+      JSON.stringify([
+        {
+          code: "invalid_format",
+          path: ["unitPriceExcl"],
+          message: "Use a positive decimal, without commas",
+        },
+      ]),
+    ),
+    "Enter unit price as a number like 12.5 or 100, without commas.",
+  );
+  assert.equal(
+    humanizeCustomLineError(
+      JSON.stringify([
+        {
+          code: "invalid_format",
+          path: ["quantity"],
+          message: "Use a positive decimal, without commas",
+        },
+      ]),
+    ),
+    "Enter quantity as a positive number without commas.",
+  );
+  assert.equal(
+    humanizeCustomLineError(
+      JSON.stringify([
+        {
+          code: "custom",
+          path: ["discount"],
+          message: "Maximum is 100%",
+        },
+      ]),
+    ),
+    "Discount cannot be more than 100%.",
+  );
+});

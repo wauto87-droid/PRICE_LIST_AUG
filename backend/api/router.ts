@@ -1800,6 +1800,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           ),
         );
       }
+      if (id === "resolve" && method === "POST")
+        return response(
+          await reusableCustom.resolveExact(db, actor, await body(req)),
+        );
       if (id) {
         uuid(id);
         if (!action && method === "PUT")
