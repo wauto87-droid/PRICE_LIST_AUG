@@ -5,7 +5,7 @@ import { useTracker } from './TrackerContext';
 import { Preset } from './types';
 
 export default function PresetManagerView() {
-  const { presets, setPresets, items } = useTracker();
+  const { presets, setPresets, items, knownCompanies } = useTracker();
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [newPresetName, setNewPresetName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,7 +34,7 @@ export default function PresetManagerView() {
   const editingPreset = presets.find(p => p.id === editingPresetId);
 
   const allCompanies = useMemo(() => {
-    const names = new Set<string>();
+    const names = new Set<string>(knownCompanies || []);
     items.forEach(item => {
       if (item.customer) names.add(item.customer);
     });
@@ -44,7 +44,7 @@ export default function PresetManagerView() {
       p.excludedCompanies.forEach(c => names.add(c));
     });
     return Array.from(names).sort();
-  }, [items, presets]);
+  }, [items, presets, knownCompanies]);
 
   const companyCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -80,106 +80,104 @@ export default function PresetManagerView() {
     const filteredCompanies = sortedCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
     
     return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-1" style={{ minHeight: 0 }}>
-        <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-          <div className="flex items-center gap-4">
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden', backgroundColor: 'white', borderRadius: '0.75rem', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)' }}>
+        {/* Compact Header Bar */}
+        <div style={{ backgroundColor: '#f8fafc', padding: '10px 16px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button 
               type="button" 
               onClick={() => { setEditingPresetId(null); setSearchTerm(''); }}
-              className="text-slate-500 hover:text-indigo-600 transition-colors bg-white border border-slate-200 p-2 rounded-lg shadow-sm"
+              style={{ backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#475569' }}
+              title="Return to Profiles List"
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft size={16} />
             </button>
             <div>
-              <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-                Edit Companies: {editingPreset.name}
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Select companies below to configure this profile. <br/>
-                <strong className="text-indigo-600">Note:</strong> Your Excel file has <strong>{items.length} total item rows</strong>, belonging to <strong>{allCompanies.length} unique companies</strong>.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                  Edit Profile: {editingPreset.name}
+                </h2>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, backgroundColor: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
+                  {filteredCompanies.length} Companies ({items.length} Records)
+                </span>
+              </div>
+              <p style={{ margin: '2px 0 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                Click any company row to toggle exclusion (highlighted in red). Scroll table to view all companies.
               </p>
             </div>
           </div>
           <button 
             type="button" 
             onClick={() => { setEditingPresetId(null); setSearchTerm(''); }}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-sm"
+            style={{ backgroundColor: '#4f46e5', color: 'white', padding: '6px 14px', borderRadius: '6px', border: 'none', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
           >
-            <Save size={16} /> Save & Return
+            <Save size={15} /> Save & Return
           </button>
         </div>
         
-        <div className="p-4 border-b border-slate-200 bg-white">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-3 flex flex-wrap justify-between items-center text-sm">
-            <div className="text-emerald-900 font-medium">
-              Excel Data Status: <span className="font-bold text-emerald-700">{items.length} Total Rows</span> loaded into <span className="font-bold text-emerald-700">{allCompanies.length} Unique Companies</span> (100% of your Excel file is present).
-            </div>
-            <div className="text-xs text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded font-semibold">
-              0 Missing Rows
-            </div>
+        {/* Search & Actions Toolbar */}
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#ffffff', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: '220px', maxWidth: '380px' }}>
+            <Search style={{ position: 'absolute', left: '10px', top: '8px', color: '#94a3b8' }} size={16} />
+            <input 
+              type="text" 
+              placeholder="Search companies..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{ width: '100%', paddingLeft: '32px', paddingRight: '12px', paddingTop: '6px', paddingBottom: '6px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', outline: 'none' }}
+            />
           </div>
-          <div className="flex flex-wrap gap-4 items-center justify-between">
-            <div className="relative max-w-md flex-1 min-w-[240px]">
-              <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Search companies..." 
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm shadow-sm"
-              />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f1f5f9', padding: '2px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [...allCompanies] } : p));
+                }}
+                style={{ padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [] } : p));
+                }}
+                style={{ padding: '4px 10px', fontSize: '0.75rem', fontWeight 600, color: '#334155', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Clear All
+              </button>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [...allCompanies] } : p));
-                  }}
-                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-white hover:shadow-xs rounded transition-all"
-                >
-                  Select All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [] } : p));
-                  }}
-                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-white hover:shadow-xs rounded transition-all"
-                >
-                  Clear All
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-slate-700">Profile Mode:</label>
-                <select
-                  value={editingPreset.type || 'exclude'}
-                  onChange={(e) => {
-                    const newType = e.target.value as 'include' | 'exclude';
-                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, type: newType } : p));
-                  }}
-                  className="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm font-medium text-slate-800"
-                >
-                  <option value="exclude">Exclude Selected Companies</option>
-                  <option value="include">Include ONLY Selected Companies</option>
-                </select>
-              </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Mode:</label>
+              <select
+                value={editingPreset.type || 'exclude'}
+                onChange={(e) => {
+                  const newType = e.target.value as 'include' | 'exclude';
+                  setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, type: newType } : p));
+                }}
+                style={{ border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', padding: '5px 8px', backgroundColor: 'white', color: '#1e293b', fontWeight: 500 }}
+              >
+                <option value="exclude">Exclude Selected</option>
+                <option value="include">Include ONLY Selected</option>
+              </select>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+        {/* Scrollable Table View - Guaranteed Visible Height & Scroll */}
+        <div style={{ flex: '1 1 auto', overflowY: 'scroll', minHeight: '300px', maxHeight: 'calc(100vh - 240px)', position: 'relative' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#f8fafc', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
               <tr>
-                <th className="py-3 px-4 font-semibold text-sm text-slate-600 border-b border-slate-200 w-12 text-center">#</th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-28 text-center">
+                <th style={{ padding: '8px 12px', fontWeight: 600, fontSize: '0.8rem', color: '#475569', borderBottom: '1px solid #e2e8f0', width: '48px', textAlign: 'center' }}>#</th>
+                <th style={{ padding: '8px 16px', fontWeight: 600, fontSize: '0.8rem', color: '#475569', borderBottom: '1px solid #e2e8f0', width: '90px', textAlign: 'center' }}>
                   Select {selectedSet.size > 0 && `(${selectedSet.size})`}
                 </th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200">
+                <th style={{ padding: '8px 16px', fontWeight: 600, fontSize: '0.8rem', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
                   Company Name ({filteredCompanies.length} Companies)
                 </th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 text-right">
+                <th style={{ padding: '8px 16px', fontWeight: 600, fontSize: '0.8rem', color: '#475569', borderBottom: '1px solid #e2e8f0', textAlign: 'right' }}>
                   Items ({filteredCompanies.reduce((acc, c) => acc + (companyCounts.get(c) || 0), 0)} Total)
                 </th>
               </tr>

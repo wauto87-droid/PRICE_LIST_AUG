@@ -15,7 +15,7 @@ import './fulfillment.css';
 import MultiVectorToolbar from './MultiVectorToolbar';
 
 export default function FulfillmentEngine() {
-  const { items, setItems, activeTab, setActiveTab, filters, presets } = useTracker();
+  const { items, setItems, clearData, activeTab, setActiveTab, filters, presets } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -139,8 +139,8 @@ export default function FulfillmentEngine() {
   };
 
   const handleClear = () => {
-    if(window.confirm('Are you sure you want to clear all data?')) {
-      setItems([]);
+    if (window.confirm('Are you sure you want to clear all data records? (Your saved profiles and company names will be kept safely)')) {
+      clearData();
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };

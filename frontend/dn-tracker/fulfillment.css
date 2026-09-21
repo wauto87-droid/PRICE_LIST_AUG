@@ -85,9 +85,11 @@
 .fe-viewport {
   flex: 1;
   overflow: hidden;
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 120px);
 }
 
 /* Kanban Board */
