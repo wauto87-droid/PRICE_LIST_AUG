@@ -46,6 +46,16 @@ export default function PresetManagerView() {
     return Array.from(names).sort();
   }, [items, presets]);
 
+  const companyCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    items.forEach(item => {
+      if (item.customer) {
+        counts.set(item.customer, (counts.get(item.customer) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [items]);
+
   const toggleExclusion = (company: string) => {
     if (!editingPresetId) return;
     setPresets(prev => prev.map(p => {
@@ -129,13 +139,15 @@ export default function PresetManagerView() {
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
               <tr>
+                <th className="py-3 px-4 font-semibold text-sm text-slate-600 border-b border-slate-200 w-12 text-center">#</th>
                 <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-24 text-center">Select</th>
                 <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200">Company Name</th>
+                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 text-right">Items</th>
               </tr>
             </thead>
             <tbody>
               {filteredCompanies.length > 0 ? (
-                filteredCompanies.map(company => {
+                filteredCompanies.map((company, index) => {
                   const isSelected = selectedSet.has(company);
                   
                   const rowClass = isSelected 
@@ -147,6 +159,7 @@ export default function PresetManagerView() {
                     : "text-slate-300";
 
                   const selectedBgColor = isIncludeMode ? "#e0e7ff" : "#fee2e2"; // indigo-100 or red-100
+                  const itemCount = companyCounts.get(company) || 0;
 
                   return (
                     <tr 
@@ -155,6 +168,9 @@ export default function PresetManagerView() {
                       className={rowClass}
                       style={isSelected ? { backgroundColor: selectedBgColor } : {}}
                     >
+                      <td className="py-3 px-4 text-center text-slate-400 text-xs font-medium">
+                        {index + 1}
+                      </td>
                       <td className="py-3 px-6 text-center">
                         <div className="flex justify-center">
                           {isSelected ? (
@@ -167,12 +183,15 @@ export default function PresetManagerView() {
                       <td className="py-3 px-6 text-sm font-medium text-slate-700">
                         {company}
                       </td>
+                      <td className="py-3 px-6 text-sm text-slate-500 text-right">
+                        {itemCount}
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={2} className="py-12 text-center text-slate-500 text-sm">
+                  <td colSpan={4} className="py-12 text-center text-slate-500 text-sm">
                     No companies found matching your search.
                   </td>
                 </tr>
