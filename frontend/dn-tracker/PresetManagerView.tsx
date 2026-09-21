@@ -144,7 +144,7 @@ export default function PresetManagerView() {
                   const isSelected = selectedSet.has(company);
                   
                   const rowClass = isSelected 
-                    ? (isIncludeMode ? "border-b border-indigo-100 bg-indigo-50 hover:bg-indigo-100 cursor-pointer transition-colors" : "border-b border-rose-100 bg-rose-50 hover:bg-rose-100 cursor-pointer transition-colors")
+                    ? (isIncludeMode ? "border-b border-indigo-200 bg-indigo-100 hover:bg-indigo-200 cursor-pointer transition-colors" : "border-b border-red-200 bg-red-100 hover:bg-red-200 cursor-pointer transition-colors")
                     : "border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors";
                   
                   const badgeClass = isIncludeMode
