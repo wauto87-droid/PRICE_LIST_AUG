@@ -147,12 +147,6 @@ export default function PresetManagerView() {
                     ? (isIncludeMode ? "border-b border-indigo-200 bg-indigo-100 hover:bg-indigo-200 cursor-pointer transition-colors" : "border-b border-red-200 bg-red-100 hover:bg-red-200 cursor-pointer transition-colors")
                     : "border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors";
                   
-                  const badgeClass = isIncludeMode
-                    ? "ml-3 text-[10px] uppercase font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full border border-indigo-200"
-                    : "ml-3 text-[10px] uppercase font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200";
-
-                  const badgeText = isIncludeMode ? "Included" : "Excluded";
-
                   const checkboxClass = isSelected 
                     ? (isIncludeMode ? "text-indigo-600" : "text-rose-500")
                     : "text-slate-300";
@@ -174,7 +168,6 @@ export default function PresetManagerView() {
                       </td>
                       <td className="py-3 px-6 text-sm font-medium text-slate-700">
                         {company}
-                        {isSelected && <span className={badgeClass}>{badgeText}</span>}
                       </td>
                     </tr>
                   );
