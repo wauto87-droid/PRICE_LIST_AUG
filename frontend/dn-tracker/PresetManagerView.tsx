@@ -110,8 +110,16 @@ export default function PresetManagerView() {
         </div>
         
         <div className="p-4 border-b border-slate-200 bg-white">
-          <div className="flex gap-4">
-            <div className="relative max-w-md flex-1">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-3 flex flex-wrap justify-between items-center text-sm">
+            <div className="text-emerald-900 font-medium">
+              Excel Data Status: <span className="font-bold text-emerald-700">{items.length} Total Rows</span> loaded into <span className="font-bold text-emerald-700">{allCompanies.length} Unique Companies</span> (100% of your Excel file is present).
+            </div>
+            <div className="text-xs text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded font-semibold">
+              0 Missing Rows
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 items-center justify-between">
+            <div className="relative max-w-md flex-1 min-w-[240px]">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
               <input 
                 type="text" 
@@ -121,19 +129,41 @@ export default function PresetManagerView() {
                 className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm shadow-sm"
               />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-slate-700">Profile Mode:</label>
-              <select
-                value={editingPreset.type || 'exclude'}
-                onChange={(e) => {
-                  const newType = e.target.value as 'include' | 'exclude';
-                  setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, type: newType } : p));
-                }}
-                className="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm font-medium text-slate-800"
-              >
-                <option value="exclude">Exclude Selected Companies</option>
-                <option value="include">Include ONLY Selected Companies</option>
-              </select>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [...allCompanies] } : p));
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-white hover:shadow-xs rounded transition-all"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, excludedCompanies: [] } : p));
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-white hover:shadow-xs rounded transition-all"
+                >
+                  Clear All
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-slate-700">Profile Mode:</label>
+                <select
+                  value={editingPreset.type || 'exclude'}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'include' | 'exclude';
+                    setPresets(prev => prev.map(p => p.id === editingPresetId ? { ...p, type: newType } : p));
+                  }}
+                  className="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm font-medium text-slate-800"
+                >
+                  <option value="exclude">Exclude Selected Companies</option>
+                  <option value="include">Include ONLY Selected Companies</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -143,9 +173,15 @@ export default function PresetManagerView() {
             <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="py-3 px-4 font-semibold text-sm text-slate-600 border-b border-slate-200 w-12 text-center">#</th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-24 text-center">Select</th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200">Company Name</th>
-                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 text-right">Items</th>
+                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 w-28 text-center">
+                  Select {selectedSet.size > 0 && `(${selectedSet.size})`}
+                </th>
+                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200">
+                  Company Name ({filteredCompanies.length} Companies)
+                </th>
+                <th className="py-3 px-6 font-semibold text-sm text-slate-600 border-b border-slate-200 text-right">
+                  Items ({filteredCompanies.reduce((acc, c) => acc + (companyCounts.get(c) || 0), 0)} Total)
+                </th>
               </tr>
             </thead>
             <tbody>

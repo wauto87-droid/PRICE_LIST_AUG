@@ -62,7 +62,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
         <ul>
           <li className={selectedCustomer === null ? 'active' : ''} onClick={() => updateFilter('customerFilter', null)} style={{ cursor: 'pointer', padding: '10px 15px', borderBottom: '1px solid #e2e8f0' }}>
             <strong>All Companies</strong> 
-            <span className="badge" style={{ marginLeft: 10 }}>{activeItems.length} items</span>
+            <span className="badge" style={{ marginLeft: 10 }}>{customers.length} cos · {activeItems.length} items</span>
           </li>
           <div style={{ padding: '0.5rem 1rem' }}>
             <input 
