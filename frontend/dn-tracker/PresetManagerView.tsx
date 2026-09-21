@@ -80,7 +80,7 @@ export default function PresetManagerView() {
     const filteredCompanies = sortedCompanies.filter(c => c.toLowerCase().includes(searchTerm.toLowerCase()));
     
     return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-1" style={{ minHeight: 0 }}>
         <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <button 
@@ -205,7 +205,7 @@ export default function PresetManagerView() {
 
   // LIST MODE
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-1" style={{ minHeight: 0 }}>
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
         <div>
           <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
