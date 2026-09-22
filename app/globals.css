@@ -842,6 +842,19 @@ kbd {
   font-size: 12px;
   text-align: center;
 }
+.custom-price-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.custom-price-preview dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
 .custom-line-entry {
   margin: 0 0 14px;
 }

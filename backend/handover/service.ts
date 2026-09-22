@@ -225,7 +225,7 @@ export async function reusableCustomerPrices(db: DB, actor: Actor, raw: unknown)
     const previous = await one(db, `SELECT e.final_excl::text,q.number AS quotation_number,q.status,e.last_seen_at,CASE WHEN $2<>'' THEN 'CODE' ELSE 'NAME' END AS customer_match FROM price_watch_events e JOIN quotations q ON q.id=e.quotation_id WHERE e.item_key=$1 AND e.stage=q.status AND q.status IN ('DRAFT','ISSUED') AND e.final_excl>0 AND ($4::uuid IS NULL OR q.id<>$4) AND (CASE WHEN $2<>'' THEN btrim(COALESCE(q.customer->>'number',''))=$2 ELSE upper(regexp_replace(btrim(COALESCE(q.customer->>'name','')),'\\s+',' ','g'))=upper(regexp_replace(btrim($3),'\\s+',' ','g')) END) ORDER BY CASE q.status WHEN 'ISSUED' THEN 0 ELSE 1 END,e.last_seen_at DESC,e.id LIMIT 1`, [itemKey, value.customerNumber, value.customerName, value.excludeQuotationId ?? null]);
     if (!previous) { results.push({ index: item.index, itemKey, status: "NOT_FOUND" }); continue; }
     if (parsed.type === "CUSTOM") {
-      results.push({ index: item.index, itemKey, status: "MATCHED", input: { ...parsed, unitPriceExcl: previous.final_excl, discount: "0" }, previous });
+      results.push({ index: item.index, itemKey, status: "MATCHED", input: { ...parsed, unitPriceExcl: previous.final_excl, discount: "0", ...(parsed.markup === undefined ? {} : { markup: "0" }) }, previous });
       continue;
     }
     try {

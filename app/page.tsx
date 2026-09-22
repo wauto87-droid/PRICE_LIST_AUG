@@ -6,7 +6,6 @@ import Cart from "@/frontend/Cart";
 import Quotations from "@/frontend/Quotations";
 import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
 import Admin from "@/frontend/Admin";
-import { TrackerProvider } from "@/frontend/dn-tracker/TrackerContext";
 import FulfillmentEngine from "@/frontend/dn-tracker/FulfillmentEngine";
 import PwaInstaller from "@/frontend/PwaInstaller";
 import ConfirmModal from "@/frontend/ConfirmModal";
@@ -488,10 +487,10 @@ export default function App() {
                 : []),
               ...(session.user.permissions.includes("ADMIN_VIEW")
                 ? [
-                    ["dntracker", "DN Tracker", "متتبع أذونات التسليم"],
                     ["admin", "Admin", "الإدارة"],
                   ]
                 : []),
+              ...(session.user.permissions.includes('DN_TRACKER_VIEW') ? [["dntracker", "DN Tracker", "متتبع أذونات التسليم"]] : []),
             ].map(([key, en, ar]) => (
               <button
                 key={key}
@@ -659,12 +658,10 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "dntracker" &&
+            {tab === "dntracker" && session.user.permissions.includes('DN_TRACKER_VIEW') &&
               (online ? (
                 <div style={{ height: "calc(100vh - 120px)", overflow: "auto" }}>
-                  <TrackerProvider>
-                    <FulfillmentEngine />
-                  </TrackerProvider>
+                  <FulfillmentEngine t={t} user={session.user} />
                 </div>
               ) : (
                 <div className="card notice">

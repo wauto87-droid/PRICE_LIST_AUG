@@ -65,6 +65,8 @@ export function cartLineHasBlockingError(line: any) {
   if (!line?.input) return true;
   if (line.targetPriceError) return true;
   if (line.input?.type === "CUSTOM") {
+    if (line.input.markup !== undefined &&
+      !decimalPattern.test(decimalField(line.input.markup))) return true;
     if (importedUnresolvedCustom(line))
       return (
         !String(line.input.description ?? "").trim() ||

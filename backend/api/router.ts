@@ -20,6 +20,8 @@ import { basicImportTemplate } from "../imports/basic-templates";
 import * as salesChecks from "../sales-checks/service";
 import * as historicalPrices from "../historical-prices/service";
 import * as quantityFinder from "../quantity-finder/service";
+import * as dnTracker from "../dn-tracker/service";
+import { exportReport as exportDNReport } from "../dn-tracker/export";
 import * as reusableCustom from "../reusable-custom/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 import * as priceWatcher from "../price-watcher/service";
@@ -2203,6 +2205,26 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (!action && method === "DELETE")
           return response(await quantityFinder.remove(db, actor, id));
       }
+    }
+    if (root === 'dn-tracker') {
+      if(id==='metadata'&&method==='GET') return response(await dnTracker.metadata(db,actor));
+      if(id==='workbook'&&method==='POST') {
+        auth.requirePermission(actor,'DN_TRACKER_MANAGE');
+        const bytes=await readLimited(req,11*1024*1024);
+        const form=await new Request(req.url,{method:'POST',headers:{'content-type':req.headers.get('content-type')||''},body:new Uint8Array(bytes)}).formData();
+        const file=form.get('file');assert(file instanceof File,400,'Select a workbook');return response(await dnTracker.readWorkbook(actor,file));
+      }
+      if(id==='preview'&&method==='POST') return response(await dnTracker.preview(db,actor,await body(req)));
+      if(id==='commit'&&action&&method==='POST') return response(await dnTracker.commit(db,actor,uuid(action),await body(req)));
+      if(id==='list'&&method==='POST') return response(await dnTracker.list(db,actor,await body(req)));
+      if(id==='directory'&&action&&method==='GET') return response(await dnTracker.directory(db,actor,uuid(action)));
+      if(id==='note'&&action&&method==='GET') return response(await dnTracker.detail(db,actor,uuid(action),url.searchParams.get('snapshot')||undefined));
+      if(id==='note'&&action&&method==='PUT') return response(await dnTracker.updateNote(db,actor,uuid(action),await body(req)));
+      if(id==='views'&&method==='POST') return response(await dnTracker.saveView(db,actor,undefined,await body(req)));
+      if(id==='views'&&action&&method==='PUT') return response(await dnTracker.saveView(db,actor,uuid(action),await body(req)));
+      if(id==='views'&&action&&method==='DELETE') return response(await dnTracker.removeView(db,actor,uuid(action),z.number().int().positive().parse((await body(req)).version)));
+      if(id==='archive'&&action&&method==='POST') return response(await dnTracker.archive(db,actor,uuid(action),z.number().int().positive().parse((await body(req)).version)));
+      if(id==='export'&&method==='POST') {const data=await exportDNReport(db,actor,await body(req));return new Response(new Uint8Array(data.bytes),{headers:{'Content-Type':data.type,'Content-Disposition':`attachment; filename="AMT-DN-tracker.${data.extension}"`,'Cache-Control':'no-store'}});}
     }
     if (root === "quantity-finder-exports" && id) {
       auth.requirePermission(actor, "QUANTITY_FINDER");

@@ -38,6 +38,7 @@ const unresolvedImportedCustom = (line: any) =>
 export const blankZeroDiscount = (value: unknown) =>
   Number(String(value ?? "").trim() || "0") === 0 ? "" : String(value);
 const catalogUsesMarkup = (line: any, loadedLevels: any[] = []) => {
+  if (line.input?.type === "CUSTOM") return line.input.markup !== undefined;
   // Current server configuration must override stale fields stored in a draft.
   if (line.price?.adjustmentMode)
     return line.price.adjustmentMode === "MARKUP";
@@ -453,8 +454,15 @@ export default function Cart({
       if (l.input?.type === "CUSTOM") {
         let input = {
           ...sanitizeCustomInput(l.input),
-          [key]: key === "discount" && !value.trim() ? "0" : value,
+          [key]: (key === "discount" || key === "markup") && !value.trim() ? "0" : value,
         };
+        if (key === "adjustmentMode") {
+          const percentage = l.input.markup ?? l.input.discount ?? "0";
+          delete input.adjustmentMode;
+          delete input.markup;
+          input.discount = value === "DISCOUNT" ? percentage : "0";
+          if (value === "MARKUP") input.markup = percentage;
+        }
         if (key === "unitPriceExcl" && importedDeliveryMeta({ input })) {
           input = {
             ...input,
@@ -1071,6 +1079,14 @@ export default function Cart({
                     />
                   </td>
                   <td>
+                    {l.input?.type === "CUSTOM" && (
+                      <select aria-label={t("Adjustment", "التعديل") + " " + (i + 1)}
+                        value={l.input.markup === undefined ? "DISCOUNT" : "MARKUP"}
+                        onChange={(e) => change(i, "adjustmentMode", e.target.value)}>
+                        <option value="DISCOUNT">{t("Discount", "خصم")}</option>
+                        <option value="MARKUP">{t("Markup", "زيادة")}</option>
+                      </select>
+                    )}
                     {l.input?.type !== "CUSTOM" && (
                       <small>
                         {catalogUsesMarkup(l, options[l.productId])

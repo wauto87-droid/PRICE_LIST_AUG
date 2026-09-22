@@ -53,6 +53,7 @@ const unresolvedImportedCustomLineInput = z
       .union([z.literal(""), z.undefined(), z.literal("0"), decimal])
       .default("0"),
     discount: percent.default("0"),
+    markup: decimal.optional(),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
     watcherEventId: z.string().uuid().optional(),

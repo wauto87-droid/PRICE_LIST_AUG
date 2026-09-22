@@ -113,6 +113,7 @@ export const customLineInput = z
     quantity: decimal,
     unitPriceExcl: decimal,
     discount: percent.default("0"),
+    markup: markupPercent.optional(),
     vat: percent.optional(),
     reusableItemId: z.string().uuid().optional(),
     watcherEventId: z.string().uuid().optional(),
@@ -350,14 +351,21 @@ export function calculateCustom(
     );
   const rate = percent.parse(vat);
   const master = new Decimal(parsed.unitPriceExcl);
-  const requested = new Decimal(parsed.discount);
+  const isMarkup = parsed.markup !== undefined;
+  const requested = new Decimal(isMarkup ? "0" : parsed.discount);
+  const requestedMarkup = new Decimal(parsed.markup ?? "0");
   const final = new Decimal(
-    money(master.mul(new Decimal(1).sub(requested.div(100)))),
+    money(master.mul(isMarkup
+      ? new Decimal(1).add(requestedMarkup.div(100))
+      : new Decimal(1).sub(requested.div(100)))),
   );
   const subtotal = money(final.mul(qty));
   const vatAmount = money(new Decimal(subtotal).mul(rate).div(100));
   return {
     sellingLevel: "CUSTOM" as const,
+    adjustmentMode: isMarkup ? "MARKUP" as const : "DISCOUNT" as const,
+    requestedMarkup: requestedMarkup.toString(),
+    effectiveMarkup: requestedMarkup.toString(),
     masterExcl: master.toFixed(2),
     masterIncl: money(
       master.mul(new Decimal(1).add(new Decimal(rate).div(100))),

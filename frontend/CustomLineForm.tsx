@@ -22,6 +22,7 @@ const blank = (partNumber = "") => ({
   quantity: "1",
   unitPriceExcl: "",
   discount: "",
+  markup: undefined as string | undefined,
   reusableItemId: undefined as string | undefined,
 });
 export default function CustomLineForm({
@@ -90,6 +91,7 @@ export default function CustomLineForm({
       quantity: "1",
       unitPriceExcl: String(item.suggestedUnitPrice),
       discount: String(item.suggestedDiscount),
+      markup: undefined,
       reusableItemId: item.id,
     });
     setError("");
@@ -105,6 +107,11 @@ export default function CustomLineForm({
     setActiveResult(-1);
     setDuplicateMatch(null);
   }
+  let preview: ReturnType<typeof calculateCustom> | null = null;
+  try {
+    preview = calculateCustom({ type: "CUSTOM", ...value, discount: value.discount.trim() || "0",
+      ...(value.markup === undefined ? {} : { markup: value.markup.trim() || "0" }) }, vat);
+  } catch { /* Incomplete input has no calculated preview. */ }
   async function add() {
     try {
       const reference = value.partNumber.trim();
@@ -139,6 +146,7 @@ export default function CustomLineForm({
         type: "CUSTOM",
         ...value,
         discount: String(value.discount ?? "").trim() || "0",
+        ...(value.markup === undefined ? {} : { markup: value.markup.trim() || "0" }),
         watcherEventId: crypto.randomUUID(),
       });
       void api("price-watcher/cart", "POST", {
@@ -386,7 +394,7 @@ export default function CustomLineForm({
               />
             </label>
             <label>
-              {t("Unit price excl. VAT", "سعر الوحدة قبل الضريبة")}
+              {t("Base unit price excl. VAT", "سعر الوحدة الأساسي قبل الضريبة")}
               <input
                 type="number"
                 min="0"
@@ -399,24 +407,41 @@ export default function CustomLineForm({
               />
             </label>
             <label>
-              {t("Discount % (optional)", "الخصم % (اختياري)")}
+              {t("Adjustment", "التعديل")}
+              <select aria-label={t("Adjustment", "التعديل")} value={value.markup === undefined ? "DISCOUNT" : "MARKUP"}
+                onChange={(e) => setValue({ ...value,
+                  discount: e.target.value === "DISCOUNT" ? value.markup ?? value.discount : "0",
+                  markup: e.target.value === "MARKUP" ? value.discount : undefined,
+                })}>
+                <option value="DISCOUNT">{t("Discount", "خصم")}</option>
+                <option value="MARKUP">{t("Markup", "زيادة")}</option>
+              </select>
+            </label>
+            <label>
+              {value.markup === undefined ? t("Discount % (optional)", "الخصم % (اختياري)") : t("Markup % (optional)", "الزيادة % (اختياري)")}
               <input
                 type="number"
                 min="0"
-                max="100"
+                max={value.markup === undefined ? "100" : undefined}
                 step="0.01"
                 {...discountSafeNumberInputProps}
                 value={
-                  Number(String(value.discount ?? "").trim() || "0") === 0
+                  Number(String(value.markup ?? value.discount ?? "").trim() || "0") === 0
                     ? ""
-                    : value.discount
+                    : value.markup ?? value.discount
                 }
                 onChange={(e) =>
-                  setValue({ ...value, discount: e.target.value })
+                  setValue({ ...value, [value.markup === undefined ? "discount" : "markup"]: e.target.value })
                 }
               />
             </label>
           </div>
+          {preview && <dl className="custom-price-preview" aria-live="polite">
+            <dt>{t("Final unit price excl. VAT", "سعر الوحدة النهائي قبل الضريبة")}</dt><dd>{preview.finalExcl}</dd>
+            <dt>{t("Subtotal", "المجموع الفرعي")}</dt><dd>{preview.subtotal}</dd>
+            <dt>{t("VAT", "الضريبة")}</dt><dd>{preview.vatAmount}</dd>
+            <dt>{t("Total incl. VAT", "الإجمالي شامل الضريبة")}</dt><dd>{preview.total}</dd>
+          </dl>}
           <p className="muted">
             {t(
               `VAT ${vat}% is calculated automatically.`,

@@ -104,3 +104,8 @@ export async function api<T = any>(
   return data;
 }
 export type Translate = (en: string, ar: string) => string;
+export async function downloadApi(path: string, body: unknown, filename: string) {
+ const result=await fetch(appPath('/api/v1/'+path),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':sessionState.amtCsrf??''},body:JSON.stringify(body)});
+ if(!result.ok){const data=await readApiResponse(result);throw new Error(data?.error||`Export failed (${result.status})`);}
+ const url=URL.createObjectURL(await result.blob());const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
