@@ -10,6 +10,7 @@ import { assert } from '../core/errors';
 import { audit, json } from '../core/audit';
 import { requirePermission, type Actor } from '../auth/service';
 import { fields, parseRows, groupLines, stages } from '../../shared/dn-tracker';
+import { reviewDuplicates } from './duplicates';
 const digest=(x:unknown)=>createHash('sha256').update(json(x)).digest('hex');
 const allowed=(a:Actor,p='VIEW')=>requirePermission(a,`DN_TRACKER_${p}`);
 export async function readWorkbook(actor:Actor, file:File) {
@@ -18,7 +19,7 @@ export async function readWorkbook(actor:Actor, file:File) {
  const book=new ExcelJS.Workbook(); const buffer=Buffer.from(await file.arrayBuffer());
  if(/\.xls$/i.test(file.name)) {
   const result=await new Promise<string>((resolve,reject)=>{
-   const child=spawn(process.env.PYTHON_BIN||'python3',[path.join(process.cwd(),'scripts/dn-xls.py')],{windowsHide:true});
+   const child=spawn(process.env.PYTHON_BIN||'python3',[path.join(process.cwd(),'scripts/dn-xls.py')],{windowsHide:true,env:{...process.env,PYTHONIOENCODING:'utf-8'}});
    let output='',errors='';const timer=setTimeout(()=>{child.kill();reject(new Error('Workbook parsing timed out'));},30000);
    child.stdout.on('data',b=>{output+=b;if(output.length>25*1024*1024){child.kill();reject(new Error('Expanded workbook is too large'));}});
    child.stderr.on('data',b=>{errors+=b;});child.on('error',e=>{clearTimeout(timer);reject(e);});
@@ -52,19 +53,22 @@ export async function metadata(db:DB,actor:Actor) {
 const mappingSchema=z.object(Object.fromEntries(fields.map(k=>[k,z.number().int().min(-1).max(99)])) as Record<typeof fields[number],z.ZodNumber>);
 export async function preview(db:DB,actor:Actor,raw:unknown) {
  allowed(actor,'MANAGE');
- const v=z.object({reportId:z.string().uuid().optional(),name:z.string().trim().min(1).max(150),filename:z.string().max(250),reportDate:z.iso.date(),header:z.number().int().min(0).max(100),dateOrder:z.enum(['ISO','DMY','MDY']).default('ISO'),mapping:mappingSchema,rows:z.array(z.array(z.string().max(2000)).max(100)).min(2).max(20001)}).parse(raw);
+ const v=z.object({previewId:z.string().uuid().optional(),duplicateDecisions:z.record(z.string().regex(/^[a-f0-9]{64}$/),z.enum(['KEEP_ALL','KEEP_FIRST'])).default({}),reportId:z.string().uuid().optional(),name:z.string().trim().min(1).max(150),filename:z.string().max(250),reportDate:z.iso.date(),header:z.number().int().min(0).max(100),dateOrder:z.enum(['ISO','DMY','MDY']).default('ISO'),mapping:mappingSchema,rows:z.array(z.array(z.string().max(2000)).max(100)).min(2).max(20001)}).parse(raw);
  const parsed=parseRows(v.rows,v.mapping,v.header,v.dateOrder);
- const groups=groupLines(parsed.lines);
+ const review=reviewDuplicates(parsed.lines,v.duplicateDecisions);
+ const groups=groupLines(review.included);
  assert(groups.length,400,'No valid delivery notes found');
- // Exact duplicates must be reviewed rather than silently double counted or removed.
- const seen=new Set<string>();
- for(const l of parsed.lines) { const {row,review,...content}=l; const key=digest(content); if(seen.has(key)) parsed.issues.push({row,message:'Duplicate source row: remove or correct it before committing'});seen.add(key); }
  const labels=new Map<string,Set<string>>();
  for(const g of groups) {const set=labels.get(g.customerKey)||new Set<string>();set.add(g.customer);labels.set(g.customerKey,set);}
  const ambiguous=[...labels].filter(([,names])=>names.size>1).map(([key,names])=>({key,names:[...names]}));
  return db.transaction(async tx=>{
-  let report=v.reportId ? await one(tx,'SELECT * FROM dn_reports WHERE id=$1 FOR UPDATE',[v.reportId]) : null;
-  if(v.reportId) assert(report&&!report.archived,404,'Active report not found');
+  const previous=v.previewId ? await one(tx,'SELECT * FROM dn_snapshots WHERE id=$1 FOR UPDATE',[v.previewId]) : null;
+  if(v.previewId) assert(previous&&previous.state==='PREVIEW'&&previous.created_by===actor.id,409,'Preview unavailable. Preview the file again');
+  if(previous&&v.reportId) assert(previous.report_id===v.reportId,400,'Preview belongs to another report');
+  const reportId=previous?.report_id||v.reportId;
+  let report=reportId ? await one(tx,'SELECT * FROM dn_reports WHERE id=$1 FOR UPDATE',[reportId]) : null;
+  if(reportId) assert(report&&!report.archived,404,'Active report not found');
+  if(previous) assert(report!.version===previous.base_version,409,'Report changed. Preview the upload again');
   if(!report) report=await one(tx,'INSERT INTO dn_reports(id,name,created_by) VALUES($1,$2,$3) RETURNING *',[randomUUID(),v.name,actor.id]);
   const old=(await tx.query('SELECT * FROM dn_entries WHERE snapshot_id=$1',[report!.current_snapshot])).rows;
   const oldMap=new Map(old.map(r=>[r.identity_key,r]));
@@ -75,9 +79,12 @@ export async function preview(db:DB,actor:Actor,raw:unknown) {
   const missing=old.filter(g=>!keys.has(g.identity_key)).map(g=>g.doc_no);
   const resolved=(await tx.query("SELECT n.identity_key FROM dn_notes n WHERE n.report_id=$1 AND n.stage='RESOLVED'",[report!.id])).rows;
   const resolvedChanged=entries.filter(g=>resolved.some(n=>n.identity_key===g.identity)&&oldMap.get(g.identity)?.digest!==g.digest).map(g=>g.docNo);
-  const comparison={added,changed,missing,resolvedChanged,ambiguous,notes:entries.length,rows:parsed.lines.length,customers:new Set(entries.map(g=>g.customerKey)).size};
-  const id=randomUUID();
-  await tx.query("INSERT INTO dn_snapshots(id,report_id,filename,report_date,created_by,state,base_version,digest,issues,comparison) VALUES($1,$2,$3,$4,$5,'PREVIEW',$6,$7,$8,$9)",[id,report!.id,v.filename,v.reportDate,actor.id,report!.version,digest(entries),json(parsed.issues),json(comparison)]);
+  const comparison={added,changed,missing,resolvedChanged,ambiguous,notes:entries.length,rows:review.included.length,sourceRows:v.rows.slice(v.header+1).filter(r=>r.some(c=>c.trim())).length,excludedRows:review.excluded.length,duplicateReview:{version:1,groups:review.duplicates,excluded:review.excluded,unresolved:review.unresolved},customers:new Set(entries.map(g=>g.customerKey)).size};
+  const id=previous?.id||randomUUID();
+  if(previous) {
+   await tx.query('DELETE FROM dn_entries WHERE snapshot_id=$1',[id]);
+   await tx.query('UPDATE dn_snapshots SET filename=$2,report_date=$3,digest=$4,issues=$5,comparison=$6 WHERE id=$1',[id,v.filename,v.reportDate,digest(entries),json(parsed.issues),json(comparison)]);
+  } else await tx.query("INSERT INTO dn_snapshots(id,report_id,filename,report_date,created_by,state,base_version,digest,issues,comparison) VALUES($1,$2,$3,$4,$5,'PREVIEW',$6,$7,$8,$9)",[id,report!.id,v.filename,v.reportDate,actor.id,report!.version,digest(entries),json(parsed.issues),json(comparison)]);
   for(const g of entries) await tx.query('INSERT INTO dn_entries(snapshot_id,identity_key,customer_key,customer,customer_code,doc_no,doc_date,billing,outstanding,has_returns,search_text,quantities,lines,digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',[id,g.identity,g.customerKey,g.customer,g.customerCode,g.docNo,g.date,g.billing,g.outstanding,g.hasReturns,[g.customer,g.customerCode,g.docNo,...g.lines.map((l:any)=>l.itemCode+' '+l.itemName)].join(' '),json(g.quantities),json(g.lines),g.digest]);
   return {id,reportId:report!.id,comparison,issues:parsed.issues,sample:entries.slice(0,10)};
  });
@@ -89,7 +96,9 @@ export async function commit(db:DB,actor:Actor,id:string,raw:unknown) {
   const r=await one(tx,'SELECT * FROM dn_reports WHERE id=$1 FOR UPDATE',[s.report_id]);
   if(s.state==='CURRENT') return r;
   assert(!r!.archived && s.state==='PREVIEW' && r!.version===s.base_version,409,'Report changed. Preview the upload again');
-  assert(!s.issues.length,400,'Correct all invalid or duplicate rows before committing');
+  assert(s.comparison.duplicateReview?.version===1,409,'Preview the file again to review repeated rows');
+  assert(!s.comparison.duplicateReview.unresolved,400,'Choose how to handle each repeated-row group');
+  assert(!s.issues.length,400,'Correct all invalid rows before committing');
   assert(v.acknowledge,400,'Confirm the import comparison');
   const entries=(await tx.query('SELECT * FROM dn_entries WHERE snapshot_id=$1',[id])).rows;
   for(const e of entries) {
@@ -176,6 +185,19 @@ export async function saveView(db:DB,actor:Actor,id:string|undefined,raw:unknown
 }
 export async function removeView(db:DB,actor:Actor,id:string,version:number) {
  allowed(actor,'MANAGE');return db.transaction(async tx=>{const r=await tx.query('DELETE FROM dn_saved_views WHERE id=$1 AND version=$2 RETURNING id',[id,version]);assert(r.rows.length,409,'Saved view changed. Refresh');await audit(tx,actor.id,'DN_VIEW_DELETE','dn_saved_views',id);return {ok:true};});
+}
+export async function clearReport(db:DB,actor:Actor,id:string,version:number) {
+ allowed(actor,'MANAGE');
+ return db.transaction(async tx=>{
+  const report=await one(tx,'SELECT * FROM dn_reports WHERE id=$1 FOR UPDATE',[id]);
+  assert(report&&!report.archived,404,'Active report not found');
+  assert(report.version===version,409,'Report changed. Refresh before clearing');
+  assert(report.current_snapshot,400,'This report is already empty');
+  await tx.query("UPDATE dn_snapshots SET state='ARCHIVED' WHERE id=$1 AND state='CURRENT'",[report.current_snapshot]);
+  await tx.query('UPDATE dn_reports SET current_snapshot=NULL,version=version+1 WHERE id=$1',[id]);
+  await audit(tx,actor.id,'DN_REPORT_CLEARED','dn_reports',id,{snapshot:report.current_snapshot},{snapshot:null,historyPreserved:true});
+  return {id};
+ });
 }
 export async function archive(db:DB,actor:Actor,id:string,version:number) {
  allowed(actor,'MANAGE');return db.transaction(async tx=>{const r=await tx.query('UPDATE dn_reports SET archived=NOT archived,version=version+1 WHERE id=$1 AND version=$2 RETURNING *',[id,version]);assert(r.rows.length,409,'Report changed. Refresh');await audit(tx,actor.id,'DN_REPORT_ARCHIVE','dn_reports',id,null,r.rows[0]);return r.rows[0];});

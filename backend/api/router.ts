@@ -2223,6 +2223,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if(id==='views'&&method==='POST') return response(await dnTracker.saveView(db,actor,undefined,await body(req)));
       if(id==='views'&&action&&method==='PUT') return response(await dnTracker.saveView(db,actor,uuid(action),await body(req)));
       if(id==='views'&&action&&method==='DELETE') return response(await dnTracker.removeView(db,actor,uuid(action),z.number().int().positive().parse((await body(req)).version)));
+      if(id==='clear'&&action&&method==='POST') return response(await dnTracker.clearReport(db,actor,uuid(action),z.number().int().positive().parse((await body(req)).version)));
       if(id==='archive'&&action&&method==='POST') return response(await dnTracker.archive(db,actor,uuid(action),z.number().int().positive().parse((await body(req)).version)));
       if(id==='export'&&method==='POST') {const data=await exportDNReport(db,actor,await body(req));return new Response(new Uint8Array(data.bytes),{headers:{'Content-Type':data.type,'Content-Disposition':`attachment; filename="AMT-DN-tracker.${data.extension}"`,'Cache-Control':'no-store'}});}
     }
