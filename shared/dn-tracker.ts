@@ -41,7 +41,7 @@ export function parseRows(rows: string[][], mapping: Record<DNField,number>, hea
  if (new Set(mapped).size !== mapped.length) throw new Error('Each column can only be mapped once');
  rows.slice(header+1).forEach((row,index)=>{
   if (row.every(v=>!String(v).trim())) return;
-  const line = Object.fromEntries(fields.map(k=>[k,mapping[k]<0 ? '' : String(row[mapping[k]]??'').trim()])) as DNLine;
+  const line = Object.fromEntries(fields.map(k=>[k,mapping[k]<0 ? '' : String(row[mapping[k]]??'').trim()])) as unknown as DNLine;
   line.row = header+index+2;
   let dateRaw=line.date;
   if (dateOrder!=='ISO') { const m=dateRaw.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/); if(m) dateRaw=`${m[3]}-${(dateOrder==='DMY'?m[2]:m[1]).padStart(2,'0')}-${(dateOrder==='DMY'?m[1]:m[2]).padStart(2,'0')}`; }

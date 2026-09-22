@@ -1,4 +1,5 @@
 node_modules/
+tmp/dn-python/
 .next/
 .env
 .env.local
