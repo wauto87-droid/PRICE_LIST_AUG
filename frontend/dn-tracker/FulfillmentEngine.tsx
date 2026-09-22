@@ -4,7 +4,7 @@ import { Upload, Download, Printer, Settings, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { detectColumnIndices, deriveItemStatus } from './engineLogic';
 import { exportToExcelCsv, printToPdf } from './exportLogic';
-import { useTracker } from './TrackerContext';
+import { useTracker, TrackerProvider } from './TrackerContext';
 import BoardView from './BoardView';
 import CustomerSheetsView from './CustomerSheetsView';
 import PendingTableView from './PendingTableView';
@@ -14,7 +14,7 @@ import './fulfillment.css';
 
 import MultiVectorToolbar from './MultiVectorToolbar';
 
-export default function FulfillmentEngine() {
+function FulfillmentEngineInner({ t, user }: any = {}) {
   const { items, setItems, clearData, activeTab, setActiveTab, filters, presets } = useTracker();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -252,5 +252,13 @@ export default function FulfillmentEngine() {
         {activeTab === 'presets' && <PresetManagerView />}
       </div>
     </div>
+  );
+}
+
+export default function FulfillmentEngine(props: any) {
+  return (
+    <TrackerProvider>
+      <FulfillmentEngineInner {...props} />
+    </TrackerProvider>
   );
 }
