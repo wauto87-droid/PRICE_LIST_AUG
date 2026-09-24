@@ -2217,7 +2217,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       if(id==='preview'&&method==='POST') return response(await dnTracker.preview(db,actor,await body(req)));
       if(id==='commit'&&action&&method==='POST') return response(await dnTracker.commit(db,actor,uuid(action),await body(req)));
       if(id==='list'&&method==='POST') return response(await dnTracker.list(db,actor,await body(req)));
-      if(id==='directory'&&action&&method==='GET') return response(await dnTracker.directory(db,actor,uuid(action)));
+      if(id==='directory'&&action&&method==='GET') return response(await dnTracker.directory(db,actor,uuid(action),url.searchParams.get('snapshot')||undefined));
       if(id==='note'&&action&&method==='GET') return response(await dnTracker.detail(db,actor,uuid(action),url.searchParams.get('snapshot')||undefined));
       if(id==='note'&&action&&method==='PUT') return response(await dnTracker.updateNote(db,actor,uuid(action),await body(req)));
       if(id==='views'&&method==='POST') return response(await dnTracker.saveView(db,actor,undefined,await body(req)));

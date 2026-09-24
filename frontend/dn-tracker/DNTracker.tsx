@@ -1,51 +1,1040 @@
-'use client';
-import {useState,useEffect,useRef} from 'react';
-import {api,downloadApi,type Translate} from '../api';
-import {showConfirm,showPrompt} from '../confirm';
-import {fields,fieldNames,displayDate,stages,stageNames,billingNames} from '../../shared/dn-tracker';
-import {DNDialog} from './controls';
-import BoardView from './BoardView';
-import Filters,{defaults} from './Filters';
-import SharedViews from './SharedViews';
-import ImportDialog from './ImportDialog';
-import './tracker.css';
-export default function DNTracker({t,user}:{t:Translate;user:any}) {
- const manage=user.permissions.includes('DN_TRACKER_MANAGE'),edit=user.permissions.includes('DN_TRACKER_EDIT');
- const [meta,setMeta]=useState<any>({reports:[],views:[],users:[]}),[reportId,setReportId]=useState(''),[filters,setFilters]=useState<any>(defaults),[data,setData]=useState<any>(),[directory,setDirectory]=useState<any>({customers:[],snapshots:[]});
- const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[tick,setTick]=useState(0),[detail,setDetail]=useState<any>(),[comment,setComment]=useState(''),[undo,setUndo]=useState<any>();
- const [upload,setUpload]=useState<any>(),[manager,setManager]=useState(false),[viewDraft,setViewDraft]=useState<any>(),[exporting,setExporting]=useState(false),[exportScope,setExportScope]=useState('LINES');
- const input=useRef<HTMLInputElement>(null),request=useRef(0),detailRequest=useRef(0);
- const refresh=()=>setTick(n=>n+1),report=meta.reports.find((r:any)=>r.id===reportId),historical=!!filters.snapshotId||report?.archived;
- const change=(key:string,value:any)=>setFilters((f:any)=>({...f,[key]:value,page:0}));
- async function run(task:()=>Promise<void>){setBusy(true);setError('');try{await task();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
- useEffect(()=>{let alive=true;void api('dn-tracker/metadata').then(m=>{if(!alive)return;setMeta(m);setReportId(current=>current||m.reports.find((r:any)=>!r.archived)?.id||'');}).catch(e=>alive&&setError(e.message));return()=>{alive=false;};},[tick]);
- useEffect(()=>{const listener=()=>refresh();window.addEventListener('focus',listener);return()=>window.removeEventListener('focus',listener);},[]);
- useEffect(()=>{const id=++request.current;if(!reportId){setData(undefined);return;}setLoading(true);const timer=setTimeout(()=>{void Promise.all([api('dn-tracker/list','POST',{...filters,reportId}),api('dn-tracker/directory/'+reportId)]).then(([result,dir])=>{if(id!==request.current)return;setData(result);setDirectory(dir);}).catch(e=>{if(id===request.current)setError(e.message);}).finally(()=>{if(id===request.current)setLoading(false);});},180);return()=>{clearTimeout(timer);++request.current;};},[reportId,filters,tick]);
- async function open(id:string){const seq=++detailRequest.current;await run(async()=>{const d=await api('dn-tracker/note/'+id+(filters.snapshotId?'?snapshot='+encodeURIComponent(filters.snapshotId):''));if(seq===detailRequest.current){setDetail(d);setComment('');}});}
- async function move(note:any,stage:string){if(busy||stage===note.stage||!stages.includes(stage as any)||historical)return;let text='';if(stage==='RESOLVED'){const entered=await showPrompt(t('Enter a short resolution note. Imported balances remain unchanged.','أدخل ملاحظة إنهاء المتابعة. الأرصدة المستوردة لا تتغير.'));if(entered===null)return;text=entered.trim();if(text.length<3){setError(t('Enter at least three characters.','أدخل ثلاثة أحرف على الأقل.'));return;}}
-  const previous=data;setData((d:any)=>({...d,rows:d.rows.map((r:any)=>r.id===note.id?{...r,stage}:r)}));
-  await run(async()=>{try{const updated=await api('dn-tracker/note/'+note.id,'PUT',{version:note.version,stage,comment:text});setUndo({id:note.id,stage:note.stage,version:updated.version});setNotice(t('Follow-up moved. Billing figures are unchanged.','تم نقل المتابعة دون تغيير بيانات الفوترة.'));refresh();if(detail?.id===note.id)setDetail((d:any)=>({...d,...updated}));}catch(e){setData(previous);throw e;}});
- }
- async function updateDetail(patch:any){await run(async()=>{await api('dn-tracker/note/'+detail.id,'PUT',{version:detail.version,...patch});setDetail(await api('dn-tracker/note/'+detail.id));setComment('');refresh();});}
- async function loadFile(file:File){await run(async()=>{const form=new FormData();form.set('file',file);setUpload(await api('dn-tracker/workbook','POST',form));});}
- const sort=(key:string)=>setFilters((f:any)=>({...f,sort:key,direction:f.sort===key&&f.direction==='asc'?'desc':'asc',page:0}));
- const time=(s:string)=>new Date(s).toLocaleString(t('en-GB','ar-SA'),{timeZone:'Asia/Riyadh'});
- return <section className="dn-tracker" aria-label={t('DN Tracker','متتبع أذونات التسليم')}>
- <header className="dn-header"><div><span className="eyebrow">{t('CUSTOMER FOLLOW-UP','متابعة العملاء')}</span><h1>{t('DN Tracker','متتبع أذونات التسليم')}</h1><p className="muted">{t('Find unbilled delivery notes. Organize the next step.','حدد أذونات التسليم غير المفوترة ونظم الخطوة التالية.')}</p></div><div className="actions">{manage&&<button className="primary" disabled={busy} onClick={()=>input.current?.click()}>{t('Import report','استيراد تقرير')}</button>}<input ref={input} type="file" hidden accept=".xlsx,.xls,.csv" onChange={e=>{const file=e.target.files?.[0];if(file)void loadFile(file);e.target.value='';}}/><button disabled={!data||busy} onClick={()=>setExporting(true)}>{t('Export','تصدير')}</button>{manage&&report&&!report.archived&&<button disabled={busy||!report.current_snapshot} onClick={()=>void run(async()=>{if(!await showConfirm(t('Clear the current data for this report? An archived copy and all follow-up history will be kept. Other reports will not change.','مسح البيانات الحالية لهذا التقرير؟ سيتم الاحتفاظ بنسخة مؤرشفة وسجل المتابعة دون تغيير التقارير الأخرى.'),{title:t('Clear selected report','مسح التقرير المحدد'),confirmText:t('Clear current data','مسح البيانات الحالية'),tone:'warning'}))return;await api('dn-tracker/clear/'+reportId,'POST',{version:report.version});setDetail(null);setUndo(null);setFilters(defaults);setNotice(t('Current report cleared. Previous data is available in archived snapshots.','تم مسح التقرير الحالي. البيانات السابقة متاحة في النسخ المؤرشفة.'));refresh();})}>{t('Clear selected report','مسح التقرير المحدد')}</button>}<button disabled={busy||loading} onClick={refresh}>{t('Refresh','تحديث')}</button></div></header>
- {error&&<div role="alert" className="notice error">{error}<button onClick={()=>setError('')}>×</button></div>}
- {notice&&<div role="status" className="notice success">{notice}{undo&&<button disabled={busy} onClick={()=>void run(async()=>{await api('dn-tracker/note/'+undo.id,'PUT',{version:undo.version,stage:undo.stage,comment:t('Undo follow-up move','التراجع عن نقل المتابعة')});setUndo(null);setNotice('');refresh();})}>{t('Undo','تراجع')}</button>}<button onClick={()=>{setNotice('');setUndo(null);}}>×</button></div>}
- <div className="dn-report-bar"><label>{t('Report','التقرير')}<select value={reportId} onChange={e=>{setReportId(e.target.value);setFilters(defaults);setDetail(null);}}><option value="">{t('Select report','اختر التقرير')}</option>{meta.reports.map((r:any)=><option key={r.id} value={r.id}>{r.name}{r.archived?' · '+t('Archived','مؤرشف'):''}</option>)}</select></label>{report&&<><span>{displayDate(report.report_date)} · {report.uploader||'—'}<small>{report.imported_at?time(report.imported_at):t('Awaiting import','بانتظار الاستيراد')}</small></span><label>{t('Snapshot','النسخة')}<select value={filters.snapshotId||''} onChange={e=>change('snapshotId',e.target.value||undefined)}><option value="">{t('Current report','التقرير الحالي')}</option>{directory.snapshots.map((s:any)=><option key={s.id} value={s.id}>{displayDate(s.report_date)} · {time(s.created_at)}</option>)}</select></label>{manage&&<button disabled={busy} onClick={()=>void run(async()=>{if(await showConfirm(t('Change the archive status of this report?','تغيير حالة أرشفة التقرير؟'))) {await api('dn-tracker/archive/'+reportId,'POST',{version:report.version});refresh();}})}>{report.archived?t('Restore report','استعادة التقرير'):t('Archive report','أرشفة التقرير')}</button>}</>}</div>
- {historical&&<p className="notice">{t('Archived snapshot: billing figures are historical. Follow-up history remains current.','نسخة مؤرشفة: بيانات الفوترة تاريخية وسجل المتابعة حالي.')}</p>}
- {!reportId?<div className="dn-empty-state"><h2>{t('Start with a delivery-note report','ابدأ بتقرير أذونات التسليم')}</h2><p>{t('Upload XLS, XLSX or CSV. Review the columns and changes before saving.','ارفع ملف XLS أو XLSX أو CSV وراجع الأعمدة والتغييرات قبل الحفظ.')}</p></div>:<>
- <div className="dn-summary">{[['customers','Customers with unbilled notes','عملاء بأذونات غير مفوترة'],['unbilled','Unbilled delivery notes','أذونات غير مفوترة'],['lines','Outstanding item rows','صفوف أصناف متبقية'],['aged','Unbilled · 30+ days','غير مفوتر · أكثر من ٣٠ يوماً']].map(([key,en,ar])=><button key={key} onClick={()=>setFilters((f:any)=>({...f,billing:'UNBILLED',age:key==='aged'?30:0,view:key==='customers'?'CUSTOMERS':f.view,page:0}))}><strong>{data?.summary[key]??'—'}</strong><span>{t(en,ar)}</span></button>)}</div>
- <Filters {...{filters,setFilters,directory,meta,t,manage}} save={()=>{setViewDraft({kind:'PRESET',name:'',content:filters});setManager(true);}} manager={()=>{setViewDraft(null);setManager(true);}}/>
- <div className="dn-view-bar"><div className="actions">{[['BOARD','Board','اللوحة'],['CUSTOMERS','Customers','العملاء'],['NOTES','Delivery notes','أذونات التسليم']].map(([k,en,ar])=><button aria-pressed={filters.view===k} className={filters.view===k?'primary':''} key={k} onClick={()=>change('view',k)}>{t(en,ar)}</button>)}</div><label>{t('Sort','ترتيب')}<select value={filters.sort} onChange={e=>change('sort',e.target.value)}>{[['date','DN date','تاريخ الإذن'],['customer','Customer','العميل'],['docNo','DN number','رقم الإذن'],['outstanding','Outstanding rows','الصفوف المتبقية'],['updated','Last follow-up','آخر متابعة']].map(([k,en,ar])=><option key={k} value={k}>{t(en,ar)}</option>)}</select></label><button onClick={()=>change('direction',filters.direction==='asc'?'desc':'asc')}>{filters.direction==='asc'?t('Ascending ↑','تصاعدي ↑'):t('Descending ↓','تنازلي ↓')}</button><span role="status">{loading?t('Loading…','جارٍ التحميل…'):data?.total+' '+t('results','نتيجة')}</span></div>
- {data&&filters.view==='BOARD'?<BoardView rows={data.rows} counts={data.counts} {...{t}} editable={edit&&!busy&&!historical} open={id=>void open(id)} move={(n,s)=>void move(n,s)}/>:data&&<div className="table-scroll dn-table"><table><thead><tr>{(filters.view==='CUSTOMERS'?[['customer','Customer','العميل'],['notes','DNs','الأذونات'],['outstanding','Outstanding rows','صفوف متبقية'],['date','Oldest DN','أقدم إذن'],['updated','Last follow-up','آخر متابعة']]:[['docNo','DN','الإذن'],['customer','Customer','العميل'],['date','Date','التاريخ'],['billing','Billing','الفوترة'],['stage','Follow-up','المتابعة'],['outstanding','Outstanding rows','صفوف متبقية'],['assignee','Assignee','المسؤول']]).map(([k,en,ar])=><th key={k}><button onClick={()=>sort(k)}>{t(en,ar)} ↕</button></th>)}</tr></thead><tbody>{data.rows.map((n:any)=>filters.view==='CUSTOMERS'?<tr key={n.customer_key}><td><button className="dn-link" onClick={()=>setFilters((f:any)=>({...f,include:[n.customer_key],view:'NOTES',page:0}))}>{n.customer}</button></td><td>{n.unbilled} / {n.notes}</td><td>{n.outstanding}</td><td>{displayDate(n.oldest)}</td><td>{time(n.updated_at)}</td></tr>:<tr key={n.id}><td><button className="dn-link" onClick={()=>void open(n.id)}>{n.doc_no}</button></td><td>{n.customer}</td><td>{displayDate(n.doc_date)}</td><td>{t(...billingNames[n.billing])}</td><td>{t(...stageNames[n.stage])}</td><td>{n.outstanding}</td><td>{n.assignee_name||'—'}</td></tr>)}</tbody></table>{!data.rows.length&&<p className="dn-empty">{t('No delivery notes match these filters.','لا توجد أذونات مطابقة للمرشحات.')}</p>}</div>}
- {data&&<div className="actions">{filters.view==='BOARD'?data.counts.some((c:any)=>c.count>25*(filters.page+1))&&<button onClick={()=>setFilters((f:any)=>({...f,page:f.page+1}))}>{t('Load more cards','تحميل بطاقات إضافية')}</button>:<><button disabled={!filters.page||loading} onClick={()=>setFilters((f:any)=>({...f,page:f.page-1}))}>{t('Previous','السابق')}</button><span>{filters.page+1} / {Math.max(1,Math.ceil(data.total/25))}</span><button disabled={(filters.page+1)*25>=data.total||loading} onClick={()=>setFilters((f:any)=>({...f,page:f.page+1}))}>{t('Next','التالي')}</button></>}</div>}
- </>}
- {detail&&<DNDialog title={detail.doc_no+' · '+detail.customer} close={()=>{++detailRequest.current;setDetail(null);}} wide><p>{displayDate(detail.doc_date)} · {t(...stageNames[detail.stage])} · {t(...billingNames[detail.billing])}</p>{detail.needs_review&&<div className="notice error">{t('Billing figures changed after resolution. Review the new report.','تغيرت بيانات الفوترة بعد إنهاء المتابعة. راجع التقرير الجديد.')}{edit&&!historical&&<button disabled={busy} onClick={()=>void updateDetail({reviewed:true,comment:t('Reviewed updated billing figures','تمت مراجعة بيانات الفوترة المحدثة')})}>{t('Mark reviewed','تمت المراجعة')}</button>}</div>}<div className="table-scroll"><table><thead><tr>{fields.filter(k=>!['date','customer','customerCode','docNo'].includes(k)).map(k=><th key={k}>{t(...fieldNames[k])}</th>)}</tr></thead><tbody>{detail.lines?.map((l:any,i:number)=><tr key={i}>{fields.filter(k=>!['date','customer','customerCode','docNo'].includes(k)).map(k=><td key={k}>{l[k]}</td>)}</tr>)}</tbody></table></div>{edit&&!historical&&<div className="dn-detail-controls"><label>{t('Move to','نقل إلى')}<select disabled={busy} value={detail.stage} onChange={e=>void move(detail,e.target.value)}>{stages.map(s=><option key={s} value={s}>{t(...stageNames[s])}</option>)}</select></label><label>{t('Assignee','المسؤول')}<select disabled={busy} value={detail.assignee||''} onChange={e=>void updateDetail({assignee:e.target.value||null})}><option value="">{t('Unassigned','غير مسند')}</option>{meta.users.map((u:any)=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label><label>{t('Add follow-up comment','إضافة ملاحظة متابعة')}<textarea value={comment} maxLength={2000} onChange={e=>setComment(e.target.value)}/></label><button disabled={busy||!comment.trim()} onClick={()=>void updateDetail({comment})}>{t('Save comment','حفظ الملاحظة')}</button></div>}<h3>{t('Follow-up history','سجل المتابعة')}</h3>{detail.events.map((e:any)=><article className="dn-event" key={e.id}><strong>{e.actor}</strong><small>{time(e.created_at)}</small><p>{e.content}</p>{e.before_value?.stage!==e.after_value?.stage&&e.after_value?.stage&&<span>{t(...stageNames[e.before_value.stage])} → {t(...stageNames[e.after_value.stage])}</span>}</article>)}</DNDialog>}
- {upload&&<ImportDialog {...{upload,reportId,t}} reports={meta.reports} close={()=>setUpload(null)} saved={id=>{setReportId(id);setFilters(defaults);setUpload(null);setNotice(t('Report saved. Follow-up history preserved.','تم حفظ التقرير مع الحفاظ على سجل المتابعة.'));refresh();}}/>}
- {manager&&<SharedViews {...{meta,directory,filters,t,refresh}} initial={viewDraft} close={()=>setManager(false)}/>}
- {exporting&&<DNDialog title={t('Export current results','تصدير النتائج الحالية')} close={()=>setExporting(false)}><p>{t('Exports use the current filters and sorting.','يستخدم التصدير المرشحات والترتيب الحاليين.')}</p><label>{t('Content','المحتوى')}<select value={exportScope} onChange={e=>setExportScope(e.target.value)}><option value="LINES">{t('Detailed item rows','صفوف الأصناف التفصيلية')}</option><option value="CUSTOMERS">{t('Customer summary','ملخص العملاء')}</option></select></label><div className="actions">{['XLSX','PDF'].map(format=><button disabled={busy} key={format} onClick={()=>void run(async()=>{await downloadApi('dn-tracker/export',{filters:{...filters,reportId},format,scope:exportScope,language:t('en','ar')},'AMT-DN-tracker.'+format.toLowerCase());setNotice(t('Export downloaded','تم تنزيل التصدير'));})}>{format}</button>)}</div></DNDialog>}
- </section>;
+"use client";
+import { useState, useEffect, useRef } from "react";
+import { api, downloadApi, type Translate } from "../api";
+import { showConfirm, showPrompt } from "../confirm";
+import {
+  fields,
+  fieldNames,
+  displayDate,
+  stages,
+  stageNames,
+  billingNames,
+} from "../../shared/dn-tracker";
+import { DNDialog } from "./controls";
+import BoardView from "./BoardView";
+import Filters, { defaults } from "./Filters";
+import SharedViews from "./SharedViews";
+import ImportDialog from "./ImportDialog";
+import type { TrackerDirectory, TrackerResult } from "./tracker-types";
+import "./tracker.css";
+const safeName = (
+  map: Record<string, [string, string]>,
+  key: string | undefined,
+  t: Translate,
+  fallback: [string, string],
+) => t(...(key && map[key] ? map[key] : fallback));
+export default function DNTracker({ t, user }: { t: Translate; user: any }) {
+  const manage = user.permissions.includes("DN_TRACKER_MANAGE"),
+    edit = user.permissions.includes("DN_TRACKER_EDIT");
+  const [meta, setMeta] = useState<any>({ reports: [], views: [], users: [] }),
+    [reportId, setReportId] = useState(""),
+    [filters, setFilters] = useState<any>(defaults),
+    [data, setData] = useState<TrackerResult>(),
+    [directory, setDirectory] = useState<TrackerDirectory>({
+      customers: [],
+      snapshots: [],
+    });
+  const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false),
+    [loading, setLoading] = useState(false),
+    [tick, setTick] = useState(0),
+    [detail, setDetail] = useState<any>(),
+    [comment, setComment] = useState(""),
+    [undo, setUndo] = useState<any>();
+  const [upload, setUpload] = useState<any>(),
+    [manager, setManager] = useState(false),
+    [viewDraft, setViewDraft] = useState<any>(),
+    [exporting, setExporting] = useState(false),
+    [exportScope, setExportScope] = useState("LINES");
+  const input = useRef<HTMLInputElement>(null),
+    request = useRef(0),
+    detailRequest = useRef(0);
+  const refresh = () => setTick((n) => n + 1),
+    report = meta.reports.find((r: any) => r.id === reportId),
+    historical = !!filters.snapshotId || report?.archived;
+  const change = (key: string, value: any) =>
+    setFilters((f: any) => ({ ...f, [key]: value, page: 0 }));
+  async function run(task: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await task();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    let alive = true;
+    void api("dn-tracker/metadata")
+      .then((m) => {
+        if (!alive) return;
+        setMeta(m);
+        setReportId(
+          (current) =>
+            current || m.reports.find((r: any) => !r.archived)?.id || "",
+        );
+      })
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [tick]);
+  useEffect(() => {
+    const listener = () => refresh();
+    window.addEventListener("focus", listener);
+    return () => window.removeEventListener("focus", listener);
+  }, []);
+  useEffect(() => {
+    const id = ++request.current;
+    if (!reportId) {
+      setData(undefined);
+      return;
+    }
+    setData(undefined);
+    setLoading(true);
+    const timer = setTimeout(() => {
+      const snapshot = filters.snapshotId
+        ? "?snapshot=" + encodeURIComponent(filters.snapshotId)
+        : "";
+      void Promise.all([
+        api("dn-tracker/list", "POST", { ...filters, reportId }),
+        api("dn-tracker/directory/" + reportId + snapshot),
+      ])
+        .then(([result, dir]) => {
+          if (id !== request.current) return;
+          setData(result);
+          setDirectory(dir);
+        })
+        .catch((e) => {
+          if (id === request.current) setError(e.message);
+        })
+        .finally(() => {
+          if (id === request.current) setLoading(false);
+        });
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      ++request.current;
+    };
+  }, [reportId, filters, tick]);
+  async function open(id: string) {
+    const seq = ++detailRequest.current;
+    await run(async () => {
+      const d = await api(
+        "dn-tracker/note/" +
+          id +
+          (filters.snapshotId
+            ? "?snapshot=" + encodeURIComponent(filters.snapshotId)
+            : ""),
+      );
+      if (seq === detailRequest.current) {
+        setDetail(d);
+        setComment("");
+      }
+    });
+  }
+  async function move(note: any, stage: string) {
+    if (
+      busy ||
+      stage === note.stage ||
+      !stages.includes(stage as any) ||
+      historical
+    )
+      return;
+    let text = "";
+    if (stage === "RESOLVED") {
+      const entered = await showPrompt(
+        t(
+          "Enter a short resolution note. Imported balances remain unchanged.",
+          "أدخل ملاحظة إنهاء المتابعة. الأرصدة المستوردة لا تتغير.",
+        ),
+      );
+      if (entered === null) return;
+      text = entered.trim();
+      if (text.length < 3) {
+        setError(
+          t("Enter at least three characters.", "أدخل ثلاثة أحرف على الأقل."),
+        );
+        return;
+      }
+    }
+    const previous = data;
+    setData((d: any) => ({
+      ...d,
+      rows: d.rows.map((r: any) => (r.id === note.id ? { ...r, stage } : r)),
+    }));
+    await run(async () => {
+      try {
+        const updated = await api("dn-tracker/note/" + note.id, "PUT", {
+          version: note.version,
+          stage,
+          comment: text,
+        });
+        setUndo({ id: note.id, stage: note.stage, version: updated.version });
+        setNotice(
+          t(
+            "Follow-up moved. Billing figures are unchanged.",
+            "تم نقل المتابعة دون تغيير بيانات الفوترة.",
+          ),
+        );
+        refresh();
+        if (detail?.id === note.id)
+          setDetail((d: any) => ({ ...d, ...updated }));
+      } catch (e) {
+        setData(previous);
+        throw e;
+      }
+    });
+  }
+  async function updateDetail(patch: any) {
+    await run(async () => {
+      await api("dn-tracker/note/" + detail.id, "PUT", {
+        version: detail.version,
+        ...patch,
+      });
+      setDetail(await api("dn-tracker/note/" + detail.id));
+      setComment("");
+      refresh();
+    });
+  }
+  async function loadFile(file: File) {
+    await run(async () => {
+      const form = new FormData();
+      form.set("file", file);
+      setUpload(await api("dn-tracker/workbook", "POST", form));
+    });
+  }
+  const sort = (key: string) =>
+    setFilters((f: any) => ({
+      ...f,
+      sort: key,
+      direction: f.sort === key && f.direction === "asc" ? "desc" : "asc",
+      page: 0,
+    }));
+  const time = (s: string) =>
+    new Date(s).toLocaleString(t("en-GB", "ar-SA"), {
+      timeZone: "Asia/Riyadh",
+    });
+  const visibleData =
+    data?.filters?.reportId === reportId && data?.filters?.view === filters.view
+      ? data
+      : undefined;
+  return (
+    <section
+      className="dn-tracker"
+      aria-label={t("DN Tracker", "متتبع أذونات التسليم")}
+    >
+      <header className="dn-header">
+        <div>
+          <span className="eyebrow">
+            {t("CUSTOMER FOLLOW-UP", "متابعة العملاء")}
+          </span>
+          <h1>{t("DN Tracker", "متتبع أذونات التسليم")}</h1>
+          <p className="muted">
+            {t(
+              "Find unbilled delivery notes. Organize the next step.",
+              "حدد أذونات التسليم غير المفوترة ونظم الخطوة التالية.",
+            )}
+          </p>
+        </div>
+        <div className="actions">
+          {manage && (
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => input.current?.click()}
+            >
+              {t("Import report", "استيراد تقرير")}
+            </button>
+          )}
+          <input
+            ref={input}
+            type="file"
+            hidden
+            accept=".xlsx,.xls,.csv"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void loadFile(file);
+              e.target.value = "";
+            }}
+          />
+          <button disabled={!data || busy} onClick={() => setExporting(true)}>
+            {t("Export", "تصدير")}
+          </button>
+          {manage && report && !report.archived && (
+            <button
+              disabled={busy || !report.current_snapshot}
+              onClick={() =>
+                void run(async () => {
+                  if (
+                    !(await showConfirm(
+                      t(
+                        "Clear the current data for this report? An archived copy and all follow-up history will be kept. Other reports will not change.",
+                        "مسح البيانات الحالية لهذا التقرير؟ سيتم الاحتفاظ بنسخة مؤرشفة وسجل المتابعة دون تغيير التقارير الأخرى.",
+                      ),
+                      {
+                        title: t("Clear selected report", "مسح التقرير المحدد"),
+                        confirmText: t(
+                          "Clear current data",
+                          "مسح البيانات الحالية",
+                        ),
+                        tone: "warning",
+                      },
+                    ))
+                  )
+                    return;
+                  await api("dn-tracker/clear/" + reportId, "POST", {
+                    version: report.version,
+                  });
+                  setDetail(null);
+                  setUndo(null);
+                  setFilters(defaults);
+                  setNotice(
+                    t(
+                      "Current report cleared. Previous data is available in archived snapshots.",
+                      "تم مسح التقرير الحالي. البيانات السابقة متاحة في النسخ المؤرشفة.",
+                    ),
+                  );
+                  refresh();
+                })
+              }
+            >
+              {t("Clear selected report", "مسح التقرير المحدد")}
+            </button>
+          )}
+          <button disabled={busy || loading} onClick={refresh}>
+            {t("Refresh", "تحديث")}
+          </button>
+        </div>
+      </header>
+      {error && (
+        <div role="alert" className="notice error">
+          {error}
+          <button onClick={() => setError("")}>×</button>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="notice success">
+          {notice}
+          {undo && (
+            <button
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await api("dn-tracker/note/" + undo.id, "PUT", {
+                    version: undo.version,
+                    stage: undo.stage,
+                    comment: t(
+                      "Undo follow-up move",
+                      "التراجع عن نقل المتابعة",
+                    ),
+                  });
+                  setUndo(null);
+                  setNotice("");
+                  refresh();
+                })
+              }
+            >
+              {t("Undo", "تراجع")}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setNotice("");
+              setUndo(null);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <div className="dn-report-bar">
+        <label>
+          {t("Report", "التقرير")}
+          <select
+            value={reportId}
+            onChange={(e) => {
+              setReportId(e.target.value);
+              setFilters(defaults);
+              setDetail(null);
+            }}
+          >
+            <option value="">{t("Select report", "اختر التقرير")}</option>
+            {meta.reports.map((r: any) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+                {r.archived ? " · " + t("Archived", "مؤرشف") : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {report && (
+          <>
+            <span>
+              {displayDate(report.report_date)} · {report.uploader || "—"}
+              <small>
+                {report.imported_at
+                  ? time(report.imported_at)
+                  : t("Awaiting import", "بانتظار الاستيراد")}
+              </small>
+            </span>
+            <label>
+              {t("Snapshot", "النسخة")}
+              <select
+                value={filters.snapshotId || ""}
+                onChange={(e) =>
+                  change("snapshotId", e.target.value || undefined)
+                }
+              >
+                <option value="">
+                  {t("Current report", "التقرير الحالي")}
+                </option>
+                {directory.snapshots.map((s: any) => (
+                  <option key={s.id} value={s.id}>
+                    {displayDate(s.report_date)} · {time(s.created_at)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {manage && (
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    if (
+                      await showConfirm(
+                        t(
+                          "Change the archive status of this report?",
+                          "تغيير حالة أرشفة التقرير؟",
+                        ),
+                      )
+                    ) {
+                      await api("dn-tracker/archive/" + reportId, "POST", {
+                        version: report.version,
+                      });
+                      refresh();
+                    }
+                  })
+                }
+              >
+                {report.archived
+                  ? t("Restore report", "استعادة التقرير")
+                  : t("Archive report", "أرشفة التقرير")}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+      {historical && (
+        <p className="notice">
+          {t(
+            "Archived snapshot: billing figures are historical. Follow-up history remains current.",
+            "نسخة مؤرشفة: بيانات الفوترة تاريخية وسجل المتابعة حالي.",
+          )}
+        </p>
+      )}
+      {!reportId ? (
+        <div className="dn-empty-state">
+          <h2>
+            {t(
+              "Start with a delivery-note report",
+              "ابدأ بتقرير أذونات التسليم",
+            )}
+          </h2>
+          <p>
+            {t(
+              "Upload XLS, XLSX or CSV. Review the columns and changes before saving.",
+              "ارفع ملف XLS أو XLSX أو CSV وراجع الأعمدة والتغييرات قبل الحفظ.",
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="dn-summary">
+            {[
+              [
+                "customers",
+                "Customers with unbilled notes",
+                "عملاء بأذونات غير مفوترة",
+              ],
+              ["unbilled", "Unbilled delivery notes", "أذونات غير مفوترة"],
+              ["lines", "Outstanding item rows", "صفوف أصناف متبقية"],
+              ["aged", "Unbilled · 30+ days", "غير مفوتر · أكثر من ٣٠ يوماً"],
+            ].map(([key, en, ar]) => (
+              <button
+                key={key}
+                onClick={() =>
+                  setFilters((f: any) => ({
+                    ...f,
+                    billing: "UNBILLED",
+                    age: key === "aged" ? 30 : 0,
+                    view: key === "customers" ? "CUSTOMERS" : f.view,
+                    page: 0,
+                  }))
+                }
+              >
+                <strong>{visibleData?.summary[key] ?? "—"}</strong>
+                <span>{t(en, ar)}</span>
+              </button>
+            ))}
+          </div>
+          <Filters
+            {...{ filters, setFilters, directory, meta, t, manage }}
+            save={() => {
+              setViewDraft({ kind: "PRESET", name: "", content: filters });
+              setManager(true);
+            }}
+            manager={() => {
+              setViewDraft(null);
+              setManager(true);
+            }}
+          />
+          <div className="dn-view-bar">
+            <div className="actions">
+              {[
+                ["BOARD", "Board", "اللوحة"],
+                ["CUSTOMERS", "Customers", "العملاء"],
+                ["NOTES", "Delivery notes", "أذونات التسليم"],
+                ["LINES", "File rows", "صفوف الملف"],
+              ].map(([k, en, ar]) => (
+                <button
+                  aria-pressed={filters.view === k}
+                  className={filters.view === k ? "primary" : ""}
+                  key={k}
+                  onClick={() =>
+                    setFilters((f: any) => ({
+                      ...f,
+                      view: k,
+                      sort: k === "LINES" ? "sourceRow" : "date",
+                      direction: "asc",
+                      page: 0,
+                    }))
+                  }
+                >
+                  {t(en, ar)}
+                </button>
+              ))}
+            </div>
+            {filters.view === "LINES" && (
+              <button
+                onClick={() =>
+                  setFilters({
+                    ...defaults,
+                    view: "LINES",
+                    billing: "ALL",
+                    sort: "sourceRow",
+                    snapshotId: filters.snapshotId,
+                  })
+                }
+              >
+                {t("All imported rows", "كل الصفوف المستوردة")}
+              </button>
+            )}
+            <label>
+              {t("Sort", "ترتيب")}
+              <select
+                value={filters.sort}
+                onChange={(e) => change("sort", e.target.value)}
+              >
+                {(filters.view === "LINES"
+                  ? [
+                      ["sourceRow", "Source row", "صف المصدر"],
+                      ["date", "DN date", "تاريخ الإذن"],
+                      ["docNo", "DN number", "رقم الإذن"],
+                      ["customer", "Customer", "العميل"],
+                      ["itemCode", "Item code", "رمز الصنف"],
+                      ["itemName", "Description", "الوصف"],
+                      ["unit", "Unit", "الوحدة"],
+                      ["qty", "Quantity", "الكمية"],
+                      ["invoiced", "Invoiced", "المفوتر"],
+                      ["invoiceRet", "Invoice return", "مرتجع الفاتورة"],
+                      ["deliveryRet", "Delivery return", "مرتجع التسليم"],
+                      ["balance", "Balance", "الرصيد"],
+                      ["billing", "Billing", "الفوترة"],
+                      ["stage", "Follow-up", "المتابعة"],
+                    ]
+                  : [
+                      ["date", "DN date", "تاريخ الإذن"],
+                      ["customer", "Customer", "العميل"],
+                      ["docNo", "DN number", "رقم الإذن"],
+                      ["outstanding", "Outstanding rows", "الصفوف المتبقية"],
+                      ["updated", "Last follow-up", "آخر متابعة"],
+                    ]
+                ).map(([k, en, ar]) => (
+                  <option key={k} value={k}>
+                    {t(en, ar)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={() =>
+                change(
+                  "direction",
+                  filters.direction === "asc" ? "desc" : "asc",
+                )
+              }
+            >
+              {filters.direction === "asc"
+                ? t("Ascending ↑", "تصاعدي ↑")
+                : t("Descending ↓", "تنازلي ↓")}
+            </button>
+            <span role="status">
+              {loading
+                ? t("Loading…", "جارٍ التحميل…")
+                : (visibleData?.total ?? 0) + " " + t("results", "نتيجة")}
+            </span>
+          </div>
+          {visibleData && filters.view === "BOARD" ? (
+            <BoardView
+              rows={visibleData.rows}
+              counts={visibleData.counts}
+              {...{ t }}
+              editable={edit && !busy && !historical}
+              open={(id) => void open(id)}
+              move={(n, s) => void move(n, s)}
+            />
+          ) : (
+            visibleData && (
+              <div className="table-scroll dn-table">
+                <table>
+                  <thead>
+                    <tr>
+                      {(filters.view === "CUSTOMERS"
+                        ? [
+                            ["customer", "Customer", "العميل"],
+                            ["notes", "DNs", "الأذونات"],
+                            ["outstanding", "Outstanding rows", "صفوف متبقية"],
+                            ["date", "Oldest DN", "أقدم إذن"],
+                            ["updated", "Last follow-up", "آخر متابعة"],
+                          ]
+                        : filters.view === "LINES"
+                          ? [
+                              ["sourceRow", "Source row", "صف المصدر"],
+                              ["date", "Date", "التاريخ"],
+                              ["docNo", "DN", "الإذن"],
+                              ["customer", "Customer", "العميل"],
+                              ["itemCode", "Item code", "رمز الصنف"],
+                              ["itemName", "Description", "الوصف"],
+                              ["unit", "Unit", "الوحدة"],
+                              ["qty", "Qty", "الكمية"],
+                              ["invoiced", "Invoiced", "المفوتر"],
+                              [
+                                "invoiceRet",
+                                "Invoice return",
+                                "مرتجع الفاتورة",
+                              ],
+                              [
+                                "deliveryRet",
+                                "Delivery return",
+                                "مرتجع التسليم",
+                              ],
+                              ["balance", "Balance", "الرصيد"],
+                              ["billing", "Billing", "الفوترة"],
+                              ["stage", "Follow-up", "المتابعة"],
+                            ]
+                          : [
+                              ["docNo", "DN", "الإذن"],
+                              ["customer", "Customer", "العميل"],
+                              ["date", "Date", "التاريخ"],
+                              ["billing", "Billing", "الفوترة"],
+                              ["stage", "Follow-up", "المتابعة"],
+                              [
+                                "outstanding",
+                                "Outstanding rows",
+                                "صفوف متبقية",
+                              ],
+                              ["assignee", "Assignee", "المسؤول"],
+                            ]
+                      ).map(([k, en, ar]) => (
+                        <th key={k}>
+                          <button onClick={() => sort(k)}>{t(en, ar)} ↕</button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleData.rows.map((n: any) =>
+                      filters.view === "CUSTOMERS" ? (
+                        <tr key={n.customer_key}>
+                          <td>
+                            <button
+                              className="dn-link"
+                              onClick={() =>
+                                setFilters((f: any) => ({
+                                  ...f,
+                                  include: [n.customer_key],
+                                  view: "NOTES",
+                                  page: 0,
+                                }))
+                              }
+                            >
+                              {n.customer}
+                            </button>
+                          </td>
+                          <td>
+                            {n.unbilled} / {n.notes}
+                          </td>
+                          <td>{n.outstanding}</td>
+                          <td>{displayDate(n.oldest)}</td>
+                          <td>{time(n.updated_at)}</td>
+                        </tr>
+                      ) : filters.view === "LINES" ? (
+                        <tr key={n.note_id + "-" + n.row}>
+                          <td>{n.row}</td>
+                          <td>{displayDate(n.doc_date)}</td>
+                          <td>
+                            <button
+                              className="dn-link"
+                              onClick={() => void open(n.note_id)}
+                            >
+                              {n.doc_no}
+                            </button>
+                          </td>
+                          <td>{n.customer}</td>
+                          <td>{n.itemCode}</td>
+                          <td>{n.itemName}</td>
+                          <td>{n.unit}</td>
+                          <td>{n.qty}</td>
+                          <td>{n.invoiced}</td>
+                          <td>{n.invoiceRet}</td>
+                          <td>{n.deliveryRet}</td>
+                          <td>{n.balance}</td>
+                          <td>
+                            {safeName(billingNames, n.billing, t, [
+                              "Unknown billing status",
+                              "حالة فوترة غير معروفة",
+                            ])}
+                          </td>
+                          <td>
+                            {safeName(stageNames, n.stage, t, [
+                              "Unknown stage",
+                              "مرحلة غير معروفة",
+                            ])}
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={n.id}>
+                          <td>
+                            <button
+                              className="dn-link"
+                              onClick={() => void open(n.id)}
+                            >
+                              {n.doc_no}
+                            </button>
+                          </td>
+                          <td>{n.customer}</td>
+                          <td>{displayDate(n.doc_date)}</td>
+                          <td>
+                            {safeName(billingNames, n.billing, t, [
+                              "Unknown billing status",
+                              "حالة فوترة غير معروفة",
+                            ])}
+                          </td>
+                          <td>
+                            {safeName(stageNames, n.stage, t, [
+                              "Unknown stage",
+                              "مرحلة غير معروفة",
+                            ])}
+                          </td>
+                          <td>{n.outstanding}</td>
+                          <td>{n.assignee_name || "—"}</td>
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+                {!visibleData.rows.length && (
+                  <p className="dn-empty">
+                    {t(
+                      "No delivery notes match these filters.",
+                      "لا توجد أذونات مطابقة للمرشحات.",
+                    )}
+                  </p>
+                )}
+              </div>
+            )
+          )}
+          {visibleData && (
+            <div className="actions">
+              {filters.view === "BOARD" ? (
+                visibleData.counts.some(
+                  (c: any) => c.count > 25 * (filters.page + 1),
+                ) && (
+                  <button
+                    onClick={() =>
+                      setFilters((f: any) => ({ ...f, page: f.page + 1 }))
+                    }
+                  >
+                    {t("Load more cards", "تحميل بطاقات إضافية")}
+                  </button>
+                )
+              ) : (
+                <>
+                  <button
+                    disabled={!filters.page || loading}
+                    onClick={() =>
+                      setFilters((f: any) => ({ ...f, page: f.page - 1 }))
+                    }
+                  >
+                    {t("Previous", "السابق")}
+                  </button>
+                  <span>
+                    {filters.page + 1} /{" "}
+                    {Math.max(1, Math.ceil(visibleData.total / 25))}
+                  </span>
+                  <button
+                    disabled={
+                      (filters.page + 1) * 25 >= visibleData.total || loading
+                    }
+                    onClick={() =>
+                      setFilters((f: any) => ({ ...f, page: f.page + 1 }))
+                    }
+                  >
+                    {t("Next", "التالي")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {detail && (
+        <DNDialog
+          title={detail.doc_no + " · " + detail.customer}
+          close={() => {
+            ++detailRequest.current;
+            setDetail(null);
+          }}
+          wide
+        >
+          <p>
+            {displayDate(detail.doc_date)} ·{" "}
+            {safeName(stageNames, detail.stage, t, [
+              "Unknown stage",
+              "مرحلة غير معروفة",
+            ])}{" "}
+            ·{" "}
+            {safeName(billingNames, detail.billing, t, [
+              "Unknown billing status",
+              "حالة فوترة غير معروفة",
+            ])}
+          </p>
+          {detail.needs_review && (
+            <div className="notice error">
+              {t(
+                "Billing figures changed after resolution. Review the new report.",
+                "تغيرت بيانات الفوترة بعد إنهاء المتابعة. راجع التقرير الجديد.",
+              )}
+              {edit && !historical && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void updateDetail({
+                      reviewed: true,
+                      comment: t(
+                        "Reviewed updated billing figures",
+                        "تمت مراجعة بيانات الفوترة المحدثة",
+                      ),
+                    })
+                  }
+                >
+                  {t("Mark reviewed", "تمت المراجعة")}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  {fields
+                    .filter(
+                      (k) =>
+                        !["date", "customer", "customerCode", "docNo"].includes(
+                          k,
+                        ),
+                    )
+                    .map((k) => (
+                      <th key={k}>{t(...fieldNames[k])}</th>
+                    ))}
+                </tr>
+              </thead>
+              <tbody>
+                {detail.lines?.map((l: any, i: number) => (
+                  <tr key={i}>
+                    {fields
+                      .filter(
+                        (k) =>
+                          ![
+                            "date",
+                            "customer",
+                            "customerCode",
+                            "docNo",
+                          ].includes(k),
+                      )
+                      .map((k) => (
+                        <td key={k}>{l[k]}</td>
+                      ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {edit && !historical && (
+            <div className="dn-detail-controls">
+              <label>
+                {t("Move to", "نقل إلى")}
+                <select
+                  disabled={busy}
+                  value={detail.stage}
+                  onChange={(e) => void move(detail, e.target.value)}
+                >
+                  {stages.map((s) => (
+                    <option key={s} value={s}>
+                      {t(...stageNames[s])}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("Assignee", "المسؤول")}
+                <select
+                  disabled={busy}
+                  value={detail.assignee || ""}
+                  onChange={(e) =>
+                    void updateDetail({ assignee: e.target.value || null })
+                  }
+                >
+                  <option value="">{t("Unassigned", "غير مسند")}</option>
+                  {meta.users.map((u: any) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("Add follow-up comment", "إضافة ملاحظة متابعة")}
+                <textarea
+                  value={comment}
+                  maxLength={2000}
+                  onChange={(e) => setComment(e.target.value)}
+                />
+              </label>
+              <button
+                disabled={busy || !comment.trim()}
+                onClick={() => void updateDetail({ comment })}
+              >
+                {t("Save comment", "حفظ الملاحظة")}
+              </button>
+            </div>
+          )}
+          <h3>{t("Follow-up history", "سجل المتابعة")}</h3>
+          {detail.events.map((e: any) => (
+            <article className="dn-event" key={e.id}>
+              <strong>{e.actor}</strong>
+              <small>{time(e.created_at)}</small>
+              <p>{e.content}</p>
+              {e.before_value?.stage !== e.after_value?.stage &&
+                e.after_value?.stage && (
+                  <span>
+                    {safeName(stageNames, e.before_value.stage, t, [
+                      "Unknown stage",
+                      "مرحلة غير معروفة",
+                    ])}{" "}
+                    →{" "}
+                    {safeName(stageNames, e.after_value.stage, t, [
+                      "Unknown stage",
+                      "مرحلة غير معروفة",
+                    ])}
+                  </span>
+                )}
+            </article>
+          ))}
+        </DNDialog>
+      )}
+      {upload && (
+        <ImportDialog
+          {...{ upload, reportId, t }}
+          reports={meta.reports}
+          close={() => setUpload(null)}
+          saved={(id) => {
+            setReportId(id);
+            setFilters(defaults);
+            setUpload(null);
+            setNotice(
+              t(
+                "Report saved. Follow-up history preserved.",
+                "تم حفظ التقرير مع الحفاظ على سجل المتابعة.",
+              ),
+            );
+            refresh();
+          }}
+        />
+      )}
+      {manager && (
+        <SharedViews
+          {...{ meta, directory, filters, t, refresh }}
+          initial={viewDraft}
+          close={() => setManager(false)}
+        />
+      )}
+      {exporting && (
+        <DNDialog
+          title={t("Export current results", "تصدير النتائج الحالية")}
+          close={() => setExporting(false)}
+        >
+          <p>
+            {t(
+              "Exports use the current filters and sorting.",
+              "يستخدم التصدير المرشحات والترتيب الحاليين.",
+            )}
+          </p>
+          <label>
+            {t("Content", "المحتوى")}
+            <select
+              value={exportScope}
+              onChange={(e) => setExportScope(e.target.value)}
+            >
+              <option value="LINES">
+                {t("Detailed item rows", "صفوف الأصناف التفصيلية")}
+              </option>
+              <option value="CUSTOMERS">
+                {t("Customer summary", "ملخص العملاء")}
+              </option>
+            </select>
+          </label>
+          <div className="actions">
+            {["XLSX", "PDF"].map((format) => (
+              <button
+                disabled={busy}
+                key={format}
+                onClick={() =>
+                  void run(async () => {
+                    await downloadApi(
+                      "dn-tracker/export",
+                      {
+                        filters: { ...filters, reportId },
+                        format,
+                        scope: exportScope,
+                        language: t("en", "ar"),
+                      },
+                      "AMT-DN-tracker." + format.toLowerCase(),
+                    );
+                    setNotice(t("Export downloaded", "تم تنزيل التصدير"));
+                  })
+                }
+              >
+                {format}
+              </button>
+            ))}
+          </div>
+        </DNDialog>
+      )}
+    </section>
+  );
 }
