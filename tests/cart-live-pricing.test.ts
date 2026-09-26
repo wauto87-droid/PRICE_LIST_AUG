@@ -5,6 +5,7 @@ import {
   catalogLivePricingInput,
   normalizeTargetPrice,
   livePricingSignature,
+  recoverImportedCustomUnitPrice,
 } from "../frontend/cart-live-pricing";
 
 test("Catalog live pricing accepts valid cart edits", () => {
@@ -12,8 +13,10 @@ test("Catalog live pricing accepts valid cart edits", () => {
     productId: "11111111-1111-1111-1111-111111111111",
     sellingLevel: "END_CUSTOMER",
     input: {
+      type: "CATALOG",
       quantity: "2",
       discount: "7.5",
+      importMeta: { source: "DELIVERY_NOTE", docNo: "1614" },
     },
   };
   assert.deepEqual(catalogLivePricingInput(line), {
@@ -110,5 +113,29 @@ test("Cart blocking rules reject invalid catalog and custom edits", () => {
       },
     }),
     true,
+  );
+});
+
+test("Delivery custom rows recover a legacy unit price stored as an impossible discount", () => {
+  const input = {
+    type: "CUSTOM",
+    partNumber: "ENS 504015",
+    description: "Enclosure",
+    quantity: "1",
+    unitPriceExcl: "0",
+    discount: "115",
+    importMeta: { source: "DELIVERY_NOTE", docNo: "1758" },
+  };
+  const repaired = recoverImportedCustomUnitPrice(input);
+  assert.equal(repaired.unitPriceExcl, "115");
+  assert.equal(repaired.discount, "0");
+  assert.equal(repaired.importMeta.recoveredUnitPrice, true);
+  assert.equal(cartLineHasBlockingError({ input: repaired }), false);
+  const unrelated = { ...input, importMeta: { source: "OTHER" } };
+  assert.equal(recoverImportedCustomUnitPrice(unrelated), unrelated);
+  const validLargeMarkup = { ...input, discount: "0", markup: "115" };
+  assert.equal(
+    recoverImportedCustomUnitPrice(validLargeMarkup),
+    validLargeMarkup,
   );
 });

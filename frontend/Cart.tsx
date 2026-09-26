@@ -21,6 +21,7 @@ import {
   catalogLivePricingInput,
   normalizeTargetPrice,
   livePricingSignature,
+  recoverImportedCustomUnitPrice,
 } from "./cart-live-pricing";
 import RecentQuotationPrices, { priceHistoryItemKey } from "./RecentQuotationPrices";
 import { showConfirm } from "./confirm";
@@ -224,6 +225,31 @@ export default function Cart({
     customerIdentity.current = identity;
     setReusePreviousPrices(false);
   }, [cart.id, cart.customer.number, cart.customer.name]);
+
+  useEffect(() => {
+    let recovered = 0;
+    const lines = cart.lines.map((line: any) => {
+      const input = recoverImportedCustomUnitPrice(line.input);
+      if (input === line.input) return line;
+      recovered++;
+      return {
+        ...line,
+        input,
+        price: calculateCustom(input, String(settings.vat)),
+        pending: false,
+        offline: false,
+        livePriceError: "",
+      };
+    });
+    if (!recovered) return;
+    const next = { ...cart, lines };
+    cartRef.current = next;
+    setCart(next);
+    setNotice(t(
+      `Recovered the unit price for ${recovered} imported custom item${recovered === 1 ? "" : "s"}. Review and save the quotation.`,
+      `تمت استعادة سعر الوحدة لـ ${recovered} من الأصناف المخصصة المستوردة. راجع عرض السعر ثم احفظه.`,
+    ));
+  }, [cart.lines, settings.vat]);
 
   function applyPreviousPriceResults(result: any) {
     const byIndex = new Map(result.results.map((item: any) => [item.index, item]));
@@ -692,7 +718,10 @@ export default function Cart({
     setNotice("");
     try {
       const lines = [];
-      for (const line of cart.lines)
+      for (const line of cart.lines) {
+        const catalogInput = catalogLivePricingInput(line);
+        if (line.input?.type !== "CUSTOM" && !catalogInput)
+          throw new Error(`Review quantity and pricing for ${line.partNumber || "this catalog item"}.`);
         lines.push(
           line.input?.type === "CUSTOM"
             ? {
@@ -703,17 +732,12 @@ export default function Cart({
               }
             : {
                 ...line,
-                price: await api("pricing", "POST", {
-                  ...line.input,
-                  sellingLevel:
-                    line.input.sellingLevel ??
-                    line.sellingLevel ??
-                    "END_CUSTOMER",
-                }),
+                price: await api("pricing", "POST", catalogInput),
                 pending: false,
                 offline: false,
               },
         );
+      }
       setCart({ ...cart, lines });
     } catch (e) {
       setError(humanizeCustomLineError((e as Error).message));
