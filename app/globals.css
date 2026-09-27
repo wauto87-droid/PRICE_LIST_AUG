@@ -5272,3 +5272,16 @@ body :is(h1, h2, h3, strong, b) {
 }
 
 
+.delivery-upload-progress {
+  display: grid;
+  min-width: min(100%, 320px);
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.delivery-upload-progress progress,
+.notice progress {
+  width: 100%;
+  accent-color: var(--red);
+}

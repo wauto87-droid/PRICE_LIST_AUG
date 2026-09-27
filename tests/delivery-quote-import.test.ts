@@ -11,7 +11,8 @@ import {
   sessionCookie,
 } from "../backend/auth/service";
 import {
-  mapRows,
+  mapRows as queueMapRows,
+  processMapping,
   get,
   reviewRows,
   finalize,
@@ -19,10 +20,98 @@ import {
   history,
   historyDateBounds,
   updateHeader,
+  uploadStream,
+  retryProcessing,
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
 import { quotationHtml } from "../backend/pdf/template";
 import { deliveryQuoteMappingDefaults } from "../frontend/delivery-quote-mapping";
+
+async function mapRows(db: any, actor: any, id: string, input: any) {
+  const queued = await queueMapRows(db, actor, id, input);
+  assert.equal((queued as any).status, "MAPPING");
+  return processMapping(db, id);
+}
+
+test("streamed delivery uploads are bounded and idempotent", async () => {
+  const db = await embedded();
+  const uploadDir = path.join(process.cwd(), ".data", "delivery-stream-" + randomUUID());
+  try {
+    await migrate(db);
+    process.env.SETUP_TOKEN = "delivery-stream-token-long-enough";
+    process.env.UPLOAD_DIR = uploadDir;
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "stream-admin",
+      password: "abcd",
+      name: "Stream Admin",
+      companyName: "AMT",
+    });
+    const signed = await login(db, { username: "stream-admin", password: "abcd" });
+    const actor = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+      }),
+    );
+    const uploadId = randomUUID();
+    const makeRequest = () =>
+      new Request("http://localhost/api/v1/delivery-quote-imports/upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-amt-filename": encodeURIComponent("delivery.csv"),
+          "x-amt-upload-id": uploadId,
+          "x-amt-file-size": "20",
+        },
+        body: "Date,Document No\n",
+      });
+    const first: any = await uploadStream(db, actor, makeRequest());
+    const retried: any = await uploadStream(db, actor, makeRequest());
+    assert.equal(retried.id, first.id);
+    assert.equal(retried.reused, true);
+    assert.equal(
+      Number(
+        (await one(db, "SELECT count(*)::int n FROM delivery_quote_jobs WHERE upload_request_id=$1", [uploadId]))!.n,
+      ),
+      1,
+    );
+    assert.equal(
+      Number(
+        (await one(db, "SELECT count(*)::int n FROM jobs WHERE kind='DELIVERY_QUOTE_EXTRACT' AND payload->>'importId'=$1", [first.id]))!.n,
+      ),
+      1,
+    );
+    await assert.rejects(
+      uploadStream(
+        db,
+        actor,
+        new Request("http://localhost/api/v1/delivery-quote-imports/upload", {
+          method: "POST",
+          headers: {
+            "content-type": "application/octet-stream",
+            "x-amt-filename": encodeURIComponent("too-large.csv"),
+            "x-amt-upload-id": randomUUID(),
+            "x-amt-file-size": String(21 * 1024 * 1024),
+          },
+          body: "x",
+        }),
+      ),
+      (error: any) => error.status === 413,
+    );
+    await db.query(
+      "UPDATE delivery_quote_jobs SET status='FAILED',error='temporary failure' WHERE id=$1",
+      [first.id],
+    );
+    const retriedJob: any = await retryProcessing(db, actor, first.id, {
+      version: 1,
+    });
+    assert.equal(retriedJob.status, "UPLOADED");
+  } finally {
+    await db.close?.();
+    await fs.rm(uploadDir, { recursive: true, force: true });
+  }
+});
 
 test("DNN delivery-note headers map Balance as the quotation quantity", () => {
   assert.deepEqual(

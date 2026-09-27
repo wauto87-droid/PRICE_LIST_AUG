@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ProductImageGallery } from "./ProductImages";
 import Decimal from "decimal.js";
-import { api, type Translate } from "./api";
+import { api, requestWasCancelled, type Translate } from "./api";
 import { buildLookupLineRequest, previewLookupPrice } from "./lookup-pricing";
 import { levelLabel, visibleLevels } from "./levels";
 import {
@@ -115,6 +115,7 @@ export default function Lookup({
   }, [online, settings.allowOfflineCache]);
   useEffect(() => {
     const current = ++searchGeneration.current;
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       const trimmedQuery = query.trim();
       if (!trimmedQuery) {
@@ -135,7 +136,12 @@ export default function Lookup({
       try {
         let rows: any[] = [];
         if (online) {
-          rows = await api("search?q=" + encodeURIComponent(trimmedQuery));
+          rows = await api(
+            "search?q=" + encodeURIComponent(trimmedQuery),
+            "GET",
+            undefined,
+            { signal: controller.signal, timeoutMs: 8000 },
+          );
           setStamp(new Date().toISOString());
           if (settings.allowOfflineCache) {
             const safe = rows.map(
@@ -198,13 +204,17 @@ export default function Lookup({
           );
         }
       } catch (e) {
+        if (requestWasCancelled(e)) return;
         if (current === searchGeneration.current)
           setError((e as Error).message);
       } finally {
         if (current === searchGeneration.current) setSearching(false);
       }
-    }, 90);
-    return () => clearTimeout(timer);
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [
     query,
     online,

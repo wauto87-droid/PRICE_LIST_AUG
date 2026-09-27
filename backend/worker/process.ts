@@ -16,6 +16,7 @@ import { exportQuantityXlsx, quantityHtml } from "./quantity-finder";
 import { exportPriceWatcherXlsx, priceWatcherHtml } from "./price-watcher";
 import { processJob as processProductEnrichment } from "../product-enrichment/service";
 import { processValidation as processImportValidation } from "../imports/service";
+import * as deliveryQuoteImports from "../delivery-quote-imports/service";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -38,7 +39,7 @@ export async function runJob(db: DB) {
   const job = await db.transaction(async (tx) => {
     const row = await one(
       tx,
-      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','IMPORT_VALIDATE','DELIVERY_QUOTE_EXTRACT','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF','PRODUCT_AI_ENRICH') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+      "SELECT * FROM jobs WHERE kind IN ('IMPORT_EXTRACT','IMPORT_VALIDATE','DELIVERY_QUOTE_EXTRACT','DELIVERY_QUOTE_MAP','QUOTE_PDF','CATALOG_EXPORT','SALES_CHECK_EXTRACT','SALES_CHECK_ANALYZE','SALES_CHECK_XLSX','SALES_CHECK_PDF','QUANTITY_EXTRACT','QUANTITY_ANALYZE','QUANTITY_XLSX','QUANTITY_PDF','PRICE_WATCHER_XLSX','PRICE_WATCHER_PDF','PRODUCT_AI_ENRICH') AND (status='PENDING' OR (status='RUNNING' AND locked_at<now()-interval '15 minutes')) AND attempts<3 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
     );
     if (!row) return null;
     await tx.query(
@@ -48,6 +49,17 @@ export async function runJob(db: DB) {
     return row;
   });
   if (!job) return false;
+  const heartbeat = setInterval(() => {
+    void db
+      .query(
+        "UPDATE jobs SET locked_at=now() WHERE id=$1 AND status='RUNNING'",
+        [job.id],
+      )
+      .catch((error) =>
+        console.error("Worker heartbeat failed", job.id, error.message),
+      );
+  }, 30_000);
+  heartbeat.unref?.();
   try {
     if (job.kind === "IMPORT_VALIDATE")
       await processImportValidation(db, job.payload.importId, job.id);
@@ -263,8 +275,11 @@ export async function runJob(db: DB) {
             "Delivery-note quotation import cannot be re-extracted in this state",
           );
         await db.query(
-          "UPDATE delivery_quote_jobs SET status='PROCESSING',updated_at=now() WHERE id=$1",
-          [imp.id],
+          "UPDATE delivery_quote_jobs SET status='PROCESSING',progress=$2,updated_at=now() WHERE id=$1",
+          [
+            imp.id,
+            json({ phase: "READING", percentage: null, processedRows: 0 }),
+          ],
         );
         const { stdout } = await exec(
           process.env.PYTHON_BIN || "python3",
@@ -301,7 +316,7 @@ export async function runJob(db: DB) {
             );
           }
           await tx.query(
-            "UPDATE delivery_quote_jobs SET status='AWAITING_MAPPING',summary=$2,version=version+1,updated_at=now() WHERE id=$1",
+            "UPDATE delivery_quote_jobs SET status='AWAITING_MAPPING',summary=$2,progress=$3,version=version+1,updated_at=now() WHERE id=$1",
             [
               imp.id,
               json({
@@ -309,11 +324,19 @@ export async function runJob(db: DB) {
                 columns: extracted.columns,
                 warnings: extracted.warnings ?? [],
               }),
+              json({
+                phase: "READY",
+                processedRows: extracted.rows.length,
+                totalRows: extracted.rows.length,
+                percentage: 100,
+              }),
             ],
           );
         });
       }
-    } else if (job.kind === "SALES_CHECK_ANALYZE")
+    } else if (job.kind === "DELIVERY_QUOTE_MAP")
+      await deliveryQuoteImports.processMapping(db, job.payload.importId);
+    else if (job.kind === "SALES_CHECK_ANALYZE")
       await processAnalysis(db, job.payload.reportId, job.payload.actorId);
     else if (job.kind === "QUANTITY_ANALYZE")
       await processQuantityAnalysis(
@@ -512,10 +535,19 @@ export async function runJob(db: DB) {
           json({ progress: { phase: "FAILED" } }),
         ],
       );
-    if (job.kind === "DELIVERY_QUOTE_EXTRACT")
+    if (
+      job.kind === "DELIVERY_QUOTE_EXTRACT" ||
+      job.kind === "DELIVERY_QUOTE_MAP"
+    )
       await db.query(
-        "UPDATE delivery_quote_jobs SET status='FAILED',error=$2,updated_at=now() WHERE id=$1",
-        [job.payload.importId, importFailureMessage(failure)],
+        "UPDATE delivery_quote_jobs SET status='FAILED',error=$2,progress=$3,updated_at=now() WHERE id=$1",
+        [
+          job.payload.importId,
+          job.kind === "DELIVERY_QUOTE_MAP"
+            ? failure.message
+            : importFailureMessage(failure),
+          json({ phase: "FAILED", percentage: null }),
+        ],
       );
     if (
       job.kind === "SALES_CHECK_EXTRACT" ||
@@ -547,6 +579,8 @@ export async function runJob(db: DB) {
         "UPDATE product_enrichment_jobs SET status='FAILED',error='AI research failed. Check configuration and worker logs.',updated_at=now() WHERE id=$1 AND status IN ('PENDING','RUNNING')",
         [job.payload.enrichmentJobId],
       );
+  } finally {
+    clearInterval(heartbeat);
   }
   return true;
 }

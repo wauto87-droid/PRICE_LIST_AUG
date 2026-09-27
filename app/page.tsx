@@ -14,6 +14,7 @@ import MaintenanceBanner from "@/frontend/MaintenanceBanner";
 import AdDisplay from "@/frontend/AdDisplay";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
+import { healthTransition } from "@/frontend/connectivity";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
   lines: [] as any[],
@@ -37,10 +38,9 @@ export default function App() {
     setLang(localStorage.getItem("amt-language") || "en");
     if(new URLSearchParams(location.search).get('commerce')==='imports')setTab('admin');
     if(new URLSearchParams(location.search).get('commerce')==='storefront')setTab('commercial');
-    const update = () => setOnline(navigator.onLine);
-    update();
-    window.addEventListener("online", update);
-    window.addEventListener("offline", update);
+    const offline = () => setOnline(false);
+    setOnline(navigator.onLine);
+    window.addEventListener("offline", offline);
     if (
       process.env.NODE_ENV === "production" &&
       window.isSecureContext &&
@@ -50,8 +50,7 @@ export default function App() {
         .register(appPath("/sw.js"), { scope: appPath("/") })
         .catch(() => {});
     return () => {
-      window.removeEventListener("online", update);
-      window.removeEventListener("offline", update);
+      window.removeEventListener("offline", offline);
     };
   }, []);
   useEffect(() => {
@@ -118,8 +117,6 @@ export default function App() {
     refresh();
   }, []);
   useEffect(() => {
-    const lost = () => setOnline(false);
-    window.addEventListener("amt-connection-lost", lost);
     const onMaintenanceActive = (e: any) => {
       if (e.detail) {
         setMaintenance((prev: any) => ({
@@ -130,18 +127,43 @@ export default function App() {
     };
     window.addEventListener("amt-maintenance-active", onMaintenanceActive);
     let consecutiveFailures = 0;
-    const timer = setInterval(async () => {
+    let healthy = navigator.onLine;
+    let stopped = false;
+    let checking = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (stopped) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(check, healthy && !consecutiveFailures ? 15000 : 3000);
+    };
+    const check = async () => {
+      if (checking || stopped) return;
+      checking = true;
+      if (!navigator.onLine) {
+        healthy = false;
+        consecutiveFailures = 3;
+        setOnline(false);
+        checking = false;
+        schedule();
+        return;
+      }
       try {
         const r = await fetch(appPath("/api/v1/health"), {
           cache: "no-store",
-          signal: AbortSignal.timeout(6000),
+          signal: AbortSignal.timeout(3000),
         });
-        if (r.ok && navigator.onLine) {
-          consecutiveFailures = 0;
+        const transition = healthTransition(
+          consecutiveFailures,
+          r.ok,
+          navigator.onLine,
+        );
+        consecutiveFailures = transition.failures;
+        if (transition.state === "ONLINE") {
+          healthy = true;
           setOnline(true);
-        } else if (!r.ok) {
-          consecutiveFailures++;
-          if (consecutiveFailures >= 2) setOnline(false);
+        } else if (transition.state === "OFFLINE") {
+          healthy = false;
+          setOnline(false);
         }
         const data = await r.json().catch(() => null);
         if (data?.maintenance) {
@@ -155,16 +177,34 @@ export default function App() {
           setUpdateReady(true);
         }
       } catch {
-        consecutiveFailures++;
-        if (!navigator.onLine || consecutiveFailures >= 2) {
+        const transition = healthTransition(
+          consecutiveFailures,
+          false,
+          navigator.onLine,
+        );
+        consecutiveFailures = transition.failures;
+        if (transition.state === "OFFLINE") {
+          healthy = false;
           setOnline(false);
         }
+      } finally {
+        checking = false;
+        schedule();
       }
-    }, 2500);
+    };
+    const wake = () => {
+      if (timer) clearTimeout(timer);
+      void check();
+    };
+    window.addEventListener("online", wake);
+    window.addEventListener("focus", wake);
+    void check();
     return () => {
-      window.removeEventListener("amt-connection-lost", lost);
+      stopped = true;
       window.removeEventListener("amt-maintenance-active", onMaintenanceActive);
-      clearInterval(timer);
+      window.removeEventListener("online", wake);
+      window.removeEventListener("focus", wake);
+      if (timer) clearTimeout(timer);
     };
   }, []);
   useEffect(() => {

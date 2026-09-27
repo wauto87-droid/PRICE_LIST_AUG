@@ -30,16 +30,28 @@ test("manifest and worker remain within the AMT scope", () => {
 test("backend router accepts prefixed and internal API request paths", async () => {
   const db = await embedded();
   await migrate(db);
-  for (const url of [
-    "http://localhost/amt_price_list/api/v1/health",
-    "http://localhost/api/v1/health",
-  ]) {
-    const response = await handle(new Request(url), db);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      ok: true,
-      release: process.env.APP_RELEASE || "local",
-    });
+  const originalFetch = globalThis.fetch;
+  let optionalServiceCalls = 0;
+  globalThis.fetch = (async () => {
+    optionalServiceCalls += 1;
+    throw new Error("WhatsApp unavailable");
+  }) as typeof fetch;
+  try {
+    for (const url of [
+      "http://localhost/amt_price_list/api/v1/health",
+      "http://localhost/api/v1/health",
+    ]) {
+      const response = await handle(new Request(url), db);
+      assert.equal(response.status, 200);
+      const data = await response.json();
+      assert.equal(data.ok, true);
+      assert.equal(data.release, process.env.APP_RELEASE || "local");
+      assert.equal(data.maintenance.workspace.enabled, false);
+      assert.equal(data.maintenance.storefront.enabled, false);
+    }
+    assert.equal(optionalServiceCalls, 0, "general health must not call WhatsApp or another optional service");
+  } finally {
+    globalThis.fetch = originalFetch;
   }
   await db.close?.();
 });

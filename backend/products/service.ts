@@ -829,6 +829,17 @@ export async function search(
         contentFilter?: "ALL" | "MISSING" | "COMPLETE";
       } = false,
 ) {
+  const startedAt = Date.now();
+  const finish = <T>(result: T, mode: string) => {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 500)
+      console.warn("Slow product search", {
+        durationMs,
+        mode,
+        queryLength: String(query ?? "").trim().length,
+      });
+    return result;
+  };
   const options =
     typeof adminOrOptions === "boolean"
       ? { admin: adminOrOptions }
@@ -906,7 +917,7 @@ export async function search(
         productSelect +
           ` WHERE ${activeClause} ORDER BY p.normalized_part LIMIT ${SEARCH_RESULT_LIMIT}`,
       );
-      return mapRows(rows.rows);
+      return finish(mapRows(rows.rows), "workspace-empty");
     }
     const totalRows = Number(
       (await one(
@@ -936,7 +947,7 @@ export async function search(
         [selectionLimit, selectionOffset],
       )
     ).rows;
-    return {
+    return finish({
       items: mapRows(rows.rows),
       page: safePage,
       pageSize,
@@ -951,7 +962,7 @@ export async function search(
       selectionLimitReached: totalRows > selectionLimit,
       selectionOffset,
       selectionHasMore: selectionOffset + selectableItems.length < totalRows,
-    };
+    }, "admin-empty");
   }
   if (!admin) {
     const partMatches = await getLookupPartMatches(
@@ -962,7 +973,7 @@ export async function search(
       SEARCH_RESULT_LIMIT,
     );
     const rankedIds = partMatches.map((row) => row.id);
-    if (rankedIds.length < SEARCH_RESULT_LIMIT) {
+    if (q.length >= 2 && rankedIds.length < SEARCH_RESULT_LIMIT) {
       const textMatches = await getRankedTextMatches(
         db,
         activeClause,
@@ -973,11 +984,15 @@ export async function search(
       rankedIds.push(...textMatches.map((row) => row.id));
     }
     const rows = await hydrateLookupProductsByIds(db, rankedIds);
-    return rows.map((row) => lookupProduct(row, actor, settings));
+    return finish(
+      rows.map((row) => lookupProduct(row, actor, settings)),
+      "workspace",
+    );
   }
   const partTotal = await countRankedPartMatches(db, productWhere, q, escaped);
   const needsFallback =
-    partTotal < offset + pageSize || partTotal < selectionLimit;
+    q.length >= 2 &&
+    (partTotal < offset + pageSize || partTotal < selectionLimit);
   const partIdsForFallback = needsFallback
     ? (await getRankedPartMatches(db, productWhere, q, escaped, partTotal)).map(
         (row) => row.id,
@@ -1053,7 +1068,7 @@ export async function search(
       ).map(({ id, version }) => ({ id, version })),
     );
   }
-  return {
+  return finish({
     items: mapRows(rows),
     page: safePage,
     pageSize,
@@ -1068,5 +1083,5 @@ export async function search(
     selectionLimitReached: totalRows > selectionLimit,
     selectionOffset,
     selectionHasMore: selectionOffset + selectableItems.length < totalRows,
-  };
+  }, "admin");
 }

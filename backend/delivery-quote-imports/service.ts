@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import { type DB, one } from "../core/db";
 import { assert } from "../core/errors";
@@ -65,6 +68,7 @@ const finalizeSchema = z
   .strict();
 
 const reopenSchema = finalizeSchema;
+const retrySchema = finalizeSchema;
 const headerSchema = z.object({ version: z.coerce.number().int(), customerCode: z.string().trim().max(80).default("") }).strict();
 
 const historyDateSchema = z
@@ -79,6 +83,7 @@ const historySchema = z
         "ALL",
         "UPLOADED",
         "PROCESSING",
+        "MAPPING",
         "AWAITING_MAPPING",
         "AWAITING_REVIEW",
         "COMPLETED",
@@ -164,6 +169,134 @@ function permission(actor: Actor) {
     403,
     "You do not have permission to create quotations from delivery notes",
   );
+}
+
+const uploadLimit = () => Number(process.env.UPLOAD_MAX_MB || 20) * 1024 * 1024;
+function uploadExtension(filename: string) {
+  const ext = path.extname(filename).toLowerCase();
+  assert(
+    [".xls", ".xlsx", ".csv"].includes(ext),
+    400,
+    "Supported files: XLS, XLSX, CSV",
+  );
+  return ext;
+}
+
+async function queueUploadedFile(
+  db: DB,
+  actor: Actor,
+  input: {
+    id: string;
+    filename: string;
+    target: string;
+    requestId?: string;
+  },
+) {
+  try {
+    await db.transaction(async (tx) => {
+      await tx.query(
+        "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,upload_request_id,progress) VALUES($1,$2,$3,'UPLOADED',$4,$5,$6)",
+        [
+          input.id,
+          path.basename(input.filename),
+          input.target,
+          actor.id,
+          input.requestId || null,
+          json({ phase: "QUEUED", percentage: 0, processedRows: 0 }),
+        ],
+      );
+      await tx.query(
+        "INSERT INTO jobs(id,kind,payload) VALUES($1,'DELIVERY_QUOTE_EXTRACT',$2)",
+        [randomUUID(), json({ importId: input.id })],
+      );
+      await audit(
+        tx,
+        actor.id,
+        "DELIVERY_QUOTE_UPLOAD",
+        "delivery_quote_jobs",
+        input.id,
+      );
+    });
+    return { id: input.id, reused: false };
+  } catch (error) {
+    const existing = input.requestId
+      ? await one(
+          db,
+          "SELECT id FROM delivery_quote_jobs WHERE owner_id=$1 AND upload_request_id=$2",
+          [actor.id, input.requestId],
+        )
+      : null;
+    await fs.unlink(input.target).catch(() => {});
+    if (!existing) throw error;
+    return { id: existing.id, reused: true };
+  }
+}
+
+export async function uploadStream(db: DB, actor: Actor, request: Request) {
+  permission(actor);
+  const rawFilename = request.headers.get("x-amt-filename") || "";
+  let filename = "";
+  try {
+    filename = decodeURIComponent(rawFilename);
+  } catch {
+    assert(false, 400, "Invalid upload filename");
+  }
+  filename = path.basename(filename).trim();
+  assert(filename.length > 0 && filename.length <= 255, 400, "Invalid upload filename");
+  const ext = uploadExtension(filename);
+  const requestId = z.string().uuid().parse(request.headers.get("x-amt-upload-id"));
+  const existing = await one(
+    db,
+    "SELECT id FROM delivery_quote_jobs WHERE owner_id=$1 AND upload_request_id=$2",
+    [actor.id, requestId],
+  );
+  if (existing) return { id: existing.id, reused: true };
+
+  const limit = uploadLimit();
+  const declaredSize = Number(
+    request.headers.get("x-amt-file-size") ||
+      request.headers.get("content-length") ||
+      0,
+  );
+  assert(declaredSize > 0 && declaredSize <= limit, 413, "File exceeds upload limit");
+  assert(request.body, 400, "Select a file");
+  const dir = path.resolve(
+    process.env.UPLOAD_DIR || ".data/uploads",
+    "delivery-quote-imports",
+  );
+  await fs.mkdir(dir, { recursive: true });
+  const id = randomUUID();
+  const temporary = path.join(dir, `${id}.uploading`);
+  const target = path.join(dir, id + ext);
+  let size = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      size += chunk.length;
+      if (size > limit) callback(new Error("File exceeds upload limit"));
+      else callback(null, chunk);
+    },
+  });
+  try {
+    await pipeline(
+      Readable.fromWeb(request.body as any),
+      limiter,
+      createWriteStream(temporary, { flags: "wx", mode: 0o600 }),
+    );
+    assert(size > 0, 400, "Select a file");
+    await fs.rename(temporary, target);
+    return await queueUploadedFile(db, actor, {
+      id,
+      filename,
+      target,
+      requestId,
+    });
+  } catch (error) {
+    await fs.unlink(temporary).catch(() => {});
+    await fs.unlink(target).catch(() => {});
+    if ((error as Error).message === "File exceeds upload limit")
+      assert(false, 413, "File exceeds upload limit");
+    throw error;
+  }
 }
 
 function friendlyIssue(error: unknown) {
@@ -459,15 +592,10 @@ function toQuoteCustomer(header: any) {
 
 export async function upload(db: DB, actor: Actor, file: File) {
   permission(actor);
-  const ext = path.extname(file.name).toLowerCase();
-  assert(
-    [".xls", ".xlsx", ".csv"].includes(ext),
-    400,
-    "Supported files: XLS, XLSX, CSV",
-  );
+  const ext = uploadExtension(file.name);
   assert(
     file.size > 0 &&
-      file.size <= Number(process.env.UPLOAD_MAX_MB || 20) * 1024 * 1024,
+      file.size <= uploadLimit(),
     413,
     "File exceeds upload limit",
   );
@@ -482,24 +610,11 @@ export async function upload(db: DB, actor: Actor, file: File) {
     flag: "wx",
     mode: 0o600,
   });
-  await db.transaction(async (tx) => {
-    await tx.query(
-      "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id) VALUES($1,$2,$3,'UPLOADED',$4)",
-      [id, path.basename(file.name), target, actor.id],
-    );
-    await tx.query(
-      "INSERT INTO jobs(id,kind,payload) VALUES($1,'DELIVERY_QUOTE_EXTRACT',$2)",
-      [randomUUID(), json({ importId: id })],
-    );
-    await audit(
-      tx,
-      actor.id,
-      "DELIVERY_QUOTE_UPLOAD",
-      "delivery_quote_jobs",
-      id,
-    );
+  return queueUploadedFile(db, actor, {
+    id,
+    filename: file.name,
+    target,
   });
-  return { id };
 }
 
 export async function list(db: DB, actor: Actor) {
@@ -678,6 +793,35 @@ export async function mapRows(
       "Delivery-note file is not ready for mapping",
     );
     assert(job.version === mapping.version, 409, "Import changed. Reload");
+    const updated = await one(
+      tx,
+      `UPDATE delivery_quote_jobs
+       SET status='MAPPING',mapping=$2,progress=$3,error=NULL,version=version+1,updated_at=now()
+       WHERE id=$1 RETURNING *`,
+      [
+        id,
+        json(mapping),
+        json({ phase: "MAPPING", percentage: 0, processedRows: 0 }),
+      ],
+    );
+    await tx.query(
+      "INSERT INTO jobs(id,kind,payload) VALUES($1,'DELIVERY_QUOTE_MAP',$2)",
+      [randomUUID(), json({ importId: id })],
+    );
+    return updated;
+  });
+}
+
+export async function processMapping(db: DB, id: string) {
+  const tx = db;
+  const job = await one(
+    tx,
+    "SELECT * FROM delivery_quote_jobs WHERE id=$1",
+    [id],
+  );
+  assert(job, 404, "Delivery-note quotation import not found");
+  assert(job.status === "MAPPING", 409, "Delivery-note file is not awaiting mapping");
+  const mapping = mappingSchema.parse(job.mapping);
     const rows = (
       await tx.query<{ id: string; row_number: number; raw: any }>(
         "SELECT id,row_number,raw FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
@@ -787,6 +931,20 @@ export async function mapRows(
           chunkStaged.map((s) => s.productId),
         ],
       );
+      await tx.query(
+        "UPDATE delivery_quote_jobs SET progress=$2,updated_at=now() WHERE id=$1 AND status='MAPPING'",
+        [
+          id,
+          json({
+            phase: "MAPPING",
+            processedRows: Math.min(i + chunkSize, rows.length),
+            totalRows: rows.length,
+            percentage: rows.length
+              ? Math.round((Math.min(i + chunkSize, rows.length) / rows.length) * 100)
+              : 100,
+          }),
+        ],
+      );
     }
 
     const header = headerState(staged);
@@ -800,11 +958,58 @@ export async function mapRows(
     );
     await tx.query(
       `UPDATE delivery_quote_jobs
-       SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,error=NULL,version=version+1,updated_at=now()
+       SET status='AWAITING_REVIEW',mapping=$2,header=$3,summary=$4,progress=$5,error=NULL,version=version+1,updated_at=now()
        WHERE id=$1`,
-      [id, json(mapping), json(header), json(summary)],
+      [
+        id,
+        json(mapping),
+        json(header),
+        json(summary),
+        json({
+          phase: "READY",
+          processedRows: rows.length,
+          totalRows: rows.length,
+          percentage: 100,
+        }),
+      ],
     );
-    return { ok: true, blocked: !!header.blockedReason };
+  return { ok: true, blocked: !!header.blockedReason };
+}
+
+export async function retryProcessing(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  permission(actor);
+  const data = retrySchema.parse(input);
+  return db.transaction(async (tx) => {
+    const job = await loadJob(tx, actor, id, true);
+    assert(job.status === "FAILED", 409, "This import is not awaiting a retry");
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    const mappingReady = mappingSchema.safeParse(job.mapping).success;
+    const status = mappingReady ? "MAPPING" : "UPLOADED";
+    const kind = mappingReady ? "DELIVERY_QUOTE_MAP" : "DELIVERY_QUOTE_EXTRACT";
+    const updated = await one(
+      tx,
+      "UPDATE delivery_quote_jobs SET status=$2,error=NULL,progress=$3,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+      [
+        id,
+        status,
+        json({
+          phase: mappingReady ? "MAPPING" : "QUEUED",
+          percentage: 0,
+          processedRows: 0,
+        }),
+      ],
+    );
+    await tx.query("INSERT INTO jobs(id,kind,payload) VALUES($1,$2,$3)", [
+      randomUUID(),
+      kind,
+      json({ importId: id }),
+    ]);
+    return updated;
   });
 }
 
@@ -1226,7 +1431,7 @@ export async function remove(db: DB, actor: Actor, id: string) {
   const job = await loadJob(db, actor, id);
   await db.transaction(async (tx) => {
     await tx.query(
-      "DELETE FROM jobs WHERE kind='DELIVERY_QUOTE_EXTRACT' AND payload->>'importId'=$1",
+      "DELETE FROM jobs WHERE kind IN ('DELIVERY_QUOTE_EXTRACT','DELIVERY_QUOTE_MAP') AND payload->>'importId'=$1",
       [id],
     );
     await tx.query("DELETE FROM delivery_quote_jobs WHERE id=$1", [id]);

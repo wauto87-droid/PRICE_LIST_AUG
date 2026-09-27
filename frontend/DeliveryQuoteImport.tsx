@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, type Translate } from "./api";
+import { api, uploadApi, type Translate } from "./api";
 import {
   formatDeliveryDocNo,
   formatDeliveryDate,
@@ -28,6 +28,7 @@ const defaultHistoryFilters = (): HistoryFilters => ({
   page: 0,
 });
 const emptyHistory = { items: [] as any[], page: 0, pageSize: 20, total: 0, totalPages: 1 };
+const processingStatuses = new Set(["UPLOADED", "PROCESSING", "MAPPING"]);
 
 export default function DeliveryQuoteImport({
   t,
@@ -44,6 +45,14 @@ export default function DeliveryQuoteImport({
   const [job, setJob] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<{
+    loaded: number;
+    total: number;
+  } | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<{
+    file: File;
+    id: string;
+  } | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("all");
   const [showCustomerColumn, setShowCustomerColumn] = useState(false);
@@ -110,24 +119,53 @@ export default function DeliveryQuoteImport({
   };
 
   useEffect(() => {
-    if (!job || (job.status !== "UPLOADED" && job.status !== "PROCESSING")) return;
-    const interval = setInterval(async () => {
+    if (!job || !processingStatuses.has(job.status)) return;
+    let stopped = false;
+    let delay = 2000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (nextDelay = delay) => {
+      if (!stopped) timer = setTimeout(poll, nextDelay);
+    };
+    const poll = async () => {
+      if (document.hidden) {
+        schedule(10000);
+        return;
+      }
       try {
         const next: any = await api(
           `delivery-quote-imports/${job.id}?page=0&pageSize=${rowPageSize}&filter=${encodeURIComponent(filter)}`,
+          "GET",
+          undefined,
+          { timeoutMs: 8000 },
         );
-        if (next.status !== "UPLOADED" && next.status !== "PROCESSING") {
-          setJob(next);
+        if (stopped) return;
+        setJob(next);
+        if (!processingStatuses.has(next.status)) {
           const columns = next.summary?.columns || [];
           setMapping(deliveryQuoteMappingDefaults(columns, next.mapping));
           setCustomerCodeDraft(String((next.header || next.summary)?.customerCode || ""));
           await loadJobs();
+          return;
         }
+        delay = Math.min(delay + 2000, 10000);
       } catch {
-        // ignore polling errors
+        delay = 10000;
       }
-    }, 1500);
-    return () => clearInterval(interval);
+      schedule();
+    };
+    const visible = () => {
+      if (document.hidden) return;
+      if (timer) clearTimeout(timer);
+      delay = 2000;
+      void poll();
+    };
+    document.addEventListener("visibilitychange", visible);
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
   }, [job?.id, job?.status, filter, rowPageSize]);
 
   useEffect(() => {
@@ -157,6 +195,30 @@ export default function DeliveryQuoteImport({
     setError("");
     try {
       await fn();
+      await loadJobs();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadFile(file: File, id = crypto.randomUUID()) {
+    setBusy(true);
+    setError("");
+    setUploadProgress({ loaded: 0, total: file.size });
+    setPendingUpload({ file, id });
+    try {
+      const created: any = await uploadApi(
+        "delivery-quote-imports/upload",
+        file,
+        id,
+        (loaded, total) => setUploadProgress({ loaded, total }),
+      );
+      setPendingUpload(null);
+      setUploadProgress(null);
+      setTab("IMPORT");
+      await open(created.id, "all", 0, rowPageSize);
       await loadJobs();
     } catch (e) {
       setError((e as Error).message);
@@ -312,6 +374,7 @@ export default function DeliveryQuoteImport({
                 <option value="ALL">{t("All statuses", "كل الحالات")}</option>
                 <option value="UPLOADED">UPLOADED</option>
                 <option value="PROCESSING">PROCESSING</option>
+                <option value="MAPPING">MAPPING</option>
                 <option value="AWAITING_MAPPING">AWAITING_MAPPING</option>
                 <option value="AWAITING_REVIEW">AWAITING_REVIEW</option>
                 <option value="COMPLETED">COMPLETED</option>
@@ -509,18 +572,39 @@ export default function DeliveryQuoteImport({
             type="file"
             accept=".xls,.xlsx,.csv"
             disabled={!online || busy}
-            onChange={(e) =>
-              void run(async () => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const form = new FormData();
-                form.set("file", file);
-                const created: any = await api("delivery-quote-imports", "POST", form);
-                setTab("IMPORT");
-                await open(created.id);
-              })
-            }
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadFile(file);
+            }}
           />
+          {uploadProgress && (
+            <div className="delivery-upload-progress" role="status">
+              <progress
+                max={uploadProgress.total || 1}
+                value={uploadProgress.loaded}
+              />
+              <span>
+                {Math.min(
+                  100,
+                  Math.round(
+                    (uploadProgress.loaded / (uploadProgress.total || 1)) * 100,
+                  ),
+                )}% · {(uploadProgress.loaded / 1024 / 1024).toFixed(1)} /{" "}
+                {(uploadProgress.total / 1024 / 1024).toFixed(1)} MB
+              </span>
+            </div>
+          )}
+          {pendingUpload && !busy && (
+            <button
+              className="primary"
+              onClick={() =>
+                void uploadFile(pendingUpload.file, pendingUpload.id)
+              }
+            >
+              {t("Retry upload", "إعادة محاولة الرفع")}
+            </button>
+          )}
           {activeJobs.map((item) => (
             <div key={item.id} style={{ display: "flex", gap: "4px" }}>
               <button onClick={() => void open(item.id)}>
@@ -554,18 +638,47 @@ export default function DeliveryQuoteImport({
       )}
       {tab === "OUTPUTS" && renderHistory("converted")}
       {tab === "ADMIN" && isAdmin && renderHistory("admin")}
-      {job && (job.status === "UPLOADED" || job.status === "PROCESSING") && (
+      {job && processingStatuses.has(job.status) && (
         <div className="notice" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px" }}>
           <div style={{ width: "20px", height: "20px", border: "3px solid #cbd5e1", borderTopColor: "#2563eb", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
           <div>
-            <strong>{t("Extracting delivery note rows…", "جارٍ استخراج صفوف إذن التسليم…")}</strong>
+            <strong>
+              {job.status === "MAPPING"
+                ? t("Matching products and prices…", "جارٍ مطابقة الأصناف والأسعار…")
+                : job.status === "UPLOADED"
+                  ? t("Queued for processing…", "في انتظار المعالجة…")
+                  : t("Extracting delivery note rows…", "جارٍ استخراج صفوف إذن التسليم…")}
+            </strong>
             <p className="muted" style={{ margin: "2px 0 0 0" }}>
               {t(
                 "Processing Excel file. Rows will appear automatically once ready.",
                 "تتم معالجة ملف الإكسل. ستظهر الصفوف تلقائياً فور اكتمالها.",
               )}
             </p>
+            {Number.isFinite(Number(job.progress?.percentage)) && (
+              <progress max="100" value={Number(job.progress.percentage)} />
+            )}
           </div>
+        </div>
+      )}
+      {job?.status === "FAILED" && (
+        <div className="notice error">
+          <strong>{t("Processing failed", "فشلت المعالجة")}</strong>
+          <p>{job.error || t("Retry this file.", "أعد محاولة معالجة الملف.")}</p>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await api(`delivery-quote-imports/${job.id}/retry`, "POST", {
+                  version: job.version,
+                });
+                await open(job.id, filter, 0, rowPageSize);
+              })
+            }
+          >
+            {t("Retry processing", "إعادة محاولة المعالجة")}
+          </button>
         </div>
       )}
       {job?.summary?.warnings?.length ? (

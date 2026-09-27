@@ -102,15 +102,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     if (root === "health") {
       const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
       const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
-      let botNumber: string | null = null;
-      try {
-        const botStatus = await whatsappAdmin("status", {});
-        if (botStatus && botStatus.number) {
-          botNumber = "+" + String(botStatus.number).replace(/\D/g, "");
-        }
-      } catch {}
       const configuredPhone = storefrontSettings?.data?.supportMobile || null;
-      const whatsappNumber = botNumber || configuredPhone || null;
+      const whatsappNumber = configuredPhone || null;
       const maintenance = {
         workspace: {
           enabled: Boolean(workspace?.data?.workspaceMaintenance),
@@ -2267,6 +2260,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       });
     }
     if (root === "delivery-quote-imports") {
+      if (id === "upload" && method === "POST")
+        return response(
+          await deliveryQuoteImports.uploadStream(db, actor, req),
+        );
       if (!id && method === "GET") {
         const scope = url.searchParams.get("scope");
         if (scope)
@@ -2322,6 +2319,15 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         if (action === "mapping" && method === "POST")
           return response(
             await deliveryQuoteImports.mapRows(db, actor, id, await body(req)),
+          );
+        if (action === "retry" && method === "POST")
+          return response(
+            await deliveryQuoteImports.retryProcessing(
+              db,
+              actor,
+              id,
+              await body(req),
+            ),
           );
         if (action === "review" && method === "POST")
           return response(

@@ -6,6 +6,13 @@ const jsonContentType =
 export const setCsrf = (value: string) => {
   sessionState.amtCsrf = value;
 };
+export type ApiOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  affectsConnectivity?: boolean;
+};
+export const requestWasCancelled = (error: unknown) =>
+  (error as any)?.name === "AbortError" || (error as any)?.code === "REQUEST_CANCELLED";
 const unexpectedResponseError = (
   result: Response,
   contentType: string,
@@ -45,9 +52,16 @@ export async function api<T = any>(
   path: string,
   method = "GET",
   body?: unknown,
+  options: ApiOptions = {},
 ): Promise<T> {
   const form = body instanceof FormData;
   let result: Response;
+  const timeout = options.timeoutMs
+    ? AbortSignal.timeout(options.timeoutMs)
+    : undefined;
+  const signal = options.signal && timeout
+    ? AbortSignal.any([options.signal, timeout])
+    : options.signal ?? timeout;
   try {
     result = await fetch(appPath("/api/v1/" + path), {
       method,
@@ -62,10 +76,27 @@ export async function api<T = any>(
           : {}),
       },
       body: body === undefined ? undefined : form ? body : JSON.stringify(body),
+      signal,
     });
   } catch (error) {
-    if ((error as any)?.name !== "AbortError") {
-      window.dispatchEvent(new Event("amt-connection-lost"));
+    if (options.signal?.aborted) {
+      const cancelled = new Error("Request cancelled") as Error & { code: string };
+      cancelled.name = "AbortError";
+      cancelled.code = "REQUEST_CANCELLED";
+      throw cancelled;
+    }
+    if (timeout?.aborted) {
+      const timedOut = new Error("The request took too long. Try again.") as Error & { code: string };
+      timedOut.code = "REQUEST_TIMEOUT";
+      throw timedOut;
+    }
+    if (error instanceof TypeError) {
+      const unreachable = new Error(
+        "Cannot reach the server. Check your connection and try again.",
+      ) as Error & { code: string; affectsConnectivity: boolean };
+      unreachable.code = "NETWORK_UNREACHABLE";
+      unreachable.affectsConnectivity = options.affectsConnectivity ?? false;
+      throw unreachable;
     }
     throw error;
   }
@@ -102,6 +133,52 @@ export async function api<T = any>(
     throw error;
   }
   return data;
+}
+
+export function uploadApi<T = any>(
+  path: string,
+  file: File,
+  uploadId: string,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", appPath("/api/v1/" + path));
+    request.withCredentials = true;
+    request.timeout = 5 * 60 * 1000;
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.setRequestHeader("X-CSRF-Token", sessionState.amtCsrf ?? "");
+    request.setRequestHeader("X-AMT-Filename", encodeURIComponent(file.name));
+    request.setRequestHeader("X-AMT-Upload-ID", uploadId);
+    request.setRequestHeader("X-AMT-File-Size", String(file.size));
+    request.upload.onprogress = (event) =>
+      onProgress?.(event.loaded, event.lengthComputable ? event.total : file.size);
+    request.onerror = () => reject(new Error("Upload interrupted. Check the connection and retry."));
+    request.ontimeout = () => reject(new Error("Upload took too long. Retry the same file."));
+    request.onabort = () => {
+      const cancelled = new Error("Upload cancelled") as Error & { code: string };
+      cancelled.name = "AbortError";
+      cancelled.code = "REQUEST_CANCELLED";
+      reject(cancelled);
+    };
+    request.onload = () => {
+      let data: any = null;
+      try {
+        data = request.responseText ? JSON.parse(request.responseText) : null;
+      } catch {
+        reject(new Error("The server returned an unexpected upload response."));
+        return;
+      }
+      if (request.status < 200 || request.status >= 300) {
+        const error = new Error(data?.error || `Upload failed (${request.status})`) as Error & { status: number };
+        error.status = request.status;
+        reject(error);
+        return;
+      }
+      resolve(data as T);
+    };
+    request.send(file);
+  });
 }
 export type Translate = (en: string, ar: string) => string;
 export async function downloadApi(path: string, body: unknown, filename: string) {
