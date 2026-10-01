@@ -1,0 +1,10 @@
+CREATE SEQUENCE sw_link_sequence;
+CREATE TABLE sw_link_state(id integer PRIMARY KEY CHECK(id=1),data jsonb NOT NULL DEFAULT '{"paused":true}',lease text,lease_until timestamptz);
+INSERT INTO sw_link_state(id) VALUES(1);
+CREATE TABLE sw_link_keys(id uuid PRIMARY KEY,name text NOT NULL,hash text NOT NULL UNIQUE,scopes text[] NOT NULL,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),last_used_at timestamptz,revoked_at timestamptz);
+CREATE TABLE sw_link_catalog(identity text PRIMARY KEY,data jsonb NOT NULL,seq bigint NOT NULL);
+CREATE INDEX sw_link_catalog_seq ON sw_link_catalog(seq);
+CREATE TABLE sw_link_proposals(id uuid PRIMARY KEY,revision integer NOT NULL,hash text NOT NULL,data jsonb NOT NULL,status text NOT NULL,result jsonb NOT NULL DEFAULT '{}',team text,owner text,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX sw_link_proposals_status ON sw_link_proposals(status,updated_at);
+CREATE TABLE sw_link_events(id uuid PRIMARY KEY,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE sw_link_audit(id uuid PRIMARY KEY,actor text NOT NULL,action text NOT NULL,data jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now());

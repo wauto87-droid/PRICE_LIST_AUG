@@ -1,3 +1,4 @@
+import { integrationPublic, integrationAdmin } from "../integrations/service";
 import { whatsappAdmin } from "../storefront/whatsapp";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -99,6 +100,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         .filter(Boolean),
       [root, id, action] = parts,
       method = req.method;
+    if (root === "integration" && id === "v1") return integrationPublic(db, req, action || "");
     if (root === "health") {
       const workspace = await one(db, "SELECT data FROM settings WHERE id=1");
       const storefrontSettings = await one(db, "SELECT data FROM storefront_settings WHERE id=1");
@@ -675,6 +677,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
+    if (root === "connected-apps") return integrationAdmin(db, actor, req);
     const settings = await admin.settings(db);
     const isMaintenanceAdmin =
       actor.permissions.includes("ADMIN_VIEW") ||

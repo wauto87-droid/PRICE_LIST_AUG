@@ -33,6 +33,7 @@ import PriceWatcher from "./PriceWatcher";
 import ProductEnrichmentPanel from "./ProductEnrichmentPanel";
 import AdminDashboard from "./AdminDashboard";
 import LearnedDeliveryMatches from "./LearnedDeliveryMatches";
+import PriceConnections from "./PriceConnections";
 import MaintenanceAdmin from "./MaintenanceAdmin";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
@@ -45,6 +46,7 @@ type ProductContentFilter = "ALL" | "MISSING" | "COMPLETE";
 type HistorySourceFilter = "ALL" | "MANUAL" | "IMPORT" | "ROLLBACK";
 type HistorySort = "NEWEST" | "OLDEST";
 const sections = [
+  ["connected-apps", "Integrations / Connected Apps", "التطبيقات المتصلة", "SETTINGS_MANAGE"],
   ["rules", "Bulk pricing rules", "قواعد التسعير الجماعي", "PRODUCT_EDIT"],
   [
     "quotation-settings",
@@ -626,7 +628,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           </button>
         </div>
         {sections
-          .filter((s) => user.permissions.includes(s[3]))
+          .filter((s) => user.permissions.includes(s[3]) && (s[0] !== "connected-apps" || user.role === "ADMIN"))
           .map(([key, en, ar]) => (
             <button
               disabled={busy}
@@ -713,6 +715,8 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
           <ReusableCustomItems t={t} />
         ) : section === "learned-delivery-matches" ? (
           <LearnedDeliveryMatches t={t} />
+        ) : section === "connected-apps" ? (
+          <PriceConnections t={t} />
         ) : section === "maintenance" ? (
           <MaintenanceAdmin t={t} />
         ) : !data ? (

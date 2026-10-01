@@ -1,5 +1,6 @@
 export type AdminResult = { section: string; payload: any } | null;
 export const selfLoadingAdminSections = [
+  "connected-apps",
   "imports",
   "rules",
   "quotation-settings",
