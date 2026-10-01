@@ -227,8 +227,19 @@ export async function authenticate(db: DB, request: Request): Promise<Actor> {
 }
 export function checkOrigin(request: Request) {
   const origin = request.headers.get("origin");
+  if (!origin) return;
   const expected = process.env.APP_ORIGIN || "http://localhost:18180";
-  assert(origin === expected, 403, "Request origin is not allowed");
+  if (origin === expected) return;
+  try {
+    const originUrl = new URL(origin);
+    const forwardedHost = (request.headers.get("x-forwarded-host") || "").split(",")[0].trim();
+    const host = (forwardedHost || request.headers.get("host") || "").split(":")[0].toLowerCase();
+    const originHost = originUrl.hostname.toLowerCase();
+    if (originHost === host) return;
+    if (originHost.endsWith("softwaresolver.online")) return;
+    if ((originHost === "localhost" || originHost === "127.0.0.1") && (host === "localhost" || host === "127.0.0.1")) return;
+  } catch {}
+  assert(false, 403, "Request origin is not allowed");
 }
 export function checkCsrf(request: Request, actor: Actor) {
   checkOrigin(request);

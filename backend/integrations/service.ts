@@ -4,7 +4,7 @@ import { DB, one } from '../core/db';
 import { Actor } from '../auth/service';
 import { saveProduct } from '../products/service';
 import { normalizePart } from '../pricing/engine';
-import { Hooks, check, catalogItem, adminState, adminCommand, reviewProposal, protocol, readBody, ConnectionError } from './core';
+import { Hooks, check, catalogItem, adminState, adminCommand, reviewProposal, protocol, readBody, ConnectionError, getHistory } from './core';
 
 export const priceHooks: Hooks = {
   app: 'pricelist',
@@ -51,6 +51,7 @@ export async function integrationAdmin(db: DB, actor: Actor, req: Request) {
     const url = new URL(req.url);
     if (req.method === 'GET') {
       if (url.searchParams.has('incoming')) { const page = Math.max(0, Math.min(100000, Number(url.searchParams.get('page')) || 0)); return Response.json({ rows: (await db.query('SELECT * FROM sw_link_proposals ORDER BY updated_at DESC LIMIT 100 OFFSET $1', [page * 100])).rows }); }
+      if (url.searchParams.has('history')) { const page = Math.max(0, Math.min(100000, Number(url.searchParams.get('page')) || 0)); return Response.json({ rows: await getHistory(db, 50) }); }
       if (url.searchParams.has('search')) { const term = `%${(url.searchParams.get('search') || '').slice(0, 100).replace(/[\\%_]/g, '\\$&')}%`; return Response.json({ rows: (await db.query("SELECT id,'PRODUCT' type,part_number code,description,unit FROM products WHERE active AND (part_number ILIKE $1 OR description ILIKE $1) UNION ALL SELECT id,'REUSABLE' type,reference code,description,unit FROM reusable_custom_items WHERE status='ACTIVE' AND (reference ILIKE $1 OR description ILIKE $1) LIMIT 100", [term])).rows }); }
       return Response.json(await adminState(db, priceHooks));
     }

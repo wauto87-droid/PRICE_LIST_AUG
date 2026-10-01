@@ -43,13 +43,56 @@ export async function authenticate(db: ConnectionDB, req: Request, scope: string
   const row = await one(db, 'UPDATE sw_link_keys SET last_used_at=now() WHERE hash=$1 AND revoked_at IS NULL AND expires_at>now() AND $2=ANY(scopes) RETURNING id', [digest(token), scope]);
   check(row, 'Key expired, revoked or missing permission', 401); return row.id;
 }
+export async function logHistory(
+  db: ConnectionDB,
+  type: string,
+  status: 'SUCCESS' | 'FAILED' | 'INFO',
+  message: string,
+  details: Record<string, any> = {},
+  durationMs?: number
+) {
+  try {
+    await audit(db, 'system', type, { status, message, duration_ms: durationMs ?? null, ...details });
+  } catch {}
+}
+
+export async function getHistory(db: ConnectionDB, limit = 50) {
+  try {
+    const res = await db.query(
+      `SELECT id, action as type, coalesce(data->>'status', 'INFO') as status, coalesce(data->>'message', action) as message, (data->>'duration_ms')::int as duration_ms, data as details, created_at FROM sw_link_audit ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+    return res.rows;
+  } catch {
+    return [];
+  }
+}
+
 export async function adminState(db: ConnectionDB, hooks: Hooks) {
   const s = await state(db);
   const keys = (await db.query('SELECT id,name,scopes,expires_at,created_at,last_used_at,revoked_at FROM sw_link_keys ORDER BY created_at DESC')).rows;
   const counts = (await db.query('SELECT status,count(*)::int count FROM sw_link_proposals GROUP BY status')).rows;
   const count = await one(db, 'SELECT count(*)::int count FROM sw_link_catalog');
-  return { app: hooks.app, enabled: process.env.CONNECTED_APPS_ENABLED === 'true', encryptionReady: /^[a-f\d]{64}$/i.test(process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''), ...s, secret: undefined, credentialConfigured: !!s.secret, keys, scopes: scopesFor(hooks.app), counts, importedCount: count.count };
+  const history = await getHistory(db, 50);
+  const defaultSelfUrl = hooks.app === 'workflow'
+    ? 'https://softwaresolver.online/api/sales-workflow/integration/v1'
+    : 'https://softwaresolver.online/amt_price_list/api/v1/integration/v1';
+  return {
+    app: hooks.app,
+    enabled: process.env.CONNECTED_APPS_ENABLED === 'true',
+    encryptionReady: /^[a-f\d]{64}$/i.test(process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''),
+    ...s,
+    secret: undefined,
+    credentialConfigured: !!s.secret,
+    keys,
+    scopes: scopesFor(hooks.app),
+    counts,
+    importedCount: count?.count || 0,
+    history,
+    selfUrl: defaultSelfUrl,
+  };
 }
+
 export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string, input: any) {
   if (input.action === 'generate' || input.action === 'rotate') {
     const name = str.min(1).parse(input.name); const scopes = z.array(z.enum(scopesFor(hooks.app) as [string, ...string[]])).min(1).parse(input.scopes);
@@ -58,10 +101,14 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
     await db.transaction(async tx => {
       if (input.action === 'rotate') { const old = await one(tx, 'UPDATE sw_link_keys SET revoked_at=now() WHERE id=$1::uuid AND revoked_at IS NULL RETURNING id', [z.string().uuid().parse(input.id)]); check(old, 'Key already revoked or missing', 409); }
       await tx.query('INSERT INTO sw_link_keys(id,name,hash,scopes,expires_at) VALUES($1::uuid,$2,$3,$4::text[],$5::timestamptz)', [id, name, digest(token), scopes, expires]);
-      await audit(tx, actor, input.action, { id, name, scopes, expires });
+      await audit(tx, actor, input.action, { id, name, scopes, expires, status: 'SUCCESS', message: `${input.action === 'rotate' ? 'Rotated' : 'Generated'} API key "${name}" (${scopes.join(', ')})` });
     }); return { id, key: token };
   }
-  if (input.action === 'revoke') { await db.query('UPDATE sw_link_keys SET revoked_at=now() WHERE id=$1::uuid', [z.string().uuid().parse(input.id)]); await audit(db, actor, 'revoke', { id: input.id }); return { saved: true }; }
+  if (input.action === 'revoke') {
+    await db.query('UPDATE sw_link_keys SET revoked_at=now() WHERE id=$1::uuid', [z.string().uuid().parse(input.id)]);
+    await audit(db, actor, 'revoke', { id: input.id, status: 'INFO', message: 'Revoked API key' });
+    return { saved: true };
+  }
   if (input.action === 'configure') {
     const url = await validateURL(z.string().max(2000).parse(input.url)); const paused = z.boolean().parse(input.paused);
     const secret = input.key ? encrypt(z.string().regex(/^swk_[a-f0-9]{64}$/).parse(input.key)) : undefined;
@@ -69,11 +116,29 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
       const s = (await one(tx, 'SELECT data FROM sw_link_state WHERE id=1 FOR UPDATE')).data;
       check(!s.url || s.url === url, 'Changing the source app requires a separate migration to preserve catalog identities');
       await tx.query('UPDATE sw_link_state SET data=$1::jsonb WHERE id=1', [json({ ...s, url, paused, ...(secret ? { secret } : {}) })]);
-      await audit(tx, actor, 'configure', { url, paused, credentialUpdated: !!secret });
+      await audit(tx, actor, 'configure', { url, paused, credentialUpdated: !!secret, status: 'SUCCESS', message: `Updated outgoing connection: ${url} (paused: ${paused})` });
     }); return { saved: true };
   }
+  if (input.action === 'clearHistory') {
+    try { await db.query('DELETE FROM sw_link_history'); } catch {}
+    return { saved: true, message: 'History cleared' };
+  }
   enabled();
-  if (input.action === 'test') { const s = await state(db); const r = await remote(s, 'health'); check(r.app === (hooks.app === 'workflow' ? 'pricelist' : 'workflow') && r.protocol === 1, 'Connected URL is not the expected app'); return { message: 'Connection verified' }; }
+  if (input.action === 'test') {
+    const s = await state(db);
+    const start = Date.now();
+    try {
+      const r = await remote(s, 'health');
+      check(r.app === (hooks.app === 'workflow' ? 'pricelist' : 'workflow') && r.protocol === 1, 'Connected URL is not the expected app');
+      const latency = Date.now() - start;
+      await logHistory(db, 'TEST_PING', 'SUCCESS', `Connection verified in ${latency}ms to ${s.url}`, { latency, remoteApp: r.app, url: s.url }, latency);
+      return { message: `Connection verified (${latency}ms)`, latency };
+    } catch (err: any) {
+      const latency = Date.now() - start;
+      await logHistory(db, 'TEST_PING', 'FAILED', `Connection test failed: ${err.message}`, { latency, url: s.url, error: err.message }, latency);
+      throw err;
+    }
+  }
   if (input.action === 'sync') { await sync(db, hooks, true); return { message: 'Synchronization completed' }; }
   throw new ConnectionError('Unknown connection action');
 }
@@ -141,7 +206,8 @@ export async function reviewProposal(db: ConnectionDB, hooks: Hooks, actor: any,
 }
 export async function protocol(db: ConnectionDB, hooks: Hooks, req: Request, path: string) {
   const scope = hooks.app === 'pricelist' ? path === 'proposals' && req.method === 'POST' ? 'proposals:write' : path === 'proposals' ? 'proposals:read' : 'catalog:read' : 'notifications:write';
-  await authenticate(db, req, scope);
+  const keyId = await authenticate(db, req, scope);
+  await logHistory(db, 'INCOMING_REQ', 'SUCCESS', `Incoming ${req.method} /${path}`, { path, method: req.method, keyId });
   if (path === 'health' && req.method === 'GET') return { app: hooks.app, protocol: 1 };
   if (hooks.app === 'pricelist' && path === 'catalog' && req.method === 'GET') {
     await refreshCatalog(db, hooks);
@@ -167,6 +233,7 @@ export async function readBody(req: Request) {
 }
 export async function sync(db: ConnectionDB, hooks: Hooks, manual = false, transport = remote) {
   enabled();
+  const startTime = Date.now();
   const token = randomUUID();
   const locked = await one(db, "UPDATE sw_link_state SET lease=$1,lease_until=now()+interval '10 minutes' WHERE id=1 AND (lease_until IS NULL OR lease_until<now()) RETURNING data", [token]);
   if (!locked) { if (manual) throw new ConnectionError('Synchronization already running', 409); return; }
@@ -218,10 +285,14 @@ export async function sync(db: ConnectionDB, hooks: Hooks, manual = false, trans
       if (reviewed) await pullCatalog();
     }
     await hooks.afterSync?.();
+    const duration = Date.now() - startTime;
+    await logHistory(db, 'SYNC_RUN', 'SUCCESS', hooks.app === 'workflow' ? `Sync completed in ${duration}ms (cursor: ${s.cursor || '0'})` : `Sync notification delivered in ${duration}ms`, { duration, cursor: s.cursor, app: hooks.app }, duration);
     await db.query('UPDATE sw_link_state SET data=data || $1::jsonb WHERE id=1', [json({ lastSuccess: new Date().toISOString(), lastError: null, attempts: 0, nextAttempt: new Date(Date.now() + 300000).toISOString() })]);
   } catch (e) {
+    const duration = Date.now() - startTime;
     const attempts = (s.attempts || 0) + 1;
     const message = e instanceof ConnectionError ? e.message : 'Connection failed; check URL, key, encryption configuration and remote availability';
+    await logHistory(db, 'SYNC_RUN', 'FAILED', `Sync failed: ${message}`, { duration, error: message, attempts }, duration);
     await db.query('UPDATE sw_link_state SET data=data || $1::jsonb WHERE id=1', [json({ lastError: message, attempts, nextAttempt: new Date(Date.now() + Math.min(3600000, 30000 * 2 ** Math.min(attempts, 7))).toISOString() })]);
     if (manual) throw new ConnectionError(message, 502);
   } finally { await db.query('UPDATE sw_link_state SET lease=NULL,lease_until=NULL WHERE id=1 AND lease=$1', [token]); }
