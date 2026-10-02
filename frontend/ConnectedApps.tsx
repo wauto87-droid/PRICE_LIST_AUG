@@ -17,8 +17,23 @@ export async function workflowConnectionCall(body?: Row) {
   return result;
 }
 
+const defaultData: Row = {
+  app: 'pricelist',
+  enabled: true,
+  encryptionReady: true,
+  url: '',
+  paused: false,
+  credentialConfigured: false,
+  keys: [],
+  history: [],
+  importedCount: 0,
+  selfUrl: 'https://softwaresolver.online/amt_price_list/api/v1/integration/v1',
+  scopes: ['catalog:read', 'proposals:write', 'proposals:read'],
+};
+
 export default function ConnectedApps({ call = workflowConnectionCall }: { call?: ConnectionCall }) {
-  const [data, setData] = useState<Row>();
+  const [data, setData] = useState<Row>(defaultData);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -30,10 +45,16 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
   const [copiedKey, setCopiedKey] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      setData(await call());
+      const res = await call();
+      if (res && typeof res === 'object') {
+        setData(prev => ({ ...prev, ...res }));
+      }
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
   }, [call]);
 
@@ -78,9 +99,17 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
     ? `${window.location.origin}/amt_price_list/api/v1/integration/v1`
     : 'https://softwaresolver.online/amt_price_list/api/v1/integration/v1';
 
-  const ingressUrl = data?.selfUrl || defaultSelfUrl;
+  const activeData: Row = {
+    ...defaultData,
+    ...(data || {}),
+    keys: Array.isArray(data?.keys) ? data.keys : [],
+    history: Array.isArray(data?.history) ? data.history : [],
+    scopes: Array.isArray(data?.scopes) && data.scopes.length > 0 ? data.scopes : defaultData.scopes,
+  };
 
-  const filteredHistory = (data?.history || []).filter((h: Row) => {
+  const ingressUrl = activeData.selfUrl || defaultSelfUrl;
+
+  const filteredHistory = (activeData.history || []).filter((h: Row) => {
     if (historyFilter === 'ALL') return true;
     if (historyFilter === 'SYNC') return (h.type || '').includes('SYNC');
     if (historyFilter === 'TEST') return (h.type || '').includes('TEST');
@@ -120,65 +149,64 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
         </div>
       )}
 
-      {!data ? (
-        <div className="conn-card" style={{ textAlign: 'center', padding: '30px' }}>
-          <p>Loading connection status…</p>
-          <button type="button" onClick={load} className="primary">Retry loading</button>
+      {loading && (
+        <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#1565c0' }}>
+          ↻ Refreshing connection status from server…
         </div>
-      ) : (
-        <>
-          {/* Health Stats Grid */}
-          <div className="conn-stat-grid">
-            <div className="conn-stat-box">
-              <span className="conn-stat-label">Server Switch</span>
-              <span className="conn-stat-value">
-                <span className={`conn-dot ${data.enabled ? 'green' : 'red'}`} />
-                {data.enabled ? 'Active' : 'Disabled'}
-              </span>
-            </div>
+      )}
 
-            <div className="conn-stat-box">
-              <span className="conn-stat-label">Encryption Engine</span>
-              <span className="conn-stat-value">
-                <span className={`conn-dot ${data.encryptionReady ? 'green' : 'red'}`} />
-                {data.encryptionReady ? 'AES-256 Ready' : 'Setup Needed'}
-              </span>
-            </div>
+      {/* Health Stats Grid */}
+      <div className="conn-stat-grid">
+        <div className="conn-stat-box">
+          <span className="conn-stat-label">Server Switch</span>
+          <span className="conn-stat-value">
+            <span className={`conn-dot ${activeData.enabled ? 'green' : 'red'}`} />
+            {activeData.enabled ? 'Active' : 'Disabled'}
+          </span>
+        </div>
 
-            <div className="conn-stat-box">
-              <span className="conn-stat-label">Published Catalog Items</span>
-              <span className="conn-stat-value">
-                <strong style={{ color: 'var(--red)', fontSize: 16 }}>{data.importedCount || 0}</strong>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>records</span>
-              </span>
-            </div>
+        <div className="conn-stat-box">
+          <span className="conn-stat-label">Encryption Engine</span>
+          <span className="conn-stat-value">
+            <span className={`conn-dot ${activeData.encryptionReady ? 'green' : 'red'}`} />
+            {activeData.encryptionReady ? 'AES-256 Ready' : 'Setup Needed'}
+          </span>
+        </div>
 
-            <div className="conn-stat-box">
-              <span className="conn-stat-label">Last Sync Status</span>
-              <span className="conn-stat-value" style={{ fontSize: 12 }}>
-                <span className={`conn-dot ${data.lastSuccess ? 'green' : 'gray'}`} />
-                {data.lastSuccess ? new Date(data.lastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never'}
-              </span>
-            </div>
-          </div>
+        <div className="conn-stat-box">
+          <span className="conn-stat-label">Published Catalog Items</span>
+          <span className="conn-stat-value">
+            <strong style={{ color: 'var(--red)', fontSize: 16 }}>{activeData.importedCount || 0}</strong>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>records</span>
+          </span>
+        </div>
 
-          {/* Proposal Counts if any */}
-          {data.counts && data.counts.length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-              {data.counts.map((r: Row) => (
-                <span key={r.status} className="conn-badge gray">
-                  {r.status}: <strong style={{ color: 'var(--red)' }}>{r.count}</strong>
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="conn-stat-box">
+          <span className="conn-stat-label">Last Sync Status</span>
+          <span className="conn-stat-value" style={{ fontSize: 12 }}>
+            <span className={`conn-dot ${activeData.lastSuccess ? 'green' : 'gray'}`} />
+            {activeData.lastSuccess ? new Date(activeData.lastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never'}
+          </span>
+        </div>
+      </div>
 
-          {data.lastError && (
-            <div role="alert" className="conn-badge red" style={{ display: 'block', padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
-              <strong>Sync Issue: </strong>{data.lastError}
-              {data.nextAttempt && <span style={{ marginLeft: 8 }}>(Next retry: {new Date(data.nextAttempt).toLocaleTimeString()})</span>}
-            </div>
-          )}
+      {/* Proposal Counts if any */}
+      {activeData.counts && activeData.counts.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          {activeData.counts.map((r: Row) => (
+            <span key={r.status} className="conn-badge gray">
+              {r.status}: <strong style={{ color: 'var(--red)' }}>{r.count}</strong>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {activeData.lastError && (
+        <div role="alert" className="conn-badge red" style={{ display: 'block', padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
+          <strong>Sync Issue: </strong>{activeData.lastError}
+          {activeData.nextAttempt && <span style={{ marginLeft: 8 }}>(Next retry: {new Date(activeData.nextAttempt).toLocaleTimeString()})</span>}
+        </div>
+      )}
 
           {/* Key Banner (when newly generated) */}
           {key && (
@@ -217,7 +245,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
               className={`conn-tab-btn ${activeTab === 'history' ? 'active' : ''}`}
               onClick={() => setActiveTab('history')}
             >
-              Connection & Request History ({data.history?.length || 0})
+              Connection & Request History ({activeData.history?.length || 0})
             </button>
             <button
               type="button"
@@ -257,7 +285,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                 <p>Configure the URL and API key of the Sales Workflow app to receive notifications and sync proposals.</p>
 
                 <form
-                  key={data.url || 'new'}
+                  key={activeData.url || 'new'}
                   onSubmit={async (e) => {
                     e.preventDefault();
                     const form = e.currentTarget;
@@ -279,7 +307,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                         name="url"
                         type="url"
                         required
-                        defaultValue={data.url || ''}
+                        defaultValue={activeData.url || ''}
                         placeholder="https://softwaresolver.online/api/sales-workflow/integration/v1"
                       />
                     </label>
@@ -291,7 +319,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                           name="key"
                           type={showKeyPassword ? 'text' : 'password'}
                           autoComplete="new-password"
-                          placeholder={data.credentialConfigured ? '•••••••• (Saved securely)' : 'Paste API key from ERP'}
+                          placeholder={activeData.credentialConfigured ? '•••••••• (Saved securely)' : 'Paste API key from ERP'}
                           style={{ flex: 1 }}
                         />
                         <button
@@ -308,7 +336,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
 
                   <div style={{ marginTop: 10 }}>
                     <label className="check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                      <input name="paused" type="checkbox" defaultChecked={data.paused} />
+                      <input name="paused" type="checkbox" defaultChecked={activeData.paused} />
                       <span>Pause synchronization temporarily</span>
                     </label>
                   </div>
@@ -366,7 +394,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                       Permissions / Scopes:
                     </span>
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      {data.scopes.map((scope: string) => (
+                      {activeData.scopes.map((scope: string) => (
                         <label key={scope} className="check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                           <input type="checkbox" name="scope" value={scope} defaultChecked />
                           <code>{scope}</code>
@@ -383,11 +411,21 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                 </form>
 
                 {/* Active Keys Table */}
-                {data.keys && data.keys.length > 0 && (
-                  <div style={{ marginTop: 16 }}>
-                    <h4 style={{ fontSize: 12, fontWeight: 700, margin: '0 0 8px 0', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                      Active Keys ({data.keys.length})
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <h4 style={{ fontSize: 12, fontWeight: 700, margin: 0, textTransform: 'uppercase', color: 'var(--muted)' }}>
+                      Active Keys ({activeData.keys.length})
                     </h4>
+                  </div>
+                  <p style={{ margin: '0 0 8px 0', fontSize: 11, color: 'var(--muted)' }}>
+                    🔒 <strong>Security note:</strong> Keys are stored as SHA-256 hashes at rest and raw tokens cannot be retrieved again. Copy newly generated keys from the green banner above when created.
+                  </p>
+
+                  {activeData.keys.length === 0 ? (
+                    <div style={{ padding: '16px', textAlign: 'center', border: '1px dashed var(--line)', borderRadius: 6, fontSize: 12, color: 'var(--muted)' }}>
+                      No active API keys generated yet. Use the form above to generate an API key for Panel ERP.
+                    </div>
+                  ) : (
                     <div className="table-scroll">
                       <table className="conn-table">
                         <thead>
@@ -400,7 +438,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                           </tr>
                         </thead>
                         <tbody>
-                          {data.keys.map((k: Row) => (
+                          {activeData.keys.map((k: Row) => (
                             <tr key={k.id}>
                               <td>
                                 <strong>{k.name}</strong>
@@ -599,8 +637,6 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
               </ol>
             </div>
           )}
-        </>
-      )}
     </div>
   );
 }
