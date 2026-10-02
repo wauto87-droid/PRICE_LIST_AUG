@@ -42,6 +42,18 @@ export const priceHooks: Hooks = {
   },
 };
 export async function integrationPublic(db: DB, req: Request, path: string) {
+  if(path==='jobs-review'){
+    try{
+      const { workflowEnabled }=await import('./job-protocol');workflowEnabled();await authenticate(db,req,'jobs:results');check(req.method==='POST','Method not allowed',405);
+      const input=await readBody(req);const id=z.string().uuid().parse(input.documentId);
+      const q=await one(db,'SELECT * FROM quotations WHERE id=$1',[id]);const link=await one(db,'SELECT * FROM sw_job_documents WHERE id=$1',[id]);check(q&&link,'Linked document not found',404);
+      const { ready }=await import('./jobs');return Response.json({...ready(q,link),ownerId:q.owner_id,version:q.version,ownershipRevision:link.data.ownershipRevision||0,handoverPending:!!link.data.handover});
+    }catch(e){return Response.json({error:e instanceof Error?e.message:'Review unavailable'},{status:e instanceof ConnectionError?e.status:503});}
+  }
+  if (path === 'jobs-ownership') {
+    try { const { ownershipEndpoint } = await import('./ownership'); return Response.json(await ownershipEndpoint(db,req)); }
+    catch(e) { return Response.json({error:e instanceof Error?e.message:'Handover failed'},{status:e instanceof ConnectionError?e.status:503}); }
+  }
   if (path === "jobs-result") {
     try { const { receiveJobResult } = await import("./jobs"); return Response.json(await receiveJobResult(db, req)); }
     catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : "Job result could not be applied" }, { status: e instanceof ConnectionError ? e.status : 503 }); }

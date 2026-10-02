@@ -33,6 +33,14 @@ export default function App() {
     [busy, setBusy] = useState(false),
     [updateReady, setUpdateReady] = useState(false),
     [maintenance, setMaintenance] = useState<any>(null);
+  const workflowOpened=useRef(false);
+  useEffect(()=>{
+    if(!session||workflowOpened.current)return;
+    const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');if(!id)return;
+    workflowOpened.current=true;
+    if(params.get('view')==='jobs'){setTab('workflow-jobs');return;}
+    api(`quotations/${encodeURIComponent(id)}`).then(openQuote).catch(e=>setError(e.message));
+  },[session]);
   const releaseRef = useRef("");
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
   useEffect(() => {
@@ -673,7 +681,7 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "workflow-jobs" && <PricingCollectionJobs />}
+            {tab === "workflow-jobs" && <PricingCollectionJobs documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations

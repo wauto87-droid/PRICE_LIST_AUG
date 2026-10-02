@@ -192,3 +192,25 @@ test('user directory is scoped, paginated and contains unique readable reference
     await migrate(db);assert.deepEqual((await(await call(key)).json()).users,first.users);
   }finally{await db.close?.();}
 });
+
+
+test('failed staff responses preserve document mappings; corrected response loads the branch staff',async()=>{
+ const db=await embedded();
+ try{
+  await migrate(db);process.env.SETUP_TOKEN='staff-response-test-token-long-enough';
+  await setup(db,{token:process.env.SETUP_TOKEN,username:'staffrepair',password:'abcd',name:'Creator',companyName:'Pilot'});
+  const session=await login(db,{username:'staffrepair',password:'abcd'});
+  const actor=await authenticate(db,new Request('http://localhost',{headers:{Cookie:sessionCookie(session.token).split(';')[0]}}));
+  const id=randomUUID();await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-0049','DRAFT',$2,'{}','[]','{}')",[id,actor.id]);
+  const mapping={branchId:'amt',branchName:'AMT',lines:{}};
+  await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2)',[id,mapping]);
+  const request=()=>new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`);
+  const {parseRemoteResponse}=await import('../backend/integrations/core');
+  const malformed=await jobWorkspace(db,actor,request(),async()=>parseRemoteResponse(200,'text/html','<html>login</html>'));
+  assert.equal(malformed.diagnostic.code,'ENDPOINT_REQUIRED');assert.equal(malformed.directoryLoaded,false);assert.match(malformed.error,/HTML page/);
+  assert.deepEqual((await one(db,'SELECT data FROM sw_job_documents WHERE id=$1',[id]))!.data,mapping);
+  const incompatible=await jobWorkspace(db,actor,request(),async()=>({app:'workflow'}));assert.equal(incompatible.diagnostic.code,'UPDATE_REQUIRED');
+  const context={branchId:'amt',branchName:'AMT',branches:[{id:'amt',name:'AMT'}],ownerMappingRevision:1,actorMappingRevision:1,staff:[{id:'erp-ahmed',name:'Ahmed'}],readiness:{creatorWhatsApp:true,assignerWhatsApp:true}};
+  const repaired=await jobWorkspace(db,actor,request(),async()=>context);assert.equal(repaired.staff[0].name,'Ahmed');assert.equal(repaired.branchId,'amt');assert.equal(repaired.error,undefined);
+ }finally{await db.close?.();}
+});

@@ -328,7 +328,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                         required
                         defaultValue={activeData.url || ''}
                         placeholder="https://softwaresolver.online/api/sales-workflow/integration/v1"
-                      />
+                      /><small>Copy the Integration Ingress URL from ERP Connected Apps. A login or dashboard URL cannot load branch staff.</small>
                     </label>
 
                     <label>

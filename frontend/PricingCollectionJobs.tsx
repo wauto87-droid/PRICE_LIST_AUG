@@ -297,7 +297,9 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
             <>
               <h3>{doc.number} · <span style={{ fontSize: '0.85em', color: '#64748b' }}>{doc.status}</span></h3>
               <div style={{ padding: 12, border: '1px solid #cbd5e1', borderRadius: 6 }}>
-                {!context ? <p>Checking ERP branch and mapping…</p> : context.error ? <p role="alert">{context.error}</p> : <>
+                {doc.canOverride && <button disabled={busy} onClick={()=>{const reason=window.prompt('Administrator override reason (valid for 15 minutes)');if(reason)void command({action:'override',reason});}}>Administrator override</button>}
+                {doc.handoverPending && <p role="status">Handover pending synchronization. Document changes are locked.</p>}
+                {!context ? <p>Checking ERP branch and mapping…</p> : context.error ? <div role="alert"><p>{context.error}</p><p style={{fontSize:13,color:'#64748b'}}>Your saved mappings and prices are preserved. The ERP staff directory has not loaded.</p>{context.diagnostic?.code==='ENDPOINT_REQUIRED'&&<p style={{fontSize:13}}>In Admin → Integrations / Connected Apps, save ERP’s Integration Ingress URL and run Test connection.</p>}<button disabled={busy} onClick={()=>setContextRefresh(n=>n+1)}>Retry staff loading</button></div> : <>
                   <label>Working ERP branch <select aria-label="Working ERP branch" value={context.branchId} disabled={busy || context.branchLocked || context.branches.length < 2 || !doc.canAssign} onChange={e => { setSelected([]); setVersion(undefined); setWorkflowVersion(undefined); void command({ action: 'branch', branchId: e.target.value, version: doc.version, workflowVersion: doc.workflowVersion }); }}>
                     {context.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select></label>
@@ -372,7 +374,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
                             kind =>
                               l.jobs[kind] && (
                                 <div key={kind} style={{ marginBottom: 6 }}>
-                                  <strong>{kind}</strong>: {l.jobs[kind].status} · {staff.find(s => s.id === l.jobs[kind].owner)?.name || l.jobs[kind].owner}
+                                  <strong>{kind}</strong>: {l.jobs[kind].status} · {staff.find(s => s.id === l.jobs[kind].owner)?.name || l.jobs[kind].ownerName || l.workflowCost?.actorName || 'Assigned staff'}
                                   <br />
                                   {l.jobs[kind].blocker && <span style={{ color: '#b91c1c' }}>{l.jobs[kind].blocker}<br /></span>}
                                   <small style={{ color: '#64748b' }}>
@@ -398,7 +400,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
                                 Price updated by {l.workflowCost.actorName} · {new Date(l.workflowCost.updatedAt).toLocaleString()}
                               </small>
                               {l.workflowCost.stale && <strong style={{ color: '#b91c1c' }}> · Product changed: reconfirm cost</strong>}
-                              {l.margin !== null && <div style={{ fontSize: 12, color: '#047857' }}>Unit margin: {l.margin}</div>}
+                              {false && l.margin !== null && <div style={{ fontSize: 12, color: '#047857' }}>Unit margin: {l.margin}</div>}
                             </>
                           ) : (
                             <span style={{ color: '#64748b', fontStyle: 'italic' }}>Pending</span>

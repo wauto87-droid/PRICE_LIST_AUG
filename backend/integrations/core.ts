@@ -9,7 +9,7 @@ export interface ConnectionDB {
   query(sql: string, args?: any[]): Promise<{ rows: any[] }>;
   transaction<T>(fn: (tx: ConnectionDB) => Promise<T>): Promise<T>;
 }
-export class ConnectionError extends Error { constructor(message: string, public status = 400, public remoteStatus?: number) { super(message); } }
+export class ConnectionError extends Error { constructor(message: string, public status = 400, public remoteStatus?: number, public code?: string) { super(message); } }
 export function check(value: unknown, message: string, status = 400): asserts value { if (!value) throw new ConnectionError(message, status); }
 export const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 const json = (v: unknown): string => JSON.stringify(v, (_key, value) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
@@ -101,7 +101,12 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
     const secret = input.key ? encrypt(z.string().regex(/^swk_[a-f0-9]{64}$/).parse(input.key)) : undefined;
     await db.transaction(async tx => {
       const s = (await one(tx, 'SELECT data FROM sw_link_state WHERE id=1 FOR UPDATE')).data;
-      check(!s.url || s.url === url, 'Changing the source app requires a separate migration to preserve catalog identities');
+      if(s.url && s.url!==url){
+        check(new URL(s.url).origin===new URL(url).origin,'Changing the ERP server requires a separate migration to preserve linked documents');
+        const health=await remote({...s,url,...(secret?{secret}:{})},'health');
+        check(health.app==='workflow'&&health.protocol===1,'The replacement URL must be this ERP integration endpoint');
+        check(['jobs:read','jobs:write'].every(scope=>health.scopes?.includes(scope)),'The ERP key needs jobs:read and jobs:write permissions',403);
+      }
       await tx.query('UPDATE sw_link_state SET data=$1::jsonb WHERE id=1', [json({ ...s, url, paused, ...(secret ? { secret } : {}) })]);
       await audit(tx, actor, 'configure', { url, paused, credentialUpdated: !!secret, status: 'SUCCESS', message: `Updated outgoing connection: ${url} (paused: ${paused})` });
     }); return { saved: true };
@@ -131,23 +136,47 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
   if (input.action === 'sync') { await sync(db, hooks, true); return { message: 'Synchronization completed' }; }
   throw new ConnectionError('Unknown connection action');
 }
+export function integrationBaseURL(raw:string, target:'workflow'|'pricelist') {
+  const u=new URL(raw);
+  const ingress=target==='workflow'?'/api/sales-workflow/integration/v1':'/api/v1/integration/v1';
+  let path=u.pathname.replace(/\/+$/,'');
+  // Accept app home URLs and copied endpoint URLs, without changing host or following redirects.
+  if(!path)path=target==='workflow'?ingress:'/amt_price_list'+ingress;
+  else if(target==='pricelist'&&path==='/amt_price_list')path+=ingress;
+  else if(path.endsWith(ingress+'/health'))path=path.slice(0,-7);
+  u.pathname=path;return u.toString().replace(/\/$/,'');
+}
+export function parseRemoteResponse(status:number,contentType:string,body:string) {
+  const failed=status<200||status>=300;
+  if(status>=300&&status<400)throw new ConnectionError(`Integration URL redirected (HTTP ${status}). Use the app's HTTPS Integration Ingress URL; login-page and proxy redirects cannot load staff.`,502,status,'ENDPOINT_REQUIRED');
+  let data:any;
+  try{data=JSON.parse(body.replace(/^\uFEFF/,''));}catch{
+    if(status===401||status===403)throw new ConnectionError('Authentication failed: check the saved incoming key and jobs:read permission.',502,status,'AUTHENTICATION_FAILED');
+    if(status===404)throw new ConnectionError('Integration endpoint not found (HTTP 404). Check the ERP Integration Ingress URL and deployed version.',502,status,'ENDPOINT_REQUIRED');
+    if(status>=500)throw new ConnectionError(`Remote server unavailable (HTTP ${status}); it returned a server page instead of JSON. Check the server and reverse proxy.`,502,status,'ERP_UNAVAILABLE');
+    const kind=/html/i.test(contentType)||/^\s*</.test(body)?'an HTML page':'non-JSON content';
+    throw new ConnectionError(`The integration URL returned ${kind} (HTTP ${status}). Copy the Integration Ingress URL from the other app's Connected Apps screen, save it, and test the connection.`,502,status,'ENDPOINT_REQUIRED');
+  }
+  if(failed){
+    const detail=typeof data?.error==='string'?data.error.slice(0,500).replace(/swk_[a-zA-Z0-9_-]+/g,'[redacted]'):'Check pairing and permissions';
+    const code=/integration is disabled/i.test(detail)?'INTEGRATION_DISABLED':/mapping|branch|ownership/i.test(detail)?'MAPPING_REQUIRED':status===401||status===403?'AUTHENTICATION_FAILED':status===404?'ENDPOINT_REQUIRED':'ERP_UNAVAILABLE';
+    throw new ConnectionError(`Remote HTTP ${status}: ${detail}`,502,status,code);
+  }
+  if(!data||typeof data!=='object'||Array.isArray(data))throw new ConnectionError('Invalid integration response: expected a JSON object. Check the Integration Ingress URL and deployed version.',502,status,'UPDATE_REQUIRED');
+  return data;
+}
 export async function remote(s: any, path: string, body?: unknown) {
   check(s.url && s.secret, 'Configure the remote URL and API key', 503);
-  const base = await validateURL(s.url);
+  const base = await validateURL(integrationBaseURL(s.url, 'workflow'));
   const url = new URL(`${base}/${path}`);
   const addresses = await lookup(url.hostname, { all: true });
   check(addresses.length && addresses.every(a => isPublicAddress(a.address)), 'Connection URL must resolve to a public server');
-  // Pin the validated DNS answer to this request; redirects are never followed.
+  // Pin the validated DNS answer; never send saved credentials across a redirect.
   return new Promise<any>((resolve, reject) => {
-    const req = httpsRequest(url, { method: body ? 'POST' : 'GET', agent: false, lookup: ((_host: string, options: any, cb: any) => options.all ? cb(null, addresses) : cb(null, addresses[0].address, addresses[0].family)) as any, headers: { Authorization: `Bearer ${decrypt(s.secret)}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, signal: AbortSignal.timeout(25000) }, res => {
-      const failed = !res.statusCode || res.statusCode < 200 || res.statusCode >= 300;
+    const req = httpsRequest(url, { method: body ? 'POST' : 'GET', agent: false, lookup: ((_host: string, options: any, cb: any) => options.all ? cb(null, addresses) : cb(null, addresses[0].address, addresses[0].family)) as any, headers: { Accept:'application/json', Authorization: `Bearer ${decrypt(s.secret)}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, signal: AbortSignal.timeout(25000) }, res => {
       let size = 0; const chunks: Buffer[] = [];
       res.on('data', (b: Buffer) => { size += b.length; if (size > 10_000_000) { res.destroy(); reject(new ConnectionError('Remote response too large', 502)); } else chunks.push(b); });
-      res.on('error', reject); res.on('end', () => { try {
-        const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if (failed) { const detail = typeof data.error === 'string' ? data.error.slice(0, 500).replace(/swk_[a-zA-Z0-9_-]+/g, '[redacted]') : 'Check pairing and permissions'; reject(new ConnectionError(`Remote HTTP ${res.statusCode}: ${detail}`, 502, res.statusCode)); return; }
-        resolve(data);
-      } catch { reject(new ConnectionError('Invalid remote response', 502)); } });
+      res.on('error', reject); res.on('end', () => { try {resolve(parseRemoteResponse(res.statusCode||502,String(res.headers['content-type']||''),Buffer.concat(chunks).toString('utf8')));}catch(e){reject(e);} });
     }); req.on('error', reject); req.end(body ? json(body) : undefined);
   });
 }

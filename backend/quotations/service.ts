@@ -1,3 +1,4 @@
+import { assertWorkflowOwner } from '../integrations/ownership';
 import { preserveWorkflowCosts, assertWorkflowPricingReady } from "../integrations/jobs";
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -334,6 +335,7 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
     403,
     "This quotation belongs to another user",
   );
+  if (edit) await assertWorkflowOwner(db,actor,q);
   if (["DRAFT", "REJECTED"].includes(q.status)) {
     const productIds = [
       ...new Set(
