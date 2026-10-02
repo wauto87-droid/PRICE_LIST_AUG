@@ -27,7 +27,7 @@ const defaultData: Row = {
   keys: [],
   history: [],
   importedCount: 0,
-  scopes: ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results'],
+  scopes: ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results', 'users:read'],
 };
 
 export default function ConnectedApps({ call = workflowConnectionCall }: { call?: ConnectionCall }) {

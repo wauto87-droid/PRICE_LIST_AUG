@@ -4,7 +4,7 @@ import { DB, one } from '../core/db';
 import { Actor } from '../auth/service';
 import { saveProduct } from '../products/service';
 import { normalizePart } from '../pricing/engine';
-import { Hooks, check, catalogItem, adminState, adminCommand, reviewProposal, protocol, readBody, ConnectionError, getHistory } from './core';
+import { Hooks, check, catalogItem, adminState, adminCommand, reviewProposal, protocol, readBody, ConnectionError, authenticate, getHistory } from './core';
 
 export const priceHooks: Hooks = {
   app: 'pricelist',
@@ -45,6 +45,16 @@ export async function integrationPublic(db: DB, req: Request, path: string) {
   if (path === "jobs-result") {
     try { const { receiveJobResult } = await import("./jobs"); return Response.json(await receiveJobResult(db, req)); }
     catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : "Job result could not be applied" }, { status: e instanceof ConnectionError ? e.status : 503 }); }
+  }
+  if (path === 'users') {
+    try {
+      check(req.method === 'GET', 'Method not allowed', 405);
+      await authenticate(db, req, 'users:read');
+      const after = new URL(req.url).searchParams.get('after') || '';
+      check(!after || z.string().uuid().safeParse(after).success, 'Invalid directory cursor');
+      const rows = (await db.query("SELECT id,name,username,integration_reference reference,NOT COALESCE(disabled,false) active FROM users WHERE id::text>$1 ORDER BY id::text LIMIT 201", [after])).rows;
+      return Response.json({ users: rows.slice(0,200), next: rows.length > 200 ? rows[199].id : null }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : 'Directory unavailable' }, { status: e instanceof ConnectionError ? e.status : 503 }); }
   }
   try { return Response.json(await protocol(db, priceHooks, req, path), { headers: { 'Cache-Control': 'no-store' } }); }
   catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : 'Invalid or unavailable integration request' }, { status: e instanceof ConnectionError ? e.status : e instanceof z.ZodError ? 400 : 503 }); }

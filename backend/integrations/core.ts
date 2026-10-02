@@ -18,7 +18,7 @@ const str = z.string().trim().max(1000);
 export const catalogItem = z.object({ id: z.string().min(1).max(200), type: z.enum(['PRODUCT', 'REUSABLE', 'LOCAL']), code: str, description: str.min(1), unit: str.min(1), brand: str.default(''), category: str.default(''), aliases: z.array(str).max(200).default([]), specifications: z.string().max(10000).default(''), manufacturerPart: str.default(''), active: z.boolean(), convertedTo: z.string().nullable().default(null), deleted: z.boolean().default(false) }).strict();
 export type CatalogItem = z.infer<typeof catalogItem>;
 export type Hooks = { app: 'workflow' | 'pricelist'; afterSync?: () => Promise<void>; catalog?: (tx: ConnectionDB) => Promise<CatalogItem[]>; approve?: (tx: ConnectionDB, actor: any, input: any) => Promise<{ id: string; type: 'PRODUCT' | 'REUSABLE'; code?: string; unit?: string }> };
-export const scopesFor = (app: string) => app === 'pricelist' ? ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results'] : ['notifications:write', 'jobs:read', 'jobs:write'];
+export const scopesFor = (app: string) => app === 'pricelist' ? ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results', 'users:read'] : ['notifications:write', 'jobs:read', 'jobs:write'];
 const keyBytes = () => { const raw = process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''; check(/^[a-f\d]{64}$/i.test(raw), 'Configure CONNECTED_APPS_ENCRYPTION_KEY (64 hex characters) on this server', 503); return Buffer.from(raw, 'hex'); };
 export function encrypt(secret: string) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', keyBytes(), iv); const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]); return [iv, cipher.getAuthTag(), body].map(b => b.toString('base64')).join('.'); }
 export function decrypt(value: string) { const [iv, tag, body] = value.split('.').map(s => Buffer.from(s, 'base64')); const cipher = createDecipheriv('aes-256-gcm', keyBytes(), iv); cipher.setAuthTag(tag); return Buffer.concat([cipher.update(body), cipher.final()]).toString('utf8'); }
@@ -140,10 +140,14 @@ export async function remote(s: any, path: string, body?: unknown) {
   // Pin the validated DNS answer to this request; redirects are never followed.
   return new Promise<any>((resolve, reject) => {
     const req = httpsRequest(url, { method: body ? 'POST' : 'GET', agent: false, lookup: ((_host: string, options: any, cb: any) => options.all ? cb(null, addresses) : cb(null, addresses[0].address, addresses[0].family)) as any, headers: { Authorization: `Bearer ${decrypt(s.secret)}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, signal: AbortSignal.timeout(25000) }, res => {
-      if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) { res.resume(); reject(new ConnectionError(`Remote connection returned HTTP ${res.statusCode}`, 502)); return; }
+      const failed = !res.statusCode || res.statusCode < 200 || res.statusCode >= 300;
       let size = 0; const chunks: Buffer[] = [];
       res.on('data', (b: Buffer) => { size += b.length; if (size > 10_000_000) { res.destroy(); reject(new ConnectionError('Remote response too large', 502)); } else chunks.push(b); });
-      res.on('error', reject); res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { reject(new ConnectionError('Invalid remote response', 502)); } });
+      res.on('error', reject); res.on('end', () => { try {
+        const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (failed) { const detail = typeof data.error === 'string' ? data.error.slice(0, 500).replace(/swk_[a-zA-Z0-9_-]+/g, '[redacted]') : 'Check pairing and permissions'; reject(new ConnectionError(`Remote HTTP ${res.statusCode}: ${detail}`, 502)); return; }
+        resolve(data);
+      } catch { reject(new ConnectionError('Invalid remote response', 502)); } });
     }); req.on('error', reject); req.end(body ? json(body) : undefined);
   });
 }

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { embedded, migrate, one } from '../backend/core/db';
 import { setup, login, authenticate, sessionCookie, type Actor } from '../backend/auth/service';
 import { jobWorkspace, receiveJobResult, preserveWorkflowCosts, assertWorkflowPricingReady } from '../backend/integrations/jobs';
+import { integrationPublic } from '../backend/integrations/service';
 import { adminCommand } from '../backend/integrations/core';
 import { deliver, enqueue, lineFingerprint, hash } from '../backend/integrations/job-protocol';
 
@@ -21,15 +22,17 @@ test('10-line draft: two known prices, split assignments, retries, returned cost
     const lines = Array.from({ length: 10 }, (_, n) => ({ source: 'CUSTOM', description: `Lamp ${n}`, partNumber: `L-${n}`, unit: 'pcs', input: { type: 'CUSTOM', watcherEventId: randomUUID(), quantity: '10' }, price: { finalExcl: '100', quantity: '10' } }));
     await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DRAFT-001','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')", [id, actor.id, JSON.stringify(lines)]);
     const get = () => jobWorkspace(db, actor, new Request(`http://localhost/workflow-jobs?documentId=${id}`));
-    const post = (body: any) => jobWorkspace(db, actor, new Request('http://localhost/workflow-jobs', { method: 'POST', body: JSON.stringify(body) }));
+    const staff = [randomUUID(), randomUUID()];
+    const transport = async () => ({ branchId: 'amt', branchName: 'AMT', branches: [{id:'amt',name:'AMT'}], ownerMappingRevision: 1, actorMappingRevision: 1, staff: staff.map(id => ({id,role:'pricing'})) });
+    const post = (body: any) => jobWorkspace(db, actor, new Request('http://localhost/workflow-jobs', { method: 'POST', body: JSON.stringify(body) }), transport);
     for (const line of lines.slice(0,2)) {
       const q = await get(); const body = { action: 'known', eventId: randomUUID(), documentId: id, lineId: line.input.watcherEventId, version: q.version, workflowVersion: q.workflowVersion, cost };
       await post(body); await post(body); // The same command survives quote-version changes.
     }
-    const staff = [randomUUID(), randomUUID()]; const tokens: string[] = [];
+    const tokens: string[] = [];
     for (let n = 0; n < 2; n++) {
       const q = await get(); const token = randomUUID(); tokens.push(token);
-      const body = { action: 'assign', eventId: token, documentId: id, version: q.version, workflowVersion: q.workflowVersion, kind: 'PRICING', selected: lines.slice(2+n*4,6+n*4).map(l => l.input.watcherEventId), assignee: staff[n], shops: 'ABC Trading', notes: 'Confirm 400W model', due: '', noDueReason: 'Customer has not confirmed a deadline' };
+      const body = { branchId: 'amt', ownerMappingRevision: 1, actorMappingRevision: 1, action: 'assign', eventId: token, documentId: id, version: q.version, workflowVersion: q.workflowVersion, kind: 'PRICING', selected: lines.slice(2+n*4,6+n*4).map(l => l.input.watcherEventId), assignee: staff[n], shops: 'ABC Trading', notes: 'Confirm 400W model', due: '', noDueReason: 'Customer has not confirmed a deadline' };
       await post(body); await post(body);
     }
     assert.equal((await one(db, "SELECT count(*)::int n FROM sw_job_outbox WHERE endpoint='jobs-assign'"))!.n, 2);
@@ -130,4 +133,62 @@ test('workflow-jobs workspace: filtering by status and owner for admin and norma
     const allQuotes: any = await jobWorkspace(db, admin, new Request('http://localhost/workflow-jobs?status=ALL&owner=all'));
     assert.equal(allQuotes.rows.length, 4);
   } finally { await db.close?.(); }
+});
+
+
+test('creator branch defaults persist, admins select before assignment, invalid staff and stale mapping fail', async () => {
+  const db=await embedded();
+  try {
+    await migrate(db); process.env.SETUP_TOKEN='workflow-test-token-long-enough-32';
+    await setup(db,{token:process.env.SETUP_TOKEN,username:'branchadmin',password:'abcd',name:'Branch Admin',companyName:'Test'});
+    const session=await login(db,{username:'branchadmin',password:'abcd'});
+    const actor=await authenticate(db,new Request('http://localhost',{headers:{Cookie:sessionCookie(session.token).split(';')[0]}}));
+    const id=randomUUID(), lineId=randomUUID();
+    const line={description:'Light',unit:'pcs',input:{watcherEventId:lineId,quantity:'10'},price:{quantity:'10',finalExcl:'100'}};
+    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'BRANCH-DRAFT','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')",[id,actor.id,JSON.stringify([line])]);
+    let revision=1; let offline=false;
+    const transport=async (_config:any,path:string)=>{
+      if(offline) throw new Error('ERP offline');
+      const params=new URL(`https://erp.test/${path}`).searchParams;
+      assert.equal(params.get('owner'),actor.id);assert.equal(params.get('actor'),actor.id);
+      const branchId=params.get('branchId')||'amt';assert(['amt','factory'].includes(branchId));
+      return {branchId,branchName:branchId,branches:[{id:'amt',name:'AMT'},{id:'factory',name:'Factory'}],staff:[{id:`staff-${branchId}`,role:'pricing'}],ownerMappingRevision:revision,actorMappingRevision:revision,readiness:{authenticated:true,mapped:true}};
+    };
+    const get=()=>jobWorkspace(db,actor,new Request(`http://localhost/workflow-jobs?documentId=${id}`),transport);
+    const context=()=>jobWorkspace(db,actor,new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`),transport);
+    const post=async(body:any)=>{const q=await get();return jobWorkspace(db,actor,new Request('http://localhost/workflow-jobs',{method:'POST',body:JSON.stringify({eventId:randomUUID(),documentId:id,version:q.version,workflowVersion:q.workflowVersion,...body})}),transport);};
+    await get();assert.equal((await context()).branchId,'amt');
+    assert.equal((await get()).branchId,'amt');
+    await post({action:'branch',branchId:'factory'});assert.equal((await context()).branchId,'factory');
+    const assignment={action:'assign',branchId:'factory',ownerMappingRevision:1,actorMappingRevision:1,kind:'PRICING',assignee:'staff-factory',selected:[lineId],noDueReason:'Not confirmed'};
+    await assert.rejects(post({...assignment,assignee:'staff-amt'}),/eligible staff/);
+    revision=2;await assert.rejects(post(assignment),/mapping changed/);
+    await post({...assignment,ownerMappingRevision:2,actorMappingRevision:2});
+    await assert.rejects(post({action:'branch',branchId:'amt'}),/locked/);
+    offline=true;assert.match((await context()).error,/ERP offline/);assert.equal((await get()).id,id);
+    const q=await get();assert.match(q.creator.reference,/^PLU-[0-9]+$/);assert.equal(q.creator.name,'Branch Admin');
+    await db.query("UPDATE users SET name='Renamed' WHERE id=$1",[actor.id]);assert.equal((await get()).creator.reference,q.creator.reference);
+    const outbox=(await one(db,"SELECT payload FROM sw_job_outbox WHERE endpoint='jobs-assign'"))!.payload;
+    assert.equal(outbox.branchId,'factory');assert.equal(outbox.ownerId,actor.id);
+  } finally {await db.close?.();}
+});
+
+test('user directory is scoped, paginated and contains unique readable references without private fields', async()=>{
+  const db=await embedded();
+  try {
+    await migrate(db);
+    await db.query("INSERT INTO roles(id,permissions,max_discount) VALUES('STAFF','{}',0)");
+    for(let n=0;n<203;n++) await db.query("INSERT INTO users(id,username,name,password_hash,role_id,disabled) VALUES($1,$2,$3,'secret-hash','STAFF',$4)",[randomUUID(),`person${n}`,`Person ${n}`,n===0]);
+    const key=(await adminCommand(db,{app:'pricelist'},'admin',{action:'generate',name:'Directory',scopes:['users:read'],expires:new Date(Date.now()+86400000).toISOString()})).key;
+    const catalogKey=(await adminCommand(db,{app:'pricelist'},'admin',{action:'generate',name:'Catalog',scopes:['catalog:read'],expires:new Date(Date.now()+86400000).toISOString()})).key;
+    assert(key && catalogKey);
+    const call=(token:string,after='')=>integrationPublic(db,new Request(`https://price.test/users?after=${after}`,{headers:{Authorization:`Bearer ${token}`}}),'users');
+    assert.equal((await call(catalogKey)).status,401);
+    const first=await(await call(key)).json();assert.equal(first.users.length,200);assert(first.next);
+    const second=await(await call(key,first.next)).json();assert.equal(second.users.length,3);assert.equal(second.next,null);
+    const users=[...first.users,...second.users];assert.equal(new Set(users.map(u=>u.reference)).size,203);
+    assert(users.every(u=>/^PLU-[0-9]+$/.test(u.reference)));assert(users.some(u=>u.active===false));
+    assert(!JSON.stringify(users).includes('secret-hash'));assert.deepEqual(Object.keys(users[0]).sort(),['active','id','name','reference','username']);
+    await migrate(db);assert.deepEqual((await(await call(key)).json()).users,first.users);
+  }finally{await db.close?.();}
 });

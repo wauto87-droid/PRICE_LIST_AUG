@@ -12,6 +12,7 @@ export const jobLine = z.object({ id: z.string().uuid(), name: text, specificati
   currency: z.string().regex(/^[A-Z]{3}$/), fingerprint: z.string().length(64), knownCost: costInput.optional() });
 export const assignmentInput = z.object({ eventId: z.string().uuid(), documentId: z.string().uuid(), number: text,
   ownerId: text, actorId: text, customer: text, contact: z.string().max(500).default('Not supplied'),
+  branchId: text, ownerMappingRevision: z.number().int().positive(), actorMappingRevision: z.number().int().positive(), workflowVersion: z.number().int().nonnegative(),
   documentVersion: z.number().int().positive(), lines: z.array(jobLine).min(1).max(200),
   selected: z.array(z.string().uuid()).min(1).max(200), assignee: text,
   kind: z.enum(['PRICING', 'COLLECTION']), mode: z.enum(['ORDER_CONFIRMED', 'EARLY_AUTHORIZED']).optional(),
@@ -61,7 +62,7 @@ export async function deliver(db: ConnectionDB, channel: string, send?: (payload
       const next = new Date(Date.now() + Math.min(3600000, 10000 * 2 ** Math.min(row.attempts, 8))).toISOString();
       await db.query('UPDATE sw_job_outbox SET state=$2,error=$3,next_at=$4::timestamptz,lease_until=NULL WHERE id=$1', [row.id,
         channel === 'WHATSAPP' ? blocked ? 'FAILED' : 'DELIVERY_UNKNOWN' : 'FAILED',
-        channel === 'WHATSAPP' ? blocked ? 'Staff WhatsApp number missing or access disabled' : 'Delivery unknown; check WhatsApp before retrying' : 'Remote delivery failed; check pairing, permissions and document conflicts', next]);
+        channel === 'WHATSAPP' ? blocked ? 'Staff WhatsApp number missing or access disabled' : 'Delivery unknown; check WhatsApp before retrying' : `Remote delivery failed: ${e instanceof Error ? e.message.slice(0, 500).replace(/swk_[a-zA-Z0-9_-]+/g, '[redacted]') : 'Check pairing, permissions and document conflicts'}`, next]);
     }
   }
 }

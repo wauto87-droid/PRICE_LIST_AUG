@@ -38,11 +38,43 @@ function ready(q: any, link: any) {
   });
   return { complete, ready: complete && q.status === 'DRAFT', count: q.lines.length, round: complete ? hash(q.lines.map((l: any) => [idFor(l), l.workflowCost])) : null };
 }
-export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
+function branchLocked(link: any) {
+  return !!(link?.data.branchLocked || link?.data.erpRequestId || Object.values<any>(link?.data.lines || {}).some(l => l.PRICING?.token || l.COLLECTION?.token));
+}
+async function workflowContext(db: DB, actor: Actor, q: any, link: any, requested = '', transport = remote) {
+  const locked = branchLocked(link);
+  check(!locked || !requested || !link.data.branchId || requested === link.data.branchId, 'Document branch is locked after assignment', 409);
+  const config = await state(db);
+  const params = new URLSearchParams({ documentId: q.id, owner: q.owner_id, actor: actor.id,
+    branchId: requested || link?.data.branchId || '', kind: q.status === 'DRAFT' ? 'PRICING' : 'COLLECTION' });
+  const context = await transport(config, `jobs-context?${params}`);
+  // An older queued job has no reliable branch identity until ERP has acknowledged it.
+  check(!locked || link.data.branchId || context.branchLocked, 'Existing assignment needs ERP branch reconciliation before further changes', 409);
+  return { ...context, workflowVersion: link?.revision, branchLocked: locked || context.branchLocked };
+}
+export async function jobWorkspace(db: DB, actor: Actor, req: Request, transport = remote) {
   workflowEnabled(); const url = new URL(req.url); const id = url.searchParams.get('documentId');
   if (req.method === 'GET' && url.searchParams.has('staff')) {
-    const config = await state(db); check(config.url && config.secret, 'Pair ERP before assigning jobs');
-    return remote(config, `jobs-staff?actor=${encodeURIComponent(actor.id)}`);
+    check(id, 'Choose a document first');
+    const q = await document(db, actor, id);
+    const link = await one(db, 'SELECT * FROM sw_job_documents WHERE id=$1', [id]);
+    try {
+      const context = await workflowContext(db, actor, q, link, '', transport);
+      if (!link?.data.branchId && mayCost(actor, q) && has(actor, 'QUOTE_EDIT')) {
+        await db.transaction(async tx => {
+          await tx.query('SELECT id FROM quotations WHERE id=$1 FOR UPDATE', [id]);
+          const current = await prepare(tx, await document(tx, actor, id));
+          check(!current.data.branchId || current.data.branchId === context.branchId, 'Document branch changed. Refresh.', 409);
+          check(current.revision === (link?.revision || 0), 'Assignments changed. Refresh.', 409);
+          current.data.branchId = context.branchId; current.data.branchName = context.branchName;
+          await tx.query('UPDATE sw_job_documents SET data=$2::jsonb,revision=revision+1 WHERE id=$1', [id, J(current.data)]);
+          await audit(tx, actor.id, 'WORKFLOW_BRANCH_DEFAULT', 'quotations', id, null, { branchId: context.branchId });
+          context.workflowVersion = current.revision + 1;
+        });
+      }
+      return context;
+    }
+    catch (e) { return { staff: [], branches: [], readiness: { authenticated: false, mapped: false }, error: `Admin mapping required or ERP unavailable: ${(e as Error).message}` }; }
   }
   if (req.method === 'GET' && !id) {
     const isAdmin = actor.role === 'ADMIN' || has(actor, 'QUOTE_VIEW_ALL');
@@ -80,7 +112,7 @@ export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
       : [];
 
     return {
-      userId: actor.id,
+      userId: actor.id, userReference: (await one(db, 'SELECT name,integration_reference reference FROM users WHERE id=$1', [actor.id])),
       isAdmin,
       creators,
       rows: rows.map(q => {
@@ -105,7 +137,7 @@ export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
     await tx.query('SELECT id FROM quotations WHERE id=$1 FOR UPDATE', [id]);
     const q = await document(tx, actor, id); const link = await prepare(tx, q);
     const failures = (await tx.query("SELECT id,state,error FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC", [id])).rows;
-    return { id: q.id, number: q.number, status: q.status, version: q.version, workflowVersion: link.revision, creatorId: q.owner_id, currency: q.workflowCurrency, ...ready(q, link),
+    return { id: q.id, number: q.number, status: q.status, version: q.version, workflowVersion: link.revision, creatorId: q.owner_id, creator: await one(tx, 'SELECT name,integration_reference reference FROM users WHERE id=$1', [q.owner_id]), branchId: link.data.branchId || null, branchLocked: branchLocked(link), currency: q.workflowCurrency, ...ready(q, link),
       canAssign: mayCost(actor, q) && has(actor,'QUOTE_EDIT'), failures, lines: q.lines.map((l: any) => ({ id: idFor(l), description: l.description, partNumber: l.partNumber, unit: l.unit, quantity: l.input?.quantity || l.price?.quantity, jobs: link.data.lines[idFor(l)] || {},
         ...(mayCost(actor, q) ? { workflowCost: l.workflowCost, sellingPrice: l.price?.finalExcl, margin: l.workflowCost && l.price?.finalExcl && l.workflowCost.currency === q.workflowCurrency ? new Decimal(l.price.finalExcl).minus(l.workflowCost.cost).toFixed() : null } : {}) })) };
   });
@@ -117,6 +149,14 @@ export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
     const q = await document(tx, actor, documentId, true); const link = await prepare(tx, q);
     check(input.workflowVersion === link.revision, 'Assignments changed. Refresh before editing.', 409);
     check(q.version === input.version, 'Draft changed. Refresh before assigning or confirming prices.', 409);
+    if (input.action === 'branch') {
+      check(typeof input.branchId === 'string' && input.branchId, 'Choose an ERP branch');
+      const context = await workflowContext(tx, actor, q, link, input.branchId, transport);
+      link.data.branchId = context.branchId; link.data.branchName = context.branchName;
+      await tx.query('UPDATE sw_job_documents SET data=$2::jsonb,revision=revision+1 WHERE id=$1', [q.id, J(link.data)]);
+      await audit(tx, actor.id, 'WORKFLOW_BRANCH', 'quotations', q.id, null, { branchId: context.branchId });
+      return { saved: true };
+    }
     if (input.action === 'known') {
       check(q.status === 'DRAFT', 'Only editable drafts can receive confirmed prices', 409);
       const line = q.lines.find((l: any) => idFor(l) === input.lineId); check(line, 'Line missing');
@@ -127,12 +167,17 @@ export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
       await tx.query('UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1', [q.id, J(q.lines)]);
     } else {
       check(input.action === 'assign', 'Unknown job action');
+      check((await one(tx, 'SELECT disabled FROM users WHERE id=$1', [q.owner_id]))?.disabled !== true, 'Document creator is disabled; correct user access before assigning', 403);
       const kind = z.enum(['PRICING','COLLECTION']).parse(input.kind);
       check(kind === 'PRICING' ? q.status === 'DRAFT' : ['ISSUED','ACCEPTED'].includes(q.status), kind === 'PRICING' ? 'Save an editable draft before assigning pricing' : 'Issue the quotation before authorizing collection', 409);
-      const payload = assignmentInput.parse({ ...input, eventId: z.string().uuid().parse(input.eventId), documentVersion: q.version,
+      const context = await workflowContext(tx, actor, q, link, String(input.branchId || ''), transport);
+      check(input.ownerMappingRevision === context.ownerMappingRevision && input.actorMappingRevision === context.actorMappingRevision, 'Admin mapping changed. Refresh before assigning.', 409);
+      check(context.staff.some((s: any) => s.id === input.assignee), 'Choose eligible staff from this branch', 403);
+      const payload = assignmentInput.parse({ ...input, branchId: context.branchId, eventId: z.string().uuid().parse(input.eventId), documentVersion: q.version,
         ownerId: q.owner_id, actorId: actor.id, number: q.number, customer: q.customer.name || 'Customer', contact: q.customer.mobile || '',
         lines: q.lines.map((l: any) => ({ id: idFor(l), name: l.description, partNumber: l.partNumber || '', specifications: l.specifications || '', unit: l.unit,
           quantity: String(l.input?.quantity || l.price?.quantity), currency: q.workflowCurrency, fingerprint: lineFingerprint(l), knownCost: l.workflowCost?.fingerprint === lineFingerprint(l) ? l.workflowCost : undefined })) });
+      link.data.branchId = context.branchId; link.data.branchName = context.branchName; link.data.branchLocked = true;
       const oldEvent = await one(tx, 'SELECT payload FROM sw_job_outbox WHERE id=$1', [payload.eventId]);
       check(!oldEvent || hash(oldEvent.payload) === hash(payload), 'Assignment retry differs from the original', 409);
       if (!oldEvent) {

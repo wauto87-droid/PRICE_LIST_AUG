@@ -6,8 +6,11 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
   const [rows, setRows] = useState<any[]>([]);
   const [current, setCurrent] = useState(documentId || '');
   const [doc, setDoc] = useState<any>();
+  const [contextRefresh, setContextRefresh] = useState(0);
+  const [context, setContext] = useState<any>();
   const [staff, setStaff] = useState<any[]>([]);
   const [userId, setUserId] = useState('');
+  const [userReference, setUserReference] = useState<any>();
   const [isAdmin, setIsAdmin] = useState(false);
   const [creators, setCreators] = useState<Array<{ id: string; name: string; username: string }>>([]);
   const [ownerFilter, setOwnerFilter] = useState<string>('me');
@@ -33,7 +36,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
         const qStr = params.toString();
         const result = await api(`workflow-jobs${qStr ? `?${qStr}` : ''}`);
         setRows(result.rows || []);
-        setUserId(result.userId || '');
+        setUserId(result.userId || ''); setUserReference(result.userReference);
         setIsAdmin(!!result.isAdmin);
         if (result.creators) setCreators(result.creators);
       }
@@ -49,13 +52,16 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
     return () => clearInterval(timer);
   }, [current, ownerFilter, statusFilter]);
 
+  useEffect(() => { setContext(undefined); setStaff([]); }, [current]);
   useEffect(() => {
-    if (current) {
-      api('workflow-jobs?staff=1')
-        .then(r => setStaff(r.staff || []))
-        .catch(e => setError(e.message));
+    let cancelled = false;
+    if (current && doc?.id === current) {
+      api(`workflow-jobs?staff=1&documentId=${encodeURIComponent(current)}`)
+        .then(r => { if (!cancelled) { setContext(r); setStaff(r.staff || []); if (r.workflowVersion !== undefined) setDoc((d: any) => d?.id === current && d.workflowVersion !== r.workflowVersion ? { ...d, workflowVersion: r.workflowVersion, branchId: r.branchId } : d); } })
+        .catch(e => { if (!cancelled) setContext({ error: e.message }); });
     }
-  }, [current]);
+    return () => { cancelled = true; };
+  }, [current, doc?.id, doc?.workflowVersion, doc?.status, contextRefresh]);
 
   const command = async (body: any) => {
     setBusy(true);
@@ -63,10 +69,11 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
     try {
       delete body.eventId;
       const payload = {
+        branchId: context?.branchId, ownerMappingRevision: context?.ownerMappingRevision, actorMappingRevision: context?.actorMappingRevision,
         ...body,
         documentId: current,
-        version: version ?? doc.version,
-        workflowVersion: workflowVersion ?? doc.workflowVersion,
+        version: body.version ?? version ?? doc.version,
+        workflowVersion: body.workflowVersion ?? workflowVersion ?? doc.workflowVersion,
       };
       const hash = JSON.stringify(payload);
       if (retry.current?.hash !== hash) retry.current = { hash, id: crypto.randomUUID() };
@@ -75,7 +82,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
       setMessage(
         result.ready
           ? 'All prices ready for creator review.'
-          : 'Saved. Pending jobs will synchronize with ERP.',
+          : body.action === 'branch' ? 'Working branch saved.' : 'Saved. Pending jobs will synchronize with ERP.',
       );
       setSelected([]);
       setVersion(undefined);
@@ -108,7 +115,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
         </div>
         {userId && (
           <div style={{ fontSize: 13, background: 'var(--surface-2, #f1f5f9)', padding: '4px 10px', borderRadius: 6 }}>
-            Your Price List ID: <code style={{ fontWeight: 600 }}>{userId}</code>
+            Price List user: <strong>{userReference?.name}</strong> · <code>{userReference?.reference || "Reference pending"}</code>
           </div>
         )}
       </div>
@@ -184,7 +191,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
             </label>
 
             <button
-              onClick={() => void load(current, ownerFilter, statusFilter)}
+              onClick={() => { void load(current, ownerFilter, statusFilter); setContextRefresh(n => n + 1); }}
               disabled={busy}
               style={{ padding: '6px 16px', borderRadius: 6, fontWeight: 500, cursor: busy ? 'not-allowed' : 'pointer' }}
             >
@@ -278,7 +285,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
               </button>
             )}
             <button
-              onClick={() => void load(current, ownerFilter, statusFilter)}
+              onClick={() => { void load(current, ownerFilter, statusFilter); setContextRefresh(n => n + 1); }}
               disabled={busy}
               style={{ padding: '6px 14px', borderRadius: 6, fontWeight: 500 }}
             >
@@ -289,7 +296,18 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
           {doc && (
             <>
               <h3>{doc.number} · <span style={{ fontSize: '0.85em', color: '#64748b' }}>{doc.status}</span></h3>
-              <p style={{ fontSize: 13, color: '#64748b' }}>Creator mapping ID: <code>{doc.creatorId}</code></p>
+              <div style={{ padding: 12, border: '1px solid #cbd5e1', borderRadius: 6 }}>
+                {!context ? <p>Checking ERP branch and mapping…</p> : context.error ? <p role="alert">{context.error}</p> : <>
+                  <label>Working ERP branch <select aria-label="Working ERP branch" value={context.branchId} disabled={busy || context.branchLocked || context.branches.length < 2 || !doc.canAssign} onChange={e => { setSelected([]); setVersion(undefined); setWorkflowVersion(undefined); void command({ action: 'branch', branchId: e.target.value, version: doc.version, workflowVersion: doc.workflowVersion }); }}>
+                    {context.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select></label>
+                  <p>{context.branchLocked ? 'Branch locked: assignments already queued.' : 'Branch defaults from the creator’s ERP mapping.'}</p>
+                  <p>Connection: authenticated · User mapping: ready · Branch access: authorized · Eligible staff: {staff.length}</p>
+                  {(!context.readiness.creatorWhatsApp || !context.readiness.assignerWhatsApp || staff.some(s => !s.phoneConfigured)) && <p>Some WhatsApp numbers are missing. App jobs remain available; configure numbers in ERP.</p>}
+                  {!staff.length && <p role="alert">No eligible staff in this branch. Ask the ERP administrator to configure workflow roles.</p>}
+                </>}
+              </div>
+              <p style={{ fontSize: 13, color: '#64748b' }}>Creator: <strong>{doc.creator?.name}</strong> · <code>{doc.creator?.reference || "Reference pending"}</code></p>
               <p style={{ fontWeight: 500 }}>
                 {doc.ready
                   ? 'All supplier prices ready for review. Finalize from the quotation screen.'
@@ -392,7 +410,7 @@ export default function PricingCollectionJobs({ documentId }: { documentId?: str
                 </table>
               </div>
 
-              {doc.canAssign && (
+              {doc.canAssign && context?.branchId && !context.error && (
                 <>
                   <form
                     onSubmit={e => {
