@@ -9,7 +9,7 @@ export interface ConnectionDB {
   query(sql: string, args?: any[]): Promise<{ rows: any[] }>;
   transaction<T>(fn: (tx: ConnectionDB) => Promise<T>): Promise<T>;
 }
-export class ConnectionError extends Error { constructor(message: string, public status = 400) { super(message); } }
+export class ConnectionError extends Error { constructor(message: string, public status = 400, public remoteStatus?: number) { super(message); } }
 export function check(value: unknown, message: string, status = 400): asserts value { if (!value) throw new ConnectionError(message, status); }
 export const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 const json = (v: unknown): string => JSON.stringify(v, (_key, value) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
@@ -37,10 +37,10 @@ export function isPublicAddress(ip: string) {
 export function enabled() { check(process.env.CONNECTED_APPS_ENABLED === 'true', 'Connected Apps is disabled on this server', 503); }
 export async function state(db: ConnectionDB) { return (await one(db, 'SELECT data FROM sw_link_state WHERE id=1')).data; }
 async function audit(db: ConnectionDB, actor: string, action: string, data: unknown) { await db.query('INSERT INTO sw_link_audit(id,actor,action,data) VALUES($1::uuid,$2,$3,$4::jsonb)', [randomUUID(), actor, action, json(data)]); }
-export async function authenticate(db: ConnectionDB, req: Request, scope: string) {
+export async function authenticate(db: ConnectionDB, req: Request, scope?: string) {
   enabled(); const token = req.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   check(/^swk_[a-f0-9]{64}$/.test(token), 'Invalid integration key', 401);
-  const row = await one(db, 'UPDATE sw_link_keys SET last_used_at=now() WHERE hash=$1 AND revoked_at IS NULL AND expires_at>now() AND $2=ANY(scopes) RETURNING id', [digest(token), scope]);
+  const row = await one(db, 'UPDATE sw_link_keys SET last_used_at=now() WHERE hash=$1 AND revoked_at IS NULL AND expires_at>now() AND ($2::text IS NULL OR $2=ANY(scopes)) RETURNING id', [digest(token), scope ?? null]);
   check(row, 'Key expired, revoked or missing permission', 401); return row.id;
 }
 export async function logHistory(
@@ -75,7 +75,7 @@ export async function adminState(db: ConnectionDB, hooks: Hooks) {
   const count = await one(db, 'SELECT count(*)::int count FROM sw_link_catalog');
   return { ...s, app: hooks.app, enabled: process.env.CONNECTED_APPS_ENABLED === 'true',
     encryptionReady: /^[a-f\d]{64}$/i.test(process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''),
-    workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', secret: undefined,
+    workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', secret: undefined, userDirectory: undefined,
     credentialConfigured: !!s.secret, keys, counts, importedCount: count.count, scopes: scopesFor(hooks.app),
     history: await getHistory(db, 50) };
 }
@@ -145,7 +145,7 @@ export async function remote(s: any, path: string, body?: unknown) {
       res.on('data', (b: Buffer) => { size += b.length; if (size > 10_000_000) { res.destroy(); reject(new ConnectionError('Remote response too large', 502)); } else chunks.push(b); });
       res.on('error', reject); res.on('end', () => { try {
         const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if (failed) { const detail = typeof data.error === 'string' ? data.error.slice(0, 500).replace(/swk_[a-zA-Z0-9_-]+/g, '[redacted]') : 'Check pairing and permissions'; reject(new ConnectionError(`Remote HTTP ${res.statusCode}: ${detail}`, 502)); return; }
+        if (failed) { const detail = typeof data.error === 'string' ? data.error.slice(0, 500).replace(/swk_[a-zA-Z0-9_-]+/g, '[redacted]') : 'Check pairing and permissions'; reject(new ConnectionError(`Remote HTTP ${res.statusCode}: ${detail}`, 502, res.statusCode)); return; }
         resolve(data);
       } catch { reject(new ConnectionError('Invalid remote response', 502)); } });
     }); req.on('error', reject); req.end(body ? json(body) : undefined);
@@ -199,9 +199,9 @@ export async function reviewProposal(db: ConnectionDB, hooks: Hooks, actor: any,
 }
 export async function protocol(db: ConnectionDB, hooks: Hooks, req: Request, path: string) {
   const scope = hooks.app === 'pricelist' ? path === 'proposals' && req.method === 'POST' ? 'proposals:write' : path === 'proposals' ? 'proposals:read' : 'catalog:read' : 'notifications:write';
-  const keyId = await authenticate(db, req, scope);
+  const keyId = await authenticate(db, req, path === 'health' ? undefined : scope);
   await logHistory(db, 'INCOMING_REQ', 'SUCCESS', `Incoming ${req.method} /${path}`, { path, method: req.method, keyId });
-  if (path === 'health' && req.method === 'GET') return { app: hooks.app, protocol: 1, workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', scopes: (await one(db, 'SELECT scopes FROM sw_link_keys WHERE id=$1::uuid', [keyId])).scopes };
+  if (path === 'health' && req.method === 'GET') return { app: hooks.app, protocol: 1, capabilities: { userDirectory: hooks.app === 'pricelist' ? 1 : 0 }, workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', scopes: (await one(db, 'SELECT scopes FROM sw_link_keys WHERE id=$1::uuid', [keyId])).scopes };
   if (hooks.app === 'pricelist' && path === 'catalog' && req.method === 'GET') {
     await refreshCatalog(db, hooks);
     const after = new URL(req.url).searchParams.get('after') || '0'; check(/^\d{1,19}$/.test(after), 'Invalid cursor');

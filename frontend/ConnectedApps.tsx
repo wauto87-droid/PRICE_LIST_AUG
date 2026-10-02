@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 
 type Row = Record<string, any>;
 export type ConnectionCall = (body?: Row) => Promise<Row>;
@@ -39,6 +39,9 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
   const [key, setKey] = useState('');
   const [showKeyPassword, setShowKeyPassword] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'history' | 'guide'>('config');
+  const [replacement, setReplacement] = useState<Row | null>(null);
+  const replacementDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (replacement) replacementDialog.current?.showModal(); else replacementDialog.current?.close(); }, [replacement?.id]);
   const [historyFilter, setHistoryFilter] = useState<string>('ALL');
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
@@ -73,8 +76,10 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
       }
       setMessage(r.message || 'Saved successfully');
       await load();
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -120,6 +125,20 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
 
   return (
     <div className="conn-container">
+      <dialog ref={replacementDialog} onCancel={e => { if (busy) e.preventDefault(); else setReplacement(null); }} aria-labelledby="replacement-key-title" style={{ width: 'min(92vw, 620px)', maxHeight: '90dvh', overflow: 'auto', padding: 24, borderRadius: 14, border: '1px solid var(--border, #cbd5e1)', background: 'var(--card, #fff)', color: 'var(--text, #0f172a)' }}>
+        {replacement && <form onSubmit={async e => { e.preventDefault(); const ok = await action({ action: replacement.mode, ...(replacement.mode === 'rotate' ? { id: replacement.id } : {}), name: `${replacement.name} replacement`, scopes: replacement.selectedScopes, expires: new Date(`${replacement.expiry}T23:59:59Z`).toISOString() }); if (ok) setReplacement(null); }}>
+          <h3 id="replacement-key-title" style={{ marginTop: 0 }}>Replace / upgrade API key</h3>
+          <p style={{ fontSize: 13 }}>Choose permissions explicitly. ERP user mapping needs <code>users:read</code>. Saved keys cannot gain permissions automatically.</p>
+          <fieldset style={{ margin: '16px 0', padding: 12 }}><legend>Permissions</legend>{activeData.scopes.map((scope: string) => <label key={scope} style={{ display: 'flex', gap: 8, margin: '10px 0' }}><input type="checkbox" checked={replacement.selectedScopes.includes(scope)} disabled={busy} onChange={e => setReplacement({ ...replacement, selectedScopes: e.target.checked ? [...replacement.selectedScopes,scope] : replacement.selectedScopes.filter((s: string) => s !== scope) })} /><span>{scope}{scope === 'users:read' && ' — load users for ERP mapping'}</span></label>)}<button type="button" disabled={busy} onClick={() => setReplacement({ ...replacement, selectedScopes: [...activeData.scopes] })}>Select required integration permissions</button></fieldset>
+          <label style={{ display: 'block', marginBottom: 16 }}>Expires <input type="date" required min={new Date().toISOString().slice(0,10)} value={replacement.expiry} disabled={busy} onChange={e => setReplacement({ ...replacement, expiry: e.target.value })} /></label>
+          <label style={{ display: 'block', marginBottom: 10 }}><input type="radio" name="replacement-mode" checked={replacement.mode === 'generate'} disabled={busy} onChange={() => setReplacement({ ...replacement, mode: 'generate' })} /> Generate replacement; keep old key active until verified (recommended)</label>
+          <label style={{ display: 'block', marginBottom: 16 }}><input type="radio" name="replacement-mode" checked={replacement.mode === 'rotate'} disabled={busy} onChange={() => setReplacement({ ...replacement, mode: 'rotate' })} /> Rotate now; immediately revoke old key</label>
+          <p style={{ fontSize: 13 }}>Copy the new key into ERP Outgoing Connection, test user loading, then revoke the previous key if still active.</p>
+          {error && <p role="alert" style={{ color: 'var(--red, #b91c1c)' }}>{error}</p>}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}><button type="button" disabled={busy} onClick={() => setReplacement(null)}>Cancel</button><button type="submit" disabled={busy || !replacement.selectedScopes.length}>{busy ? 'Generating…' : replacement.mode === 'rotate' ? 'Rotate and revoke old key' : 'Generate replacement key'}</button></div>
+        </form>}
+      </dialog>
+
       {/* Header */}
       <div className="conn-header">
         <div className="conn-header-left">
@@ -472,18 +491,10 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                                     <button
                                       type="button"
                                       disabled={busy || loading}
-                                      onClick={() =>
-                                        action({
-                                          action: 'rotate',
-                                          id: k.id,
-                                          name: k.name,
-                                          scopes: k.scopes,
-                                          expires: new Date(Date.now() + 90 * 86400000).toISOString(),
-                                        })
-                                      }
+                                      onClick={() => setReplacement({ ...k, selectedScopes: [...k.scopes], mode: 'generate', expiry: new Date(Date.now() + 90 * 86400000).toISOString().slice(0,10) })}
                                       style={{ padding: '3px 8px', fontSize: 11 }}
                                     >
-                                      Rotate (90d)
+                                      Replace / upgrade key
                                     </button>
                                   </div>
                                 )}
