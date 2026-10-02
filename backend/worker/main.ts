@@ -3,6 +3,8 @@ import "dotenv/config";
 import { sync } from "../integrations/core";
 import { priceHooks } from "../integrations/service";
 let connectionsAt = 0;
+let workflowAt = 0;
+import { runPriceJobs } from "../integrations/jobs";
 import { getDB } from "../core/db";
 import { runJob } from "./process";
 const db = await getDB();
@@ -34,6 +36,7 @@ while (running) {
     }
     if(Date.now()-commerceAt>60000){await expireHolds(db);await dispatchNotifications(db);commerceAt=Date.now();}
     if (process.env.CONNECTED_APPS_ENABLED === "true" && Date.now()-connectionsAt>30000) { await sync(db, priceHooks); connectionsAt=Date.now(); }
+    if (process.env.WORKFLOW_INTEGRATION_ENABLED === "true" && Date.now()-workflowAt>10000) { await runPriceJobs(db); workflowAt=Date.now(); }
     if (!(await runJob(db))) await new Promise((r) => setTimeout(r, 1500));
   } catch (e) {
     console.error("Worker unavailable", (e as Error).message);

@@ -229,7 +229,7 @@ PM2_PROCESSES = ('amt-pricelist-app', 'amt-pricelist-worker')
 MEMORY_MIB = {'db': 512, 'app': 768, 'worker': 1024, 'backup': 256, 'whatsapp': 1024}
 DEFAULT_DB_PORT = '15432'
 MIN_PM2_NODE = (24, 0, 0)
-ENV_KEYS = {'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'AI_SECRET_ENCRYPTION_KEY', 'OPENAI_PRODUCT_MODEL', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
+ENV_KEYS = {'CONNECTED_APPS_ENABLED', 'CONNECTED_APPS_ENCRYPTION_KEY', 'WORKFLOW_INTEGRATION_ENABLED', 'POSTGRES_USER', 'POSTGRES_DB', 'POSTGRES_PASSWORD', 'DATABASE_URL', 'SETUP_TOKEN', 'AI_SECRET_ENCRYPTION_KEY', 'OPENAI_PRODUCT_MODEL', 'APP_PORT', 'APP_ORIGIN', 'APP_BASE_PATH', 'COOKIE_SECURE', 'PDF_MAX_PAGES', 'UPLOAD_MAX_MB', 'BACKUP_RETENTION_DAYS', 'UPLOAD_DIR', 'BACKUP_DIR', 'APP_RUNTIME', 'DB_HOST', 'DB_PORT', 'PM2_APP_INSTANCES'}
 ENV_KEYS.update({'PUBLIC_URL', 'OTP_PROVIDER_URL', 'OTP_PROVIDER_TOKEN', 'MOYASAR_PUBLISHABLE_KEY', 'MOYASAR_SECRET_KEY', 'WHATSAPP_MANAGED', 'WHATSAPP_SERVICE_URL', 'WHATSAPP_SERVICE_TOKEN', 'WHATSAPP_SESSION_DIR', 'WHATSAPP_NO_SANDBOX', 'CHROMIUM_EXECUTABLE_PATH'})
 
 class DeployError(Exception):
@@ -317,6 +317,10 @@ def read_env(path):
     require(re.fullmatch(r'[a-z][a-z0-9_]{0,31}', values.get('POSTGRES_DB', '')), 'Invalid dedicated database name')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('POSTGRES_PASSWORD', '')), 'Database password must be a generated 64-character hex secret')
     require(re.fullmatch(r'[a-f0-9]{64}', values.get('SETUP_TOKEN', '')), 'Setup token must be generated hex')
+    for flag in ('CONNECTED_APPS_ENABLED', 'WORKFLOW_INTEGRATION_ENABLED'):
+        require(values.get(flag, 'false') in ('true', 'false'), 'Invalid integration feature flag')
+    if values.get('CONNECTED_APPS_ENCRYPTION_KEY'):
+        require(re.fullmatch(r'[a-f0-9]{64}', values['CONNECTED_APPS_ENCRYPTION_KEY']), 'Connected Apps encryption key must be 64 hex characters')
     if values.get('AI_SECRET_ENCRYPTION_KEY'):
         require(re.fullmatch(r'[a-f0-9]{64}', values['AI_SECRET_ENCRYPTION_KEY']), 'AI encryption key must be generated hex')
     require(values.get('APP_PORT', '').isdigit() and 18180 <= int(values['APP_PORT']) <= 18199, 'Invalid app port')
@@ -1298,6 +1302,16 @@ class Deployment:
         self.env.setdefault('DB_PORT', DEFAULT_DB_PORT)
         self.env.setdefault('PM2_APP_INSTANCES', '2')
         self.env.setdefault('AI_SECRET_ENCRYPTION_KEY', secrets.token_hex(32))
+        if not self.env.get('CONNECTED_APPS_ENCRYPTION_KEY'):
+            self.env['CONNECTED_APPS_ENCRYPTION_KEY'] = secrets.token_hex(32)
+        self.env.setdefault('CONNECTED_APPS_ENABLED', 'true')
+        self.env.setdefault('WORKFLOW_INTEGRATION_ENABLED', 'false')
+        if os.environ.get('ACTIVATE_CONNECTED_APPS') == 'true':
+            self.env['CONNECTED_APPS_ENABLED'] = 'true'
+        if os.environ.get('ACTIVATE_WORKFLOW_INTEGRATION') == 'true':
+            self.env['CONNECTED_APPS_ENABLED'] = 'true'
+            self.env['WORKFLOW_INTEGRATION_ENABLED'] = 'true'
+
         self.env.setdefault('OPENAI_PRODUCT_MODEL', 'gpt-5.4-nano')
         # Release validation reads the shared env file. Persist newly introduced
         # deployment defaults before compose config runs, and preserve them even

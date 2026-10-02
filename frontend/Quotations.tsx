@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
+import PricingCollectionJobs from "./PricingCollectionJobs";
 import QuotationTemplates from "./QuotationTemplates";
 export default function Quotations({
   t,
@@ -295,6 +296,7 @@ export default function Quotations({
           )}
         </div>
       )}
+      {selected && <details><summary>Pricing & Collection Jobs for {selected.number}</summary><PricingCollectionJobs key={selected.id} documentId={selected.id} /></details>}
       {selected && (
         <div className="modal-backdrop">
           <section className="modal">

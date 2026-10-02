@@ -42,6 +42,10 @@ export const priceHooks: Hooks = {
   },
 };
 export async function integrationPublic(db: DB, req: Request, path: string) {
+  if (path === "jobs-result") {
+    try { const { receiveJobResult } = await import("./jobs"); return Response.json(await receiveJobResult(db, req)); }
+    catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : "Job result could not be applied" }, { status: e instanceof ConnectionError ? e.status : 503 }); }
+  }
   try { return Response.json(await protocol(db, priceHooks, req, path), { headers: { 'Cache-Control': 'no-store' } }); }
   catch (e) { return Response.json({ error: e instanceof ConnectionError ? e.message : 'Invalid or unavailable integration request' }, { status: e instanceof ConnectionError ? e.status : e instanceof z.ZodError ? 400 : 503 }); }
 }

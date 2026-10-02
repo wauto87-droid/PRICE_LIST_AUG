@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, setCsrf } from "@/frontend/api";
 import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
+import PricingCollectionJobs from "@/frontend/PricingCollectionJobs";
 import Quotations from "@/frontend/Quotations";
 import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
 import Admin from "@/frontend/Admin";
@@ -522,6 +523,7 @@ export default function App() {
               ["draft", "Quotation", "عرض السعر"],
               ["delivery", "Delivery note to quotation", "إذن التسليم إلى عرض سعر"],
               ["quotations", "Quotations", "العروض"],
+              ["workflow-jobs", "Pricing & Collection Jobs", "مهام التسعير والتحصيل"],
               ...(session.user.permissions.includes("COMMERCIAL_VIEW")
                 ? [["commercial", "Commercial", "التجاري"]]
                 : []),
@@ -671,6 +673,7 @@ export default function App() {
                   )}
                 </div>
               ))}
+            {tab === "workflow-jobs" && <PricingCollectionJobs />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations

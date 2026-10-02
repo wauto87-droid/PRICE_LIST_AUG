@@ -19,16 +19,15 @@ export async function workflowConnectionCall(body?: Row) {
 
 const defaultData: Row = {
   app: 'pricelist',
-  enabled: true,
-  encryptionReady: true,
+  enabled: undefined,
+  encryptionReady: undefined,
   url: '',
-  paused: false,
+  paused: true,
   credentialConfigured: false,
   keys: [],
   history: [],
   importedCount: 0,
-  selfUrl: 'https://softwaresolver.online/amt_price_list/api/v1/integration/v1',
-  scopes: ['catalog:read', 'proposals:write', 'proposals:read'],
+  scopes: ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results'],
 };
 
 export default function ConnectedApps({ call = workflowConnectionCall }: { call?: ConnectionCall }) {
@@ -48,6 +47,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
     setLoading(true);
     try {
       const res = await call();
+      if (!res || !Array.isArray(res.keys)) throw new Error("Invalid integration settings response");
       if (res && typeof res === 'object') {
         setData(prev => ({ ...prev, ...res }));
       }
@@ -91,7 +91,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
         setTimeout(() => setCopiedUrl(false), 2000);
       }
     } catch {
-      // fallback
+      setMessage('Clipboard unavailable. Select the key text and copy it manually.');
     }
   };
 
@@ -127,7 +127,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
           <span className="conn-badge red">v1 Protocol</span>
         </div>
         <div>
-          <button type="button" onClick={load} disabled={busy} className="button">
+          <button type="button" onClick={load} disabled={busy || loading} className="button">
             ↻ Refresh
           </button>
         </div>
@@ -169,7 +169,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
           <span className="conn-stat-label">Encryption Engine</span>
           <span className="conn-stat-value">
             <span className={`conn-dot ${activeData.encryptionReady ? 'green' : 'red'}`} />
-            {activeData.encryptionReady ? 'AES-256 Ready' : 'Setup Needed'}
+            {activeData.encryptionReady === undefined ? 'Not verified' : activeData.encryptionReady ? 'AES-256 Ready' : 'Setup Needed'}
           </span>
         </div>
 
@@ -222,7 +222,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
               <p style={{ margin: '4px 0 8px 0', fontSize: 11, color: '#2e7d32' }}>
                 Copy this key now. It is stored as a SHA-256 hash and cannot be displayed again.
               </p>
-              <textarea readOnly value={key} rows={2} />
+              <textarea aria-label="New API key" readOnly value={key} onFocus={e => e.currentTarget.select()} style={{ color: "#111827", background: "#ffffff", minHeight: 72, width: "100%", fontFamily: "monospace" }} rows={3} />
               <div className="conn-actions">
                 <button type="button" className="primary" onClick={() => copyToClipboard(key, true)}>
                   {copiedKey ? '✓ Copied to clipboard!' : 'Copy API key'}
@@ -342,13 +342,13 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                   </div>
 
                   <div className="conn-actions">
-                    <button type="submit" disabled={busy} className="primary">
+                    <button type="submit" disabled={busy || loading} className="primary">
                       Save connection
                     </button>
-                    <button type="button" disabled={busy} onClick={() => action({ action: 'test' })}>
+                    <button type="button" disabled={busy || loading} onClick={() => action({ action: 'test' })}>
                       Test connection
                     </button>
-                    <button type="button" disabled={busy} onClick={() => action({ action: 'sync' })}>
+                    <button type="button" disabled={busy || loading} onClick={() => action({ action: 'sync' })}>
                       Sync now / retry
                     </button>
                   </div>
@@ -404,7 +404,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                   </div>
 
                   <div className="conn-actions">
-                    <button type="submit" disabled={busy} className="primary">
+                    <button type="submit" disabled={busy || loading} className="primary">
                       Generate key
                     </button>
                   </div>
@@ -463,7 +463,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button
                                       type="button"
-                                      disabled={busy}
+                                      disabled={busy || loading}
                                       onClick={() => action({ action: 'revoke', id: k.id })}
                                       style={{ padding: '3px 8px', fontSize: 11, color: 'var(--red)' }}
                                     >
@@ -471,7 +471,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                                     </button>
                                     <button
                                       type="button"
-                                      disabled={busy}
+                                      disabled={busy || loading}
                                       onClick={() =>
                                         action({
                                           action: 'rotate',
@@ -493,8 +493,8 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -524,7 +524,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
 
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || loading}
                   onClick={() => action({ action: 'clearHistory' })}
                   style={{ fontSize: 11, padding: '3px 8px' }}
                 >

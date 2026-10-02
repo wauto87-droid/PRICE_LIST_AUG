@@ -1,3 +1,4 @@
+import { jobWorkspace } from "../integrations/jobs";
 import { integrationPublic, integrationAdmin } from "../integrations/service";
 import { whatsappAdmin } from "../storefront/whatsapp";
 import fs from "node:fs/promises";
@@ -677,6 +678,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
+    if (root === "workflow-jobs") return response(await jobWorkspace(db, actor, req));
     if (root === "connected-apps") return integrationAdmin(db, actor, req);
     const settings = await admin.settings(db);
     const isMaintenanceAdmin =

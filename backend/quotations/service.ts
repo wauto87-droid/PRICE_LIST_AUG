@@ -1,3 +1,4 @@
+import { preserveWorkflowCosts, assertWorkflowPricingReady } from "../integrations/jobs";
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -294,6 +295,7 @@ export async function snapshot(
   return result;
 }
 function publicLine(line: any, actor: Actor) {
+  if (!has(actor, "COST_VIEW") && line.workflowCost?.ownerId !== actor.id) { const { workflowCost, ...visible } = line; line = visible; }
   if (!line.price) {
     const { internalPricing, ...safe } = line;
     return { ...safe, price: null };
@@ -462,6 +464,7 @@ export async function saveDraft(
       }),
       oldLines,
     );
+    preserveWorkflowCosts(lines, oldLines);
     const sum = computeTotals(lines, data.adjustment?.targetTotal);
     const quoteId = id ?? randomUUID();
     if (id)
@@ -545,6 +548,7 @@ export async function reviewIssue(
       "SELECT data FROM settings WHERE id=1 FOR SHARE",
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
+    await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
@@ -554,6 +558,7 @@ export async function reviewIssue(
       settings,
       {},
     );
+    preserveWorkflowCosts(lines, q.lines);
     return {
       token: fingerprint(q, lines, actor, settings),
       version: q.version,
@@ -578,6 +583,7 @@ export async function issue(
     ))!.data;
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
+    await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
@@ -588,7 +594,7 @@ export async function issue(
       {},
     );
     assert(
-      fingerprint(q, lines, actor, settings) === token,
+      fingerprint(q, preserveWorkflowCosts(lines, q.lines), actor, settings) === token,
       409,
       "Pricing or permissions changed. Review again before issuing",
     );

@@ -18,7 +18,7 @@ const str = z.string().trim().max(1000);
 export const catalogItem = z.object({ id: z.string().min(1).max(200), type: z.enum(['PRODUCT', 'REUSABLE', 'LOCAL']), code: str, description: str.min(1), unit: str.min(1), brand: str.default(''), category: str.default(''), aliases: z.array(str).max(200).default([]), specifications: z.string().max(10000).default(''), manufacturerPart: str.default(''), active: z.boolean(), convertedTo: z.string().nullable().default(null), deleted: z.boolean().default(false) }).strict();
 export type CatalogItem = z.infer<typeof catalogItem>;
 export type Hooks = { app: 'workflow' | 'pricelist'; afterSync?: () => Promise<void>; catalog?: (tx: ConnectionDB) => Promise<CatalogItem[]>; approve?: (tx: ConnectionDB, actor: any, input: any) => Promise<{ id: string; type: 'PRODUCT' | 'REUSABLE'; code?: string; unit?: string }> };
-export const scopesFor = (app: string) => app === 'pricelist' ? ['catalog:read', 'proposals:write', 'proposals:read'] : ['notifications:write'];
+export const scopesFor = (app: string) => app === 'pricelist' ? ['catalog:read', 'proposals:write', 'proposals:read', 'jobs:results'] : ['notifications:write', 'jobs:read', 'jobs:write'];
 const keyBytes = () => { const raw = process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''; check(/^[a-f\d]{64}$/i.test(raw), 'Configure CONNECTED_APPS_ENCRYPTION_KEY (64 hex characters) on this server', 503); return Buffer.from(raw, 'hex'); };
 export function encrypt(secret: string) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', keyBytes(), iv); const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]); return [iv, cipher.getAuthTag(), body].map(b => b.toString('base64')).join('.'); }
 export function decrypt(value: string) { const [iv, tag, body] = value.split('.').map(s => Buffer.from(s, 'base64')); const cipher = createDecipheriv('aes-256-gcm', keyBytes(), iv); cipher.setAuthTag(tag); return Buffer.concat([cipher.update(body), cipher.final()]).toString('utf8'); }
@@ -73,24 +73,11 @@ export async function adminState(db: ConnectionDB, hooks: Hooks) {
   const keys = (await db.query('SELECT id,name,scopes,expires_at,created_at,last_used_at,revoked_at FROM sw_link_keys ORDER BY created_at DESC')).rows;
   const counts = (await db.query('SELECT status,count(*)::int count FROM sw_link_proposals GROUP BY status')).rows;
   const count = await one(db, 'SELECT count(*)::int count FROM sw_link_catalog');
-  const history = await getHistory(db, 50);
-  const defaultSelfUrl = hooks.app === 'workflow'
-    ? 'https://softwaresolver.online/api/sales-workflow/integration/v1'
-    : 'https://softwaresolver.online/amt_price_list/api/v1/integration/v1';
-  return {
-    app: hooks.app,
-    enabled: process.env.CONNECTED_APPS_ENABLED === 'true',
+  return { ...s, app: hooks.app, enabled: process.env.CONNECTED_APPS_ENABLED === 'true',
     encryptionReady: /^[a-f\d]{64}$/i.test(process.env.CONNECTED_APPS_ENCRYPTION_KEY || ''),
-    ...s,
-    secret: undefined,
-    credentialConfigured: !!s.secret,
-    keys,
-    scopes: scopesFor(hooks.app),
-    counts,
-    importedCount: count?.count || 0,
-    history,
-    selfUrl: defaultSelfUrl,
-  };
+    workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', secret: undefined,
+    credentialConfigured: !!s.secret, keys, counts, importedCount: count.count, scopes: scopesFor(hooks.app),
+    history: await getHistory(db, 50) };
 }
 
 export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string, input: any) {
@@ -130,9 +117,11 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
     try {
       const r = await remote(s, 'health');
       check(r.app === (hooks.app === 'workflow' ? 'pricelist' : 'workflow') && r.protocol === 1, 'Connected URL is not the expected app');
+      const required = scopesFor(hooks.app === 'workflow' ? 'pricelist' : 'workflow');
+      check(required.every(scope => r.scopes?.includes(scope)), 'Authentication succeeded, but the remote key lacks required permissions. Generate or rotate a key with all integration scopes.', 403);
       const latency = Date.now() - start;
       await logHistory(db, 'TEST_PING', 'SUCCESS', `Connection verified in ${latency}ms to ${s.url}`, { latency, remoteApp: r.app, url: s.url }, latency);
-      return { message: `Connection verified (${latency}ms)`, latency };
+      return { message: `Authentication and permissions verified (${latency}ms). Run Sync now to verify data synchronization.`, latency, authentication: true, permissions: true, synchronization: "NOT_TESTED", workflowEnabled: r.workflowEnabled };
     } catch (err: any) {
       const latency = Date.now() - start;
       await logHistory(db, 'TEST_PING', 'FAILED', `Connection test failed: ${err.message}`, { latency, url: s.url, error: err.message }, latency);
@@ -142,7 +131,7 @@ export async function adminCommand(db: ConnectionDB, hooks: Hooks, actor: string
   if (input.action === 'sync') { await sync(db, hooks, true); return { message: 'Synchronization completed' }; }
   throw new ConnectionError('Unknown connection action');
 }
-async function remote(s: any, path: string, body?: unknown) {
+export async function remote(s: any, path: string, body?: unknown) {
   check(s.url && s.secret, 'Configure the remote URL and API key', 503);
   const base = await validateURL(s.url);
   const url = new URL(`${base}/${path}`);
@@ -208,7 +197,7 @@ export async function protocol(db: ConnectionDB, hooks: Hooks, req: Request, pat
   const scope = hooks.app === 'pricelist' ? path === 'proposals' && req.method === 'POST' ? 'proposals:write' : path === 'proposals' ? 'proposals:read' : 'catalog:read' : 'notifications:write';
   const keyId = await authenticate(db, req, scope);
   await logHistory(db, 'INCOMING_REQ', 'SUCCESS', `Incoming ${req.method} /${path}`, { path, method: req.method, keyId });
-  if (path === 'health' && req.method === 'GET') return { app: hooks.app, protocol: 1 };
+  if (path === 'health' && req.method === 'GET') return { app: hooks.app, protocol: 1, workflowEnabled: process.env.WORKFLOW_INTEGRATION_ENABLED === 'true', scopes: (await one(db, 'SELECT scopes FROM sw_link_keys WHERE id=$1::uuid', [keyId])).scopes };
   if (hooks.app === 'pricelist' && path === 'catalog' && req.method === 'GET') {
     await refreshCatalog(db, hooks);
     const after = new URL(req.url).searchParams.get('after') || '0'; check(/^\d{1,19}$/.test(after), 'Invalid cursor');
