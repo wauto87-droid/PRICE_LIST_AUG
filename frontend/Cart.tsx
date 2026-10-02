@@ -8,6 +8,7 @@ import {
   wheelSafeNumberInputProps,
 } from "./number-input";
 import CustomLineForm from "./CustomLineForm";
+import WorkflowCostReference from "./WorkflowCostReference";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import CustomLineCatalogResolver from "./CustomLineCatalogResolver";
 import { buildLookupLineRequest } from "./lookup-pricing";
@@ -779,6 +780,8 @@ export default function Cart({
         id: q.id,
         version: q.version,
         number: q.number,
+        ownerId: q.owner_id,
+        workflowCurrency: q.workflowCurrency || "SAR",
         lines: q.lines,
         totals: q.totals,
         adjustment: { targetTotal: q.totals?.targetTotal || "" },
@@ -1023,6 +1026,12 @@ export default function Cart({
                         {importedDeliveryMeta(l)?.docDate || "—"}
                       </small>
                     )}
+                    <WorkflowCostReference
+                      line={l}
+                      visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
+                      currency={cart.workflowCurrency || "SAR"}
+                      t={t}
+                    />
                     {l.previousPriceSource && (
                       <span className="badge success" title={`${l.previousPriceSource.status} ${l.previousPriceSource.quotation_number}`}>
                         {t("Previous customer price", "سعر العميل السابق")}

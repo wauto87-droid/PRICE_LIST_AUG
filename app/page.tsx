@@ -281,6 +281,8 @@ export default function App() {
       id: q.id,
       version: q.version,
       number: q.number,
+      ownerId: q.owner_id,
+      workflowCurrency: q.workflowCurrency || "SAR",
       customer: q.customer,
       lines: q.lines,
     });
