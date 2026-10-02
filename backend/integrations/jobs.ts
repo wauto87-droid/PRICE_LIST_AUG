@@ -45,13 +45,61 @@ export async function jobWorkspace(db: DB, actor: Actor, req: Request) {
     return remote(config, `jobs-staff?actor=${encodeURIComponent(actor.id)}`);
   }
   if (req.method === 'GET' && !id) {
+    const isAdmin = actor.role === 'ADMIN' || has(actor, 'QUOTE_VIEW_ALL');
+    const statusParam = (url.searchParams.get('status') || '').trim().toUpperCase();
+    const ownerParam = (url.searchParams.get('owner') || '').trim();
+
+    const conditions: string[] = ["q.status<>'DELETED'"];
+    const params: any[] = [];
+
+    if (statusParam && statusParam !== 'ALL') {
+      params.push(statusParam);
+      conditions.push(`q.status = $${params.length}`);
+    }
+
+    if (!isAdmin) {
+      params.push(actor.id);
+      conditions.push(`(q.owner_id = $${params.length}::uuid OR $${params.length}::uuid = ANY(q.shared_with))`);
+    } else {
+      if (ownerParam === 'me') {
+        params.push(actor.id);
+        conditions.push(`q.owner_id = $${params.length}::uuid`);
+      } else if (ownerParam && ownerParam !== 'all') {
+        params.push(ownerParam);
+        conditions.push(`q.owner_id = $${params.length}::uuid`);
+      }
+    }
+
+    const whereClause = conditions.join(' AND ');
     const rows = (await db.query(`SELECT q.id,q.number,q.status,q.customer,q.owner_id,u.name creator,j.data workflow FROM quotations q
-      LEFT JOIN users u ON u.id=q.owner_id LEFT JOIN sw_job_documents j ON j.id=q.id
-      WHERE q.status<>'DELETED' AND ($1 OR q.owner_id=$2 OR $2=ANY(q.shared_with)) ORDER BY q.updated_at DESC LIMIT 200`, [has(actor,'QUOTE_VIEW_ALL'), actor.id])).rows;
-    return { userId: actor.id, rows: rows.map(q => { const lines = Object.values<any>(q.workflow?.lines || {}); return { id: q.id, number: q.number, status: q.status, customer: q.customer, creator: q.creator,
-      pricing: lines.filter(l => ['COMPLETED','KNOWN'].includes(l.PRICING?.status)).length,
-      pricingAssigned: lines.filter(l => l.PRICING).length, collection: lines.filter(l => l.COLLECTION?.status === 'COMPLETED').length,
-      collectionAssigned: lines.filter(l => l.COLLECTION).length, blockers: lines.filter(l => l.PRICING?.blocker || l.COLLECTION?.blocker).length }; }) };
+      LEFT JOIN users u ON u.id=q.owner_id LEFT JOIN sw_job_documents j ON j.id=q.id::text
+      WHERE ${whereClause} ORDER BY q.updated_at DESC LIMIT 200`, params)).rows;
+
+    const creators = isAdmin
+      ? (await db.query('SELECT id, name, username FROM users WHERE disabled IS NOT TRUE ORDER BY name ASC')).rows
+      : [];
+
+    return {
+      userId: actor.id,
+      isAdmin,
+      creators,
+      rows: rows.map(q => {
+        const lines = Object.values<any>(q.workflow?.lines || {});
+        return {
+          id: q.id,
+          number: q.number,
+          status: q.status,
+          customer: q.customer,
+          creator: q.creator || 'Unknown',
+          ownerId: q.owner_id,
+          pricing: lines.filter(l => ['COMPLETED','KNOWN'].includes(l.PRICING?.status)).length,
+          pricingAssigned: lines.filter(l => l.PRICING).length,
+          collection: lines.filter(l => l.COLLECTION?.status === 'COMPLETED').length,
+          collectionAssigned: lines.filter(l => l.COLLECTION).length,
+          blockers: lines.filter(l => l.PRICING?.blocker || l.COLLECTION?.blocker).length
+        };
+      })
+    };
   }
   if (req.method === 'GET' && id) return db.transaction(async tx => {
     await tx.query('SELECT id FROM quotations WHERE id=$1 FOR UPDATE', [id]);
