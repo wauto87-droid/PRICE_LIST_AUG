@@ -216,6 +216,109 @@ export async function integrationPublic(db: DB, req: Request, path: string) {
       );
     }
   }
+  if (path === "jobs-owner-command") {
+    try {
+      const { workflowEnabled, receipt } = await import("./job-protocol");
+      workflowEnabled();
+      await authenticate(db, req, "jobs:results");
+      check(req.method === "POST", "Method not allowed", 405);
+      const input = await readBody(req);
+      return Response.json(
+        await receipt(db, `erp-owner:${input.eventId}`, input, async (tx) => {
+          const u = await one(
+            tx,
+            `SELECT u.*,r.permissions role_permissions,COALESCE(u.max_discount,r.max_discount)::text discount FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1 AND NOT u.disabled FOR SHARE OF u,r`,
+            [z.string().uuid().parse(input.actorId)],
+          );
+          check(u, "Mapped user is disabled or missing", 403);
+          const actor: Actor = {
+            id: u.id,
+            username: u.username,
+            name: u.name,
+            role: u.role_id,
+            permissions: [
+              ...new Set<string>([...u.permissions, ...u.role_permissions]),
+            ],
+            maxDiscount: u.discount,
+            csrf: "",
+          };
+          const q = await one(
+            tx,
+            "SELECT * FROM quotations WHERE id=$1 FOR UPDATE",
+            [input.documentId],
+          );
+          const link = await one(
+            tx,
+            "SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE",
+            [input.documentId],
+          );
+          check(
+            q &&
+              link &&
+              q.owner_id === input.ownerId &&
+              !link.data.handover &&
+              (link.data.ownershipRevision || 0) === input.ownershipRevision &&
+              link.data.branchId === input.branchId,
+            "Ownership or branch changed; refresh before retrying",
+            409,
+          );
+          if (actor.id !== q.owner_id) {
+            check(
+              actor.role === "ADMIN",
+              "Only the responsible salesman may change pricing",
+              403,
+            );
+            const reason = z
+              .string()
+              .trim()
+              .min(5)
+              .max(1000)
+              .parse(input.reason);
+            (link.data.overrides ||= {})[actor.id] = {
+              reason,
+              until: new Date(Date.now() + 60000).toISOString(),
+            };
+            await tx.query(
+              "UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1",
+              [q.id, JSON.stringify(link.data)],
+            );
+          }
+          const { jobWorkspace, workflowContext } = await import("./jobs");
+          if (input.action !== "assign") {
+            const context = await workflowContext(
+              tx,
+              actor,
+              q,
+              link,
+              input.branchId,
+            );
+            check(
+              context.ownerMappingRevision === input.ownerMappingRevision &&
+                context.actorMappingRevision === input.actorMappingRevision,
+              "Admin mapping changed; refresh before retrying",
+              409,
+            );
+          }
+          const result = await jobWorkspace(
+            tx,
+            actor,
+            new Request("http://internal/workflow-jobs", {
+              method: "POST",
+              body: JSON.stringify(input),
+            }),
+            undefined,
+            false,
+          );
+          return { received: true, ...result };
+        }),
+      );
+    } catch (e) {
+      return Response.json(
+        { error: e instanceof Error ? e.message : "Decision failed" },
+        { status: (e as any).status || 400 },
+      );
+    }
+  }
   if (path === "jobs-review") {
     try {
       const { workflowEnabled } = await import("./job-protocol");
@@ -236,6 +339,29 @@ export async function integrationPublic(db: DB, req: Request, path: string) {
         number: q.number,
         ownerId: q.owner_id,
         version: q.version,
+        workflowVersion: link.revision,
+        currency:
+          q.company_snapshot?.currency ||
+          (await one(db, "SELECT data FROM settings WHERE id=1"))?.data
+            ?.currency ||
+          "SAR",
+        lines: q.lines.map((l: any) => ({
+          id: l.input?.watcherEventId,
+          name: l.description,
+          specifications: l.specifications || "",
+          partNumber: l.partNumber,
+          quantity: String(l.input?.quantity ?? l.price?.quantity ?? ""),
+          unit: l.unit,
+          workflowCost: l.workflowCost,
+          workflowPricing: l.workflowPricing,
+          job: link.data.lines[l.input?.watcherEventId]?.PRICING,
+          decisionPending:
+            !!link.data.lines[l.input?.watcherEventId]?.decisionPending,
+        })),
+        removed:
+          link.data.removedLines?.map(
+            (x: any) => x.line.input?.watcherEventId,
+          ) || [],
         ownershipRevision: link.data.ownershipRevision || 0,
         handoverPending: !!link.data.handover,
       });

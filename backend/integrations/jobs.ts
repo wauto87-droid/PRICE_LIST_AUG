@@ -86,9 +86,14 @@ async function prepare(tx: DB, q: any) {
 }
 export function ready(q: any, link: any) {
   const complete =
+    !Object.values<any>(link.data.lines).some((e) => e.decisionPending) &&
     q.lines.length > 0 &&
     q.lines.every((l: any) => {
-      const job = link.data.lines[idFor(l)]?.PRICING;
+      const entry = link.data.lines[idFor(l)];
+      const job = entry?.PRICING;
+      if (entry?.decisionPending) return false;
+      if (job?.status === "SKIPPED")
+        return job.fingerprint === lineFingerprint(l);
       return (
         l.workflowCost?.fingerprint === lineFingerprint(l) &&
         (!job || job.status === "COMPLETED" || job.status === "KNOWN")
@@ -99,7 +104,13 @@ export function ready(q: any, link: any) {
     ready: complete && q.status === "DRAFT",
     count: q.lines.length,
     round: complete
-      ? hash(q.lines.map((l: any) => [idFor(l), l.workflowCost]))
+      ? hash(
+          q.lines.map((l: any) => [
+            idFor(l),
+            l.workflowCost,
+            link.data.lines[idFor(l)]?.PRICING?.status,
+          ]),
+        )
       : null,
   };
 }
@@ -112,7 +123,7 @@ function branchLocked(link: any) {
     )
   );
 }
-async function workflowContext(
+export async function workflowContext(
   db: DB,
   actor: Actor,
   q: any,
@@ -174,6 +185,7 @@ export async function jobWorkspace(
   actor: Actor,
   req: Request,
   transport = remote,
+  startWorker = true,
 ) {
   workflowEnabled();
   const url = new URL(req.url);
@@ -394,11 +406,15 @@ export async function jobWorkspace(
           ...(mayCost(actor, q)
             ? {
                 workflowCost: l.workflowCost,
+                workflowPricing: l.workflowPricing,
                 sellingPrice: l.price?.finalExcl,
                 margin:
                   l.workflowCost &&
                   l.price?.finalExcl &&
-                  l.workflowCost.currency === q.workflowCurrency
+                  l.workflowCost.currency === q.workflowCurrency &&
+                  l.workflowCost.unit === l.unit &&
+                  !l.workflowCost.stale &&
+                  ["Excluding VAT", "No VAT"].includes(l.workflowCost.taxBasis)
                     ? new Decimal(l.price.finalExcl)
                         .minus(l.workflowCost.cost)
                         .toFixed()
@@ -572,43 +588,117 @@ export async function jobWorkspace(
           poNumber: String(input.poNumber || ""),
           createdAt: new Date().toISOString(),
         });
-      } else if (input.action === "known") {
+      } else if (["known", "skip", "remove"].includes(input.action)) {
         check(
           q.status === "DRAFT",
-          "Only editable drafts can receive confirmed prices",
+          "Only editable drafts can change pricing decisions",
           409,
         );
         const line = q.lines.find((l: any) => idFor(l) === input.lineId);
-        check(line, "Line missing");
+        check(line, "Product no longer exists in this draft", 409);
+        const entry = (link.data.lines[input.lineId] ||= {});
         check(
-          !link.data.lines[input.lineId]?.PRICING ||
-            ["COMPLETED", "KNOWN", "REVIEW_REQUIRED"].includes(
-              link.data.lines[input.lineId].PRICING.status,
-            ),
-          "Finish or reassign the pending pricing job before marking its cost known",
+          !entry.decisionPending,
+          "Previous decision is still syncing. Retry synchronization first",
           409,
         );
-        const cost = costInput.parse(input.cost);
-        check(
-          cost.unit === line.unit && cost.currency === q.workflowCurrency,
-          "Confirm currency and unit conversion first",
+        const needsERP = !!(
+          link.data.erpRequestId ||
+          entry.PRICING?.token ||
+          input.requestId
         );
-        line.workflowCost = {
-          ...cost,
-          ownerId: q.owner_id,
-          fingerprint: lineFingerprint(line),
-          actorName: (actor as any).name || "Creator",
-          actorId: actor.id,
-          updatedAt: new Date().toISOString(),
-        };
-        link.data.lines[input.lineId] = {
-          ...link.data.lines[input.lineId],
-          PRICING: { status: "KNOWN", updatedAt: line.workflowCost.updatedAt },
-        };
+        (entry.history ||= []).push({
+          job: entry.PRICING,
+          cost: line.workflowCost,
+          date: new Date().toISOString(),
+          actor: actor.id,
+        });
+        const updatedAt = new Date().toISOString();
+        if (input.action === "known") {
+          const cost = z
+            .object({
+              cost: z.string().regex(/^\d{1,12}(\.\d{1,6})?$/),
+              currency: z.string().regex(/^[A-Z]{3}$/),
+              unit: z.string().trim().min(1).max(500),
+              supplier: z.string().trim().max(500).default(""),
+              taxBasis: z.enum([
+                "Excluding VAT",
+                "Including VAT",
+                "No VAT",
+                "Unknown",
+              ]),
+              evidence: z.string().max(500).default(""),
+              availability: z
+                .string()
+                .max(500)
+                .default("Confirmed by salesman"),
+              leadTime: z.string().max(500).default("Unknown"),
+            })
+            .parse(input.cost);
+          check(
+            cost.unit === line.unit && cost.currency === q.workflowCurrency,
+            "Confirm currency and unit conversion first",
+            409,
+          );
+          line.workflowCost = {
+            ...cost,
+            ownerId: q.owner_id,
+            fingerprint: lineFingerprint(line),
+            actorName: actor.name,
+            actorId: actor.id,
+            updatedAt,
+          };
+          delete line.workflowPricing;
+          entry.PRICING = {
+            status: "KNOWN",
+            updatedAt,
+            fingerprint: lineFingerprint(line),
+          };
+        } else if (input.action === "skip") {
+          line.workflowPricing = {
+            status: "SKIPPED",
+            fingerprint: lineFingerprint(line),
+            actorId: actor.id,
+            updatedAt,
+          };
+          delete line.workflowCost;
+          entry.PRICING = {
+            status: "SKIPPED",
+            updatedAt,
+            fingerprint: lineFingerprint(line),
+          };
+        } else {
+          check(
+            q.lines.length > 1,
+            "Keep at least one product in the draft",
+            409,
+          );
+          (link.data.removedLines ||= []).push({
+            line,
+            actorId: actor.id,
+            updatedAt,
+          });
+          q.lines = q.lines.filter((l: any) => idFor(l) !== input.lineId);
+          entry.PRICING = { status: "REMOVED", updatedAt };
+          const { computeTotals } = await import("../quotations/service");
+          q.totals = computeTotals(q.lines);
+        }
+        if (needsERP) entry.decisionPending = commandId;
         await tx.query(
-          "UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",
-          [q.id, J(q.lines)],
+          "UPDATE quotations SET lines=$2::jsonb,totals=$3::jsonb,version=version+1,updated_at=now() WHERE id=$1",
+          [q.id, J(q.lines), J(q.totals)],
         );
+        if (needsERP)
+          await enqueue(tx, commandId, "jobs-pricing-decision", {
+            eventId: commandId,
+            documentId: q.id,
+            lineId: input.lineId,
+            action: input.action,
+            decision: entry.PRICING,
+            cost: line.workflowCost,
+            number: q.number,
+            version: q.version + 1,
+          });
       } else {
         check(input.action === "assign", "Unknown job action");
         check(
@@ -684,6 +774,8 @@ export async function jobWorkspace(
             currency: q.workflowCurrency,
             fingerprint: lineFingerprint(l),
             knownCost:
+              l.workflowCost?.supplier &&
+              l.workflowCost?.evidence &&
               l.workflowCost?.fingerprint === lineFingerprint(l)
                 ? l.workflowCost
                 : undefined,
@@ -705,6 +797,21 @@ export async function jobWorkspace(
         if (!oldEvent) {
           for (const lineId of payload.selected) {
             const entry = (link.data.lines[lineId] ||= {});
+            if (kind === "PRICING") {
+              check(
+                !entry.decisionPending,
+                "Previous pricing decision is still syncing",
+                409,
+              );
+              const line = q.lines.find((l: any) => idFor(l) === lineId);
+              if (line?.workflowPricing) {
+                delete line.workflowPricing;
+                await tx.query(
+                  "UPDATE quotations SET lines=$2::jsonb WHERE id=$1",
+                  [q.id, J(q.lines)],
+                );
+              }
+            }
             entry[kind] = {
               token: payload.eventId,
               status: "PENDING_ERP_SYNC",
@@ -748,7 +855,7 @@ export async function jobWorkspace(
       return { saved: true, ...completion };
     },
   );
-  void runPriceJobs(db).catch(() => {});
+  if (startWorker) void runPriceJobs(db).catch(() => {});
   return result;
 }
 const resultInput = z.object({
@@ -824,6 +931,7 @@ export async function receiveJobResult(db: DB, req: Request) {
     if (result.kind === "COLLECTION") job.movements = result.movements;
     if (!conflict && result.kind === "PRICING" && result.done) {
       check(result.cost, "Completed pricing requires a supplier cost");
+      delete line.workflowPricing;
       line.workflowCost = {
         ...result.cost,
         ownerId: q.owner_id,
@@ -854,6 +962,10 @@ export async function runPriceJobs(db: DB) {
   running = true;
   try {
     await deliver(db, "REMOTE", undefined, async (row, response) => {
+      if (row.endpoint === "jobs-pricing-decision") {
+        await acknowledgePricingDecision(db, row, response);
+        return;
+      }
       if (!["jobs-assign", "jobs-order-command"].includes(row.endpoint)) return;
       await db.transaction(async (tx) => {
         const link = await one(
@@ -913,6 +1025,13 @@ export function preserveWorkflowCosts(lines: any[], oldLines: any[]) {
     );
     ids.add(id);
     const previous = old.get(id);
+    delete line.workflowCost;
+    delete line.workflowPricing;
+    if (previous?.workflowPricing)
+      line.workflowPricing = {
+        ...previous.workflowPricing,
+        stale: previous.workflowPricing.fingerprint !== lineFingerprint(line),
+      };
     if (previous?.workflowCost)
       line.workflowCost = {
         ...previous.workflowCost,
@@ -932,4 +1051,112 @@ export async function assertWorkflowPricingReady(db: DB, q: any) {
       "Finish or review all assigned supplier prices before issuing this quotation",
       409,
     );
+}
+
+// A cart edit uses the same cancellation contract as the focused ERP screen.
+export async function recordRemovedDraftLines(
+  tx: DB,
+  actor: Actor,
+  id: string,
+  oldLines: any[],
+  lines: any[],
+) {
+  const removed = oldLines.filter(
+    (l) => !lines.some((n) => idFor(n) === idFor(l)),
+  );
+  const link = await one(
+    tx,
+    "SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE",
+    [id],
+  );
+  if (!link) return;
+  check(
+    !lines.some((l) =>
+      (link.data.removedLines || []).some(
+        (r: any) => idFor(r.line) === idFor(l),
+      ),
+    ),
+    "Removed products cannot be restored by an old draft save",
+    409,
+  );
+  if (!removed.length) return;
+  const q = await one(tx, "SELECT version,number FROM quotations WHERE id=$1", [
+    id,
+  ]);
+  check(q, "Document missing", 404);
+  for (const line of removed) {
+    const entry = (link.data.lines[idFor(line)] ||= {});
+    check(
+      !entry.decisionPending,
+      "Finish pending pricing synchronization before removing products",
+      409,
+    );
+    const eventId = randomUUID(),
+      updatedAt = new Date().toISOString();
+    (entry.history ||= []).push({
+      job: entry.PRICING,
+      cost: line.workflowCost,
+      date: updatedAt,
+      actor: actor.id,
+    });
+    (link.data.removedLines ||= []).push({
+      line,
+      actorId: actor.id,
+      updatedAt,
+    });
+    entry.PRICING = { status: "REMOVED", updatedAt };
+    entry.decisionPending = eventId;
+    await enqueue(tx, eventId, "jobs-pricing-decision", {
+      eventId,
+      documentId: id,
+      lineId: idFor(line),
+      action: "remove",
+      decision: entry.PRICING,
+      number: q.number,
+      version: q.version + 1,
+    });
+  }
+  await tx.query(
+    "UPDATE sw_job_documents SET data=$2::jsonb,revision=revision+1 WHERE id=$1",
+    [id, J(link.data)],
+  );
+  await audit(tx, actor.id, "WORKFLOW_REMOVE_LINES", "quotations", id, null, {
+    removed: removed.map(idFor),
+  });
+}
+export async function acknowledgePricingDecision(
+  db: DB,
+  row: any,
+  response: any,
+) {
+  check(response?.received, "Pricing decision acknowledgement missing", 502);
+  await db.transaction(async (tx) => {
+    const link = await one(
+      tx,
+      "SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE",
+      [row.payload.documentId],
+    );
+    if (
+      link &&
+      link.data.lines[row.payload.lineId]?.decisionPending === row.id
+    ) {
+      delete link.data.lines[row.payload.lineId].decisionPending;
+      await tx.query("UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1", [
+        link.id,
+        J(link.data),
+      ]);
+      const q = await one(tx, "SELECT * FROM quotations WHERE id=$1", [
+        link.id,
+      ]);
+      check(q, "Document missing", 404);
+      const completion = ready(q, link);
+      if (completion.ready)
+        await enqueue(tx, `ready:${q.id}:${completion.round}`, "jobs-ready", {
+          eventId: `ready:${q.id}:${completion.round}`,
+          documentId: q.id,
+          actorId: q.owner_id,
+          ...completion,
+        });
+    }
+  });
 }

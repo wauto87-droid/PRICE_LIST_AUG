@@ -1070,7 +1070,7 @@ export default function PricingCollectionJobs({
                       }}
                     >
                       <summary style={{ fontWeight: 600, cursor: "pointer" }}>
-                        Price already known / confirm reviewed supplier cost
+                        Enter known cost
                       </summary>
                       <form
                         onSubmit={(e) => {
@@ -1113,7 +1113,7 @@ export default function PricingCollectionJobs({
                               fontWeight: 500,
                             }}
                           >
-                            Supplier cost:
+                            Cost price:
                             <input
                               name="cost"
                               type="number"
@@ -1161,7 +1161,6 @@ export default function PricingCollectionJobs({
                             Supplier:
                             <input
                               name="supplier"
-                              required
                               style={{
                                 padding: "6px 10px",
                                 borderRadius: 6,
@@ -1178,8 +1177,8 @@ export default function PricingCollectionJobs({
                               fontWeight: 500,
                             }}
                           >
-                            Tax basis:
-                            <input
+                            VAT treatment:
+                            <select
                               name="taxBasis"
                               required
                               style={{
@@ -1187,7 +1186,17 @@ export default function PricingCollectionJobs({
                                 borderRadius: 6,
                                 border: "1px solid #cbd5e1",
                               }}
-                            />
+                            >
+                              <option value="">Choose VAT treatment</option>
+                              {[
+                                "Excluding VAT",
+                                "Including VAT",
+                                "No VAT",
+                                "Unknown",
+                              ].map((v) => (
+                                <option key={v}>{v}</option>
+                              ))}
+                            </select>
                           </label>
                           <label
                             style={{

@@ -17,6 +17,10 @@ export default function WorkflowCostReference({
     overflowWrap: "anywhere" as const,
     marginTop: "0.35rem",
   };
+  if (line.workflowPricing?.status === "SKIPPED" && !line.workflowPricing.stale)
+    return (
+      <div style={style}>{t("Cost not requested", "لم يتم طلب التكلفة")}</div>
+    );
   if (!cost || !/^\d+(?:\.\d+)?$/.test(String(cost.cost ?? "")))
     return <div style={style}>{t("Cost pending", "التكلفة قيد الانتظار")}</div>;
   const date = new Date(cost.updatedAt);

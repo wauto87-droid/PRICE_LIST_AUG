@@ -1,5 +1,5 @@
 import { assertWorkflowOwner } from '../integrations/ownership';
-import { preserveWorkflowCosts, assertWorkflowPricingReady } from "../integrations/jobs";
+import { preserveWorkflowCosts, assertWorkflowPricingReady, recordRemovedDraftLines } from "../integrations/jobs";
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -115,7 +115,7 @@ const unresolvedImportedCustom = (line: any) =>
   line?.importMeta?.unresolved &&
   !String(line?.unitPriceExcl ?? "").trim();
 
-function computeTotals(lines: any[], targetTotalInput = "") {
+export function computeTotals(lines: any[], targetTotalInput = "") {
   const base = totals(
     lines.flatMap((line) => (line.price ? [line.price] : [])),
   );
@@ -467,6 +467,7 @@ export async function saveDraft(
       oldLines,
     );
     preserveWorkflowCosts(lines, oldLines);
+    if(id) await recordRemovedDraftLines(tx,actor,id,oldLines,lines);
     const sum = computeTotals(lines, data.adjustment?.targetTotal);
     const quoteId = id ?? randomUUID();
     if (id)
