@@ -1,216 +1,739 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { embedded, migrate, one } from '../backend/core/db';
-import { setup, login, authenticate, sessionCookie, type Actor } from '../backend/auth/service';
-import { jobWorkspace, receiveJobResult, preserveWorkflowCosts, assertWorkflowPricingReady } from '../backend/integrations/jobs';
-import { integrationPublic } from '../backend/integrations/service';
-import { adminCommand } from '../backend/integrations/core';
-import { deliver, enqueue, lineFingerprint, hash } from '../backend/integrations/job-protocol';
+import test from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { embedded, migrate, one } from "../backend/core/db";
+import {
+  setup,
+  login,
+  authenticate,
+  sessionCookie,
+  type Actor,
+} from "../backend/auth/service";
+import {
+  jobWorkspace,
+  receiveJobResult,
+  preserveWorkflowCosts,
+  assertWorkflowPricingReady,
+} from "../backend/integrations/jobs";
+import { integrationPublic } from "../backend/integrations/service";
+import { adminCommand } from "../backend/integrations/core";
+import {
+  deliver,
+  enqueue,
+  lineFingerprint,
+  hash,
+} from "../backend/integrations/job-protocol";
 
-process.env.CONNECTED_APPS_ENABLED = 'true'; process.env.WORKFLOW_INTEGRATION_ENABLED = 'true';
-process.env.CONNECTED_APPS_ENCRYPTION_KEY = 'c'.repeat(64);
-const cost = { cost: '42.50', currency: 'SAR', unit: 'pcs', supplier: 'Shop A', taxBasis: 'Excluding VAT', availability: 'In stock', evidence: 'Offer 42', leadTime: 'Today' };
-test('10-line draft: two known prices, split assignments, retries, returned costs, revisions and issued-document protection', async () => {
+process.env.CONNECTED_APPS_ENABLED = "true";
+process.env.WORKFLOW_INTEGRATION_ENABLED = "true";
+process.env.CONNECTED_APPS_ENCRYPTION_KEY = "c".repeat(64);
+const cost = {
+  cost: "42.50",
+  currency: "SAR",
+  unit: "pcs",
+  supplier: "Shop A",
+  taxBasis: "Excluding VAT",
+  availability: "In stock",
+  evidence: "Offer 42",
+  leadTime: "Today",
+};
+test("10-line draft: two known prices, split assignments, retries, returned costs, revisions and issued-document protection", async () => {
   const db = await embedded();
   try {
-    await migrate(db); process.env.SETUP_TOKEN = 'workflow-test-token-long-enough-32';
-    await setup(db, { token: process.env.SETUP_TOKEN, username: 'jobadmin', password: 'abcd', name: 'Creator', companyName: 'Pilot' });
-    const session = await login(db, { username: 'jobadmin', password: 'abcd' });
-    const actor = await authenticate(db, new Request('http://localhost', { headers: { Cookie: sessionCookie(session.token).split(';')[0] } }));
+    await migrate(db);
+    process.env.SETUP_TOKEN = "workflow-test-token-long-enough-32";
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "jobadmin",
+      password: "abcd",
+      name: "Creator",
+      companyName: "Pilot",
+    });
+    const session = await login(db, { username: "jobadmin", password: "abcd" });
+    const actor = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(session.token).split(";")[0] },
+      }),
+    );
     const id = randomUUID();
-    const lines = Array.from({ length: 10 }, (_, n) => ({ source: 'CUSTOM', description: `Lamp ${n}`, partNumber: `L-${n}`, unit: 'pcs', input: { type: 'CUSTOM', watcherEventId: randomUUID(), quantity: '10' }, price: { finalExcl: '100', quantity: '10' } }));
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DRAFT-001','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')", [id, actor.id, JSON.stringify(lines)]);
-    const get = () => jobWorkspace(db, actor, new Request(`http://localhost/workflow-jobs?documentId=${id}`));
+    const lines = Array.from({ length: 10 }, (_, n) => ({
+      source: "CUSTOM",
+      description: `Lamp ${n}`,
+      partNumber: `L-${n}`,
+      unit: "pcs",
+      input: { type: "CUSTOM", watcherEventId: randomUUID(), quantity: "10" },
+      price: { finalExcl: "100", quantity: "10" },
+    }));
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DRAFT-001','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')",
+      [id, actor.id, JSON.stringify(lines)],
+    );
+    const get = () =>
+      jobWorkspace(
+        db,
+        actor,
+        new Request(`http://localhost/workflow-jobs?documentId=${id}`),
+      );
     const staff = [randomUUID(), randomUUID()];
-    const transport = async () => ({ branchId: 'amt', branchName: 'AMT', branches: [{id:'amt',name:'AMT'}], ownerMappingRevision: 1, actorMappingRevision: 1, staff: staff.map(id => ({id,role:'pricing'})) });
-    const post = (body: any) => jobWorkspace(db, actor, new Request('http://localhost/workflow-jobs', { method: 'POST', body: JSON.stringify(body) }), transport);
-    for (const line of lines.slice(0,2)) {
-      const q = await get(); const body = { action: 'known', eventId: randomUUID(), documentId: id, lineId: line.input.watcherEventId, version: q.version, workflowVersion: q.workflowVersion, cost };
-      await post(body); await post(body); // The same command survives quote-version changes.
+    const transport = async () => ({
+      branchId: "amt",
+      branchName: "AMT",
+      branches: [{ id: "amt", name: "AMT" }],
+      ownerMappingRevision: 1,
+      actorMappingRevision: 1,
+      staff: staff.map((id) => ({ id, role: "pricing" })),
+    });
+    const post = (body: any) =>
+      jobWorkspace(
+        db,
+        actor,
+        new Request("http://localhost/workflow-jobs", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        transport,
+      );
+    for (const line of lines.slice(0, 2)) {
+      const q = await get();
+      const body = {
+        action: "known",
+        eventId: randomUUID(),
+        documentId: id,
+        lineId: line.input.watcherEventId,
+        version: q.version,
+        workflowVersion: q.workflowVersion,
+        cost,
+      };
+      await post(body);
+      await post(body); // The same command survives quote-version changes.
     }
     const tokens: string[] = [];
     for (let n = 0; n < 2; n++) {
-      const q = await get(); const token = randomUUID(); tokens.push(token);
-      const body = { branchId: 'amt', ownerMappingRevision: 1, actorMappingRevision: 1, action: 'assign', eventId: token, documentId: id, version: q.version, workflowVersion: q.workflowVersion, kind: 'PRICING', selected: lines.slice(2+n*4,6+n*4).map(l => l.input.watcherEventId), assignee: staff[n], shops: 'ABC Trading', notes: 'Confirm 400W model', due: '', noDueReason: 'Customer has not confirmed a deadline' };
-      await post(body); await post(body);
+      const q = await get();
+      const token = randomUUID();
+      tokens.push(token);
+      const body = {
+        branchId: "amt",
+        ownerMappingRevision: 1,
+        actorMappingRevision: 1,
+        action: "assign",
+        eventId: token,
+        documentId: id,
+        version: q.version,
+        workflowVersion: q.workflowVersion,
+        kind: "PRICING",
+        selected: lines
+          .slice(2 + n * 4, 6 + n * 4)
+          .map((l) => l.input.watcherEventId),
+        assignee: staff[n],
+        shops: "ABC Trading",
+        notes: "Confirm 400W model",
+        due: "",
+        noDueReason: "Customer has not confirmed a deadline",
+      };
+      await post(body);
+      await post(body);
     }
-    assert.equal((await one(db, "SELECT count(*)::int n FROM sw_job_outbox WHERE endpoint='jobs-assign'"))!.n, 2);
-    await assert.rejects(assertWorkflowPricingReady(db, (await one(db, 'SELECT * FROM quotations WHERE id=$1', [id]))!), /Finish or review/);
-    const key = (await adminCommand(db, { app: 'pricelist' }, actor.id, { action: 'generate', name: 'ERP results', scopes: ['jobs:results'], expires: new Date(Date.now()+86400000).toISOString() })).key;
-    const send = (body: any) => receiveJobResult(db, new Request('http://localhost/jobs-result', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: JSON.stringify(body) }));
+    assert.equal(
+      (await one(
+        db,
+        "SELECT count(*)::int n FROM sw_job_outbox WHERE endpoint='jobs-assign'",
+      ))!.n,
+      2,
+    );
+    await assert.rejects(
+      assertWorkflowPricingReady(
+        db,
+        (await one(db, "SELECT * FROM quotations WHERE id=$1", [id]))!,
+      ),
+      /Finish or review/,
+    );
+    const key = (
+      await adminCommand(db, { app: "pricelist" }, actor.id, {
+        action: "generate",
+        name: "ERP results",
+        scopes: ["jobs:results"],
+        expires: new Date(Date.now() + 86400000).toISOString(),
+      })
+    ).key;
+    const send = (body: any) =>
+      receiveJobResult(
+        db,
+        new Request("http://localhost/jobs-result", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}` },
+          body: JSON.stringify(body),
+        }),
+      );
     let last: any;
     for (let n = 2; n < 10; n++) {
-      const payload = { eventId: randomUUID(), documentId: id, lineId: lines[n].input.watcherEventId, token: tokens[n < 6 ? 0 : 1], revision: n+1, kind: 'PRICING', fingerprint: lineFingerprint(lines[n]), done: true, blocker: '', actorName: n < 6 ? 'Ahmed' : 'Ravi', updatedAt: new Date().toISOString(), cost };
-      last = await send(payload); assert.deepEqual(await send(payload), last);
+      const payload = {
+        eventId: randomUUID(),
+        documentId: id,
+        lineId: lines[n].input.watcherEventId,
+        token: tokens[n < 6 ? 0 : 1],
+        revision: n + 1,
+        kind: "PRICING",
+        fingerprint: lineFingerprint(lines[n]),
+        done: true,
+        blocker: "",
+        actorName: n < 6 ? "Ahmed" : "Ravi",
+        updatedAt: new Date().toISOString(),
+        cost,
+      };
+      last = await send(payload);
+      assert.deepEqual(await send(payload), last);
       if (n < 9) assert.equal(last.ready, false);
     }
-    assert.equal(last.ready, true); assert.equal(last.count, 10);
-    const q = (await one(db, 'SELECT * FROM quotations WHERE id=$1', [id]))!;
-    assert(q.lines.every((l: any) => l.workflowCost.cost === '42.50' && l.price.finalExcl === '100'));
-    assert.equal(q.lines[2].workflowCost.actorName, 'Ahmed');
+    assert.equal(last.ready, true);
+    assert.equal(last.count, 10);
+    const q = (await one(db, "SELECT * FROM quotations WHERE id=$1", [id]))!;
+    assert(
+      q.lines.every(
+        (l: any) =>
+          l.workflowCost.cost === "42.50" && l.price.finalExcl === "100",
+      ),
+    );
+    assert.equal(q.lines[2].workflowCost.actorName, "Ahmed");
     await assertWorkflowPricingReady(db, q);
-    const rebuilt = preserveWorkflowCosts(q.lines.map((l: any) => ({ ...l, workflowCost: undefined })).reverse(), q.lines);
-    assert.equal(rebuilt[0].workflowCost.actorName, 'Ravi');
-    const stranger = { ...actor, id: randomUUID(), role: 'SALES', permissions: ['QUOTE_EDIT'] };
-    await assert.rejects(jobWorkspace(db, stranger, new Request(`http://localhost/workflow-jobs?documentId=${id}`)), /belongs to another/);
+    const rebuilt = preserveWorkflowCosts(
+      q.lines.map((l: any) => ({ ...l, workflowCost: undefined })).reverse(),
+      q.lines,
+    );
+    assert.equal(rebuilt[0].workflowCost.actorName, "Ravi");
+    const stranger = {
+      ...actor,
+      id: randomUUID(),
+      role: "SALES",
+      permissions: ["QUOTE_EDIT"],
+    };
+    await assert.rejects(
+      jobWorkspace(
+        db,
+        stranger,
+        new Request(`http://localhost/workflow-jobs?documentId=${id}`),
+      ),
+      /belongs to another/,
+    );
     await db.query("UPDATE quotations SET status='ISSUED' WHERE id=$1", [id]);
-    await send({ eventId: randomUUID(), documentId: id, lineId: lines[2].input.watcherEventId, token: tokens[0], revision: 100, kind: 'PRICING', fingerprint: lineFingerprint(lines[2]), done: true, blocker: '', actorName: 'Ahmed', updatedAt: new Date().toISOString(), cost: { ...cost, cost: '999' } });
-    const frozen = (await one(db, 'SELECT lines FROM quotations WHERE id=$1', [id]))!;
-    assert.equal(frozen.lines[2].workflowCost.cost, '42.50');
-    assert.equal((await get()).lines[2].jobs.PRICING.status, 'REVIEW_REQUIRED');
+    await send({
+      eventId: randomUUID(),
+      documentId: id,
+      lineId: lines[2].input.watcherEventId,
+      token: tokens[0],
+      revision: 100,
+      kind: "PRICING",
+      fingerprint: lineFingerprint(lines[2]),
+      done: true,
+      blocker: "",
+      actorName: "Ahmed",
+      updatedAt: new Date().toISOString(),
+      cost: { ...cost, cost: "999" },
+    });
+    const frozen = (await one(db, "SELECT lines FROM quotations WHERE id=$1", [
+      id,
+    ]))!;
+    assert.equal(frozen.lines[2].workflowCost.cost, "42.50");
+    assert.equal((await get()).lines[2].jobs.PRICING.status, "REVIEW_REQUIRED");
+    const order = {
+      id: randomUUID(),
+      mode: "ORDER_CONFIRMED",
+      quantities: Object.fromEntries(
+        lines.map((l) => [l.input.watcherEventId, "10"]),
+      ),
+      suppliers: Object.fromEntries(
+        lines.map((l) => [l.input.watcherEventId, "Shop A"]),
+      ),
+    };
+    const before = await get();
+    const create = {
+      action: "createOrder",
+      eventId: randomUUID(),
+      documentId: id,
+      version: before.version,
+      workflowVersion: before.workflowVersion,
+      authorized: true,
+      order,
+      poNumber: "PO-TEST",
+    };
+    await post(create);
+    await post(create);
+    assert.equal((await get()).collectionOrders.length, 1);
+    for (let n = 0; n < 2; n++) {
+      const d = await get();
+      const body = {
+        action: "assign",
+        eventId: randomUUID(),
+        documentId: id,
+        version: d.version,
+        workflowVersion: d.workflowVersion,
+        kind: "COLLECTION",
+        orderId: order.id,
+        ownerMappingRevision:1,actorMappingRevision:1,branchId: "amt",
+        selected: lines
+          .slice(n * 5, n * 5 + 5)
+          .map((l) => l.input.watcherEventId),
+        assignee: staff[n],
+        quantities: order.quantities,
+        noDueReason: "Unknown",
+        notes: "Pickup",
+      };
+      await post(body);
+      await post(body);
+    }
+    const outgoing = (
+      await db.query(
+        "SELECT payload FROM sw_job_outbox WHERE endpoint='jobs-assign' AND payload->>'kind'='COLLECTION'",
+      )
+    ).rows;
+    assert.equal(outgoing.length, 2);
+    assert(outgoing.every((row: any) => row.payload.order.id === order.id));
+    assert.equal(
+      (await get()).lines.filter((l: any) => l.jobs.COLLECTION).length,
+      10,
+    );
     assert.equal(hash({ a: 1, b: 2 }), hash({ b: 2, a: 1 }));
-  } finally { await db.close?.(); }
+  } finally {
+    await db.close?.();
+  }
 });
 
-test('WhatsApp outbox retains unknown delivery, retries missing phones and never sends an accepted event twice', async () => {
+test("WhatsApp outbox retains unknown delivery, retries missing phones and never sends an accepted event twice", async () => {
   const db = await embedded();
   try {
-    await migrate(db); let sends = 0;
-    await enqueue(db, 'notice-a', 'whatsapp', { recipient: 'staff', message: 'New job' }, 'WHATSAPP');
-    await deliver(db, 'WHATSAPP', async () => { sends++; return true; });
-    await deliver(db, 'WHATSAPP', async () => { sends++; return true; }); assert.equal(sends,1);
-    await enqueue(db, 'notice-b', 'whatsapp', {}, 'WHATSAPP');
-    await deliver(db, 'WHATSAPP', async () => { throw new Error('Timeout'); });
-    assert.equal((await one(db, "SELECT state FROM sw_job_outbox WHERE id='notice-b'"))!.state, 'DELIVERY_UNKNOWN');
-    await deliver(db, 'WHATSAPP', async () => { throw new Error('Must not automatically resend'); });
-    await enqueue(db, 'notice-c', 'whatsapp', {}, 'WHATSAPP');
-    await deliver(db, 'WHATSAPP', async () => { throw Object.assign(new Error('No phone'), { code: 'MISSING_PHONE' }); });
-    assert.equal((await one(db, "SELECT state FROM sw_job_outbox WHERE id='notice-c'"))!.state, 'FAILED');
-  } finally { await db.close?.(); }
+    await migrate(db);
+    let sends = 0;
+    await enqueue(
+      db,
+      "notice-a",
+      "whatsapp",
+      { recipient: "staff", message: "New job" },
+      "WHATSAPP",
+    );
+    await deliver(db, "WHATSAPP", async () => {
+      sends++;
+      return true;
+    });
+    await deliver(db, "WHATSAPP", async () => {
+      sends++;
+      return true;
+    });
+    assert.equal(sends, 1);
+    await enqueue(db, "notice-b", "whatsapp", {}, "WHATSAPP");
+    await deliver(db, "WHATSAPP", async () => {
+      throw new Error("Timeout");
+    });
+    assert.equal(
+      (await one(db, "SELECT state FROM sw_job_outbox WHERE id='notice-b'"))!
+        .state,
+      "DELIVERY_UNKNOWN",
+    );
+    await deliver(db, "WHATSAPP", async () => {
+      throw new Error("Must not automatically resend");
+    });
+    await enqueue(db, "notice-c", "whatsapp", {}, "WHATSAPP");
+    await deliver(db, "WHATSAPP", async () => {
+      throw Object.assign(new Error("No phone"), { code: "MISSING_PHONE" });
+    });
+    assert.equal(
+      (await one(db, "SELECT state FROM sw_job_outbox WHERE id='notice-c'"))!
+        .state,
+      "FAILED",
+    );
+  } finally {
+    await db.close?.();
+  }
 });
 
-test('workflow-jobs workspace: filtering by status and owner for admin and normal users', async () => {
+test("workflow-jobs workspace: filtering by status and owner for admin and normal users", async () => {
   const db = await embedded();
   try {
-    await migrate(db); process.env.SETUP_TOKEN = 'workflow-test-token-long-enough-32';
-    await setup(db, { token: process.env.SETUP_TOKEN, username: 'adminuser', password: 'password123', name: 'Admin User', companyName: 'Pilot' });
-    const adminSession = await login(db, { username: 'adminuser', password: 'password123' });
-    const admin = await authenticate(db, new Request('http://localhost', { headers: { Cookie: sessionCookie(adminSession.token).split(';')[0] } }));
+    await migrate(db);
+    process.env.SETUP_TOKEN = "workflow-test-token-long-enough-32";
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "adminuser",
+      password: "password123",
+      name: "Admin User",
+      companyName: "Pilot",
+    });
+    const adminSession = await login(db, {
+      username: "adminuser",
+      password: "password123",
+    });
+    const admin = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(adminSession.token).split(";")[0] },
+      }),
+    );
 
     // Create a staff user
     const staffId = randomUUID();
-    await db.query("INSERT INTO users(id,username,name,password_hash,role_id) VALUES($1,'staffuser','Staff Member','dummy','STAFF')", [staffId]);
-    const staff: Actor = { id: staffId, username: 'staffuser', name: 'Staff Member', role: 'STAFF', permissions: ['QUOTE_EDIT'], maxDiscount: '10', csrf: 'csrf' };
+    await db.query(
+      "INSERT INTO users(id,username,name,password_hash,role_id) VALUES($1,'staffuser','Staff Member','dummy','STAFF')",
+      [staffId],
+    );
+    const staff: Actor = {
+      id: staffId,
+      username: "staffuser",
+      name: "Staff Member",
+      role: "STAFF",
+      permissions: ["QUOTE_EDIT"],
+      maxDiscount: "10",
+      csrf: "csrf",
+    };
 
     // Insert quotations: Admin draft & issued, Staff draft & issued
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'ADMIN-DRAFT','DRAFT',$2,'{\"name\":\"Cust 1\"}','[]','{}')", [randomUUID(), admin.id]);
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'ADMIN-ISSUED','ISSUED',$2,'{\"name\":\"Cust 2\"}','[]','{}')", [randomUUID(), admin.id]);
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'STAFF-DRAFT','DRAFT',$2,'{\"name\":\"Cust 3\"}','[]','{}')", [randomUUID(), staff.id]);
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'STAFF-ISSUED','ISSUED',$2,'{\"name\":\"Cust 4\"}','[]','{}')", [randomUUID(), staff.id]);
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'ADMIN-DRAFT','DRAFT',$2,'{\"name\":\"Cust 1\"}','[]','{}')",
+      [randomUUID(), admin.id],
+    );
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'ADMIN-ISSUED','ISSUED',$2,'{\"name\":\"Cust 2\"}','[]','{}')",
+      [randomUUID(), admin.id],
+    );
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'STAFF-DRAFT','DRAFT',$2,'{\"name\":\"Cust 3\"}','[]','{}')",
+      [randomUUID(), staff.id],
+    );
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'STAFF-ISSUED','ISSUED',$2,'{\"name\":\"Cust 4\"}','[]','{}')",
+      [randomUUID(), staff.id],
+    );
 
     // 1. Normal user query: default status=DRAFT returns only staff draft
-    const staffDrafts: any = await jobWorkspace(db, staff, new Request('http://localhost/workflow-jobs?status=DRAFT'));
+    const staffDrafts: any = await jobWorkspace(
+      db,
+      staff,
+      new Request("http://localhost/workflow-jobs?status=DRAFT"),
+    );
     assert.equal(staffDrafts.isAdmin, false);
     assert.deepEqual(staffDrafts.creators, []);
     assert.equal(staffDrafts.rows.length, 1);
-    assert.equal(staffDrafts.rows[0].number, 'STAFF-DRAFT');
+    assert.equal(staffDrafts.rows[0].number, "STAFF-DRAFT");
 
     // 2. Normal user query: status=ALL returns both staff draft and staff issued, none of admin's
-    const staffAll: any = await jobWorkspace(db, staff, new Request('http://localhost/workflow-jobs?status=ALL'));
+    const staffAll: any = await jobWorkspace(
+      db,
+      staff,
+      new Request("http://localhost/workflow-jobs?status=ALL"),
+    );
     assert.equal(staffAll.rows.length, 2);
     assert(staffAll.rows.every((r: any) => r.ownerId === staff.id));
 
     // 3. Admin query: owner=me and status=DRAFT returns only admin draft
-    const adminMyDrafts: any = await jobWorkspace(db, admin, new Request('http://localhost/workflow-jobs?status=DRAFT&owner=me'));
+    const adminMyDrafts: any = await jobWorkspace(
+      db,
+      admin,
+      new Request("http://localhost/workflow-jobs?status=DRAFT&owner=me"),
+    );
     assert.equal(adminMyDrafts.isAdmin, true);
     assert(adminMyDrafts.creators.length >= 2);
     assert.equal(adminMyDrafts.rows.length, 1);
-    assert.equal(adminMyDrafts.rows[0].number, 'ADMIN-DRAFT');
+    assert.equal(adminMyDrafts.rows[0].number, "ADMIN-DRAFT");
 
     // 4. Admin query: owner=all and status=DRAFT returns both admin draft and staff draft
-    const allDrafts: any = await jobWorkspace(db, admin, new Request('http://localhost/workflow-jobs?status=DRAFT&owner=all'));
+    const allDrafts: any = await jobWorkspace(
+      db,
+      admin,
+      new Request("http://localhost/workflow-jobs?status=DRAFT&owner=all"),
+    );
     assert.equal(allDrafts.rows.length, 2);
     const draftNums = allDrafts.rows.map((r: any) => r.number).sort();
-    assert.deepEqual(draftNums, ['ADMIN-DRAFT', 'STAFF-DRAFT']);
+    assert.deepEqual(draftNums, ["ADMIN-DRAFT", "STAFF-DRAFT"]);
 
     // 5. Admin query: filter by specific user (staffId)
-    const staffByAdmin: any = await jobWorkspace(db, admin, new Request(`http://localhost/workflow-jobs?status=DRAFT&owner=${staffId}`));
+    const staffByAdmin: any = await jobWorkspace(
+      db,
+      admin,
+      new Request(
+        `http://localhost/workflow-jobs?status=DRAFT&owner=${staffId}`,
+      ),
+    );
     assert.equal(staffByAdmin.rows.length, 1);
-    assert.equal(staffByAdmin.rows[0].number, 'STAFF-DRAFT');
+    assert.equal(staffByAdmin.rows[0].number, "STAFF-DRAFT");
 
     // 6. Admin query: all users, all statuses returns all 4 quotes
-    const allQuotes: any = await jobWorkspace(db, admin, new Request('http://localhost/workflow-jobs?status=ALL&owner=all'));
+    const allQuotes: any = await jobWorkspace(
+      db,
+      admin,
+      new Request("http://localhost/workflow-jobs?status=ALL&owner=all"),
+    );
     assert.equal(allQuotes.rows.length, 4);
-  } finally { await db.close?.(); }
+  } finally {
+    await db.close?.();
+  }
 });
 
-
-test('creator branch defaults persist, admins select before assignment, invalid staff and stale mapping fail', async () => {
-  const db=await embedded();
-  try {
-    await migrate(db); process.env.SETUP_TOKEN='workflow-test-token-long-enough-32';
-    await setup(db,{token:process.env.SETUP_TOKEN,username:'branchadmin',password:'abcd',name:'Branch Admin',companyName:'Test'});
-    const session=await login(db,{username:'branchadmin',password:'abcd'});
-    const actor=await authenticate(db,new Request('http://localhost',{headers:{Cookie:sessionCookie(session.token).split(';')[0]}}));
-    const id=randomUUID(), lineId=randomUUID();
-    const line={description:'Light',unit:'pcs',input:{watcherEventId:lineId,quantity:'10'},price:{quantity:'10',finalExcl:'100'}};
-    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'BRANCH-DRAFT','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')",[id,actor.id,JSON.stringify([line])]);
-    let revision=1; let offline=false;
-    const transport=async (_config:any,path:string)=>{
-      if(offline) throw new Error('ERP offline');
-      const params=new URL(`https://erp.test/${path}`).searchParams;
-      assert.equal(params.get('owner'),actor.id);assert.equal(params.get('actor'),actor.id);
-      const branchId=params.get('branchId')||'amt';assert(['amt','factory'].includes(branchId));
-      return {branchId,branchName:branchId,branches:[{id:'amt',name:'AMT'},{id:'factory',name:'Factory'}],staff:[{id:`staff-${branchId}`,role:'pricing'}],ownerMappingRevision:revision,actorMappingRevision:revision,readiness:{authenticated:true,mapped:true}};
-    };
-    const get=()=>jobWorkspace(db,actor,new Request(`http://localhost/workflow-jobs?documentId=${id}`),transport);
-    const context=()=>jobWorkspace(db,actor,new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`),transport);
-    const post=async(body:any)=>{const q=await get();return jobWorkspace(db,actor,new Request('http://localhost/workflow-jobs',{method:'POST',body:JSON.stringify({eventId:randomUUID(),documentId:id,version:q.version,workflowVersion:q.workflowVersion,...body})}),transport);};
-    await get();assert.equal((await context()).branchId,'amt');
-    assert.equal((await get()).branchId,'amt');
-    await post({action:'branch',branchId:'factory'});assert.equal((await context()).branchId,'factory');
-    const assignment={action:'assign',branchId:'factory',ownerMappingRevision:1,actorMappingRevision:1,kind:'PRICING',assignee:'staff-factory',selected:[lineId],noDueReason:'Not confirmed'};
-    await assert.rejects(post({...assignment,assignee:'staff-amt'}),/eligible staff/);
-    revision=2;await assert.rejects(post(assignment),/mapping changed/);
-    await post({...assignment,ownerMappingRevision:2,actorMappingRevision:2});
-    await assert.rejects(post({action:'branch',branchId:'amt'}),/locked/);
-    offline=true;assert.match((await context()).error,/ERP offline/);assert.equal((await get()).id,id);
-    const q=await get();assert.match(q.creator.reference,/^PLU-[0-9]+$/);assert.equal(q.creator.name,'Branch Admin');
-    await db.query("UPDATE users SET name='Renamed' WHERE id=$1",[actor.id]);assert.equal((await get()).creator.reference,q.creator.reference);
-    const outbox=(await one(db,"SELECT payload FROM sw_job_outbox WHERE endpoint='jobs-assign'"))!.payload;
-    assert.equal(outbox.branchId,'factory');assert.equal(outbox.ownerId,actor.id);
-  } finally {await db.close?.();}
-});
-
-test('user directory is scoped, paginated and contains unique readable references without private fields', async()=>{
-  const db=await embedded();
+test("creator branch defaults persist, admins select before assignment, invalid staff and stale mapping fail", async () => {
+  const db = await embedded();
   try {
     await migrate(db);
-    await db.query("INSERT INTO roles(id,permissions,max_discount) VALUES('STAFF','{}',0)");
-    for(let n=0;n<203;n++) await db.query("INSERT INTO users(id,username,name,password_hash,role_id,disabled) VALUES($1,$2,$3,'secret-hash','STAFF',$4)",[randomUUID(),`person${n}`,`Person ${n}`,n===0]);
-    const key=(await adminCommand(db,{app:'pricelist'},'admin',{action:'generate',name:'Directory',scopes:['users:read'],expires:new Date(Date.now()+86400000).toISOString()})).key;
-    const catalogKey=(await adminCommand(db,{app:'pricelist'},'admin',{action:'generate',name:'Catalog',scopes:['catalog:read'],expires:new Date(Date.now()+86400000).toISOString()})).key;
-    assert(key && catalogKey);
-    const call=(token:string,after='')=>integrationPublic(db,new Request(`https://price.test/users?after=${after}`,{headers:{Authorization:`Bearer ${token}`}}),'users');
-    assert.equal((await call(catalogKey)).status,401);
-    const first=await(await call(key)).json();assert.equal(first.users.length,200);assert(first.next);
-    const second=await(await call(key,first.next)).json();assert.equal(second.users.length,3);assert.equal(second.next,null);
-    const users=[...first.users,...second.users];assert.equal(new Set(users.map(u=>u.reference)).size,203);
-    assert(users.every(u=>/^PLU-[0-9]+$/.test(u.reference)));assert(users.some(u=>u.active===false));
-    assert(!JSON.stringify(users).includes('secret-hash'));assert.deepEqual(Object.keys(users[0]).sort(),['active','id','name','reference','username']);
-    await migrate(db);assert.deepEqual((await(await call(key)).json()).users,first.users);
-  }finally{await db.close?.();}
+    process.env.SETUP_TOKEN = "workflow-test-token-long-enough-32";
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "branchadmin",
+      password: "abcd",
+      name: "Branch Admin",
+      companyName: "Test",
+    });
+    const session = await login(db, {
+      username: "branchadmin",
+      password: "abcd",
+    });
+    const actor = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(session.token).split(";")[0] },
+      }),
+    );
+    const id = randomUUID(),
+      lineId = randomUUID();
+    const line = {
+      description: "Light",
+      unit: "pcs",
+      input: { watcherEventId: lineId, quantity: "10" },
+      price: { quantity: "10", finalExcl: "100" },
+    };
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'BRANCH-DRAFT','DRAFT',$2,'{\"name\":\"Customer\"}',$3::jsonb,'{}')",
+      [id, actor.id, JSON.stringify([line])],
+    );
+    let revision = 1;
+    let offline = false;
+    const transport = async (_config: any, path: string) => {
+      if (offline) throw new Error("ERP offline");
+      const params = new URL(`https://erp.test/${path}`).searchParams;
+      assert.equal(params.get("owner"), actor.id);
+      assert.equal(params.get("actor"), actor.id);
+      const branchId = params.get("branchId") || "amt";
+      assert(["amt", "factory"].includes(branchId));
+      return {
+        branchId,
+        branchName: branchId,
+        branches: [
+          { id: "amt", name: "AMT" },
+          { id: "factory", name: "Factory" },
+        ],
+        staff: [{ id: `staff-${branchId}`, role: "pricing" }],
+        ownerMappingRevision: revision,
+        actorMappingRevision: revision,
+        readiness: { authenticated: true, mapped: true },
+      };
+    };
+    const get = () =>
+      jobWorkspace(
+        db,
+        actor,
+        new Request(`http://localhost/workflow-jobs?documentId=${id}`),
+        transport,
+      );
+    const context = () =>
+      jobWorkspace(
+        db,
+        actor,
+        new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`),
+        transport,
+      );
+    const post = async (body: any) => {
+      const q = await get();
+      return jobWorkspace(
+        db,
+        actor,
+        new Request("http://localhost/workflow-jobs", {
+          method: "POST",
+          body: JSON.stringify({
+            eventId: randomUUID(),
+            documentId: id,
+            version: q.version,
+            workflowVersion: q.workflowVersion,
+            ...body,
+          }),
+        }),
+        transport,
+      );
+    };
+    await get();
+    assert.equal((await context()).branchId, "amt");
+    assert.equal((await get()).branchId, "amt");
+    await post({ action: "branch", branchId: "factory" });
+    assert.equal((await context()).branchId, "factory");
+    const assignment = {
+      action: "assign",
+      branchId: "factory",
+      ownerMappingRevision: 1,
+      actorMappingRevision: 1,
+      kind: "PRICING",
+      assignee: "staff-factory",
+      selected: [lineId],
+      noDueReason: "Not confirmed",
+    };
+    await assert.rejects(
+      post({ ...assignment, assignee: "staff-amt" }),
+      /eligible staff/,
+    );
+    revision = 2;
+    await assert.rejects(post(assignment), /mapping changed/);
+    await post({
+      ...assignment,
+      ownerMappingRevision: 2,
+      actorMappingRevision: 2,
+    });
+    await assert.rejects(post({ action: "branch", branchId: "amt" }), /locked/);
+    offline = true;
+    assert.match((await context()).error, /ERP offline/);
+    assert.equal((await get()).id, id);
+    const q = await get();
+    assert.match(q.creator.reference, /^PLU-[0-9]+$/);
+    assert.equal(q.creator.name, "Branch Admin");
+    await db.query("UPDATE users SET name='Renamed' WHERE id=$1", [actor.id]);
+    assert.equal((await get()).creator.reference, q.creator.reference);
+    const outbox = (await one(
+      db,
+      "SELECT payload FROM sw_job_outbox WHERE endpoint='jobs-assign'",
+    ))!.payload;
+    assert.equal(outbox.branchId, "factory");
+    assert.equal(outbox.ownerId, actor.id);
+  } finally {
+    await db.close?.();
+  }
 });
 
+test("user directory is scoped, paginated and contains unique readable references without private fields", async () => {
+  const db = await embedded();
+  try {
+    await migrate(db);
+    await db.query(
+      "INSERT INTO roles(id,permissions,max_discount) VALUES('STAFF','{}',0)",
+    );
+    for (let n = 0; n < 203; n++)
+      await db.query(
+        "INSERT INTO users(id,username,name,password_hash,role_id,disabled) VALUES($1,$2,$3,'secret-hash','STAFF',$4)",
+        [randomUUID(), `person${n}`, `Person ${n}`, n === 0],
+      );
+    const key = (
+      await adminCommand(db, { app: "pricelist" }, "admin", {
+        action: "generate",
+        name: "Directory",
+        scopes: ["users:read"],
+        expires: new Date(Date.now() + 86400000).toISOString(),
+      })
+    ).key;
+    const catalogKey = (
+      await adminCommand(db, { app: "pricelist" }, "admin", {
+        action: "generate",
+        name: "Catalog",
+        scopes: ["catalog:read"],
+        expires: new Date(Date.now() + 86400000).toISOString(),
+      })
+    ).key;
+    assert(key && catalogKey);
+    const call = (token: string, after = "") =>
+      integrationPublic(
+        db,
+        new Request(`https://price.test/users?after=${after}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        "users",
+      );
+    assert.equal((await call(catalogKey)).status, 401);
+    const first = await (await call(key)).json();
+    assert.equal(first.users.length, 200);
+    assert(first.next);
+    const second = await (await call(key, first.next)).json();
+    assert.equal(second.users.length, 3);
+    assert.equal(second.next, null);
+    const users = [...first.users, ...second.users];
+    assert.equal(new Set(users.map((u) => u.reference)).size, 203);
+    assert(users.every((u) => /^PLU-[0-9]+$/.test(u.reference)));
+    assert(users.some((u) => u.active === false));
+    assert(!JSON.stringify(users).includes("secret-hash"));
+    assert.deepEqual(Object.keys(users[0]).sort(), [
+      "active",
+      "id",
+      "name",
+      "reference",
+      "username",
+    ]);
+    await migrate(db);
+    assert.deepEqual((await (await call(key)).json()).users, first.users);
+  } finally {
+    await db.close?.();
+  }
+});
 
-test('failed staff responses preserve document mappings; corrected response loads the branch staff',async()=>{
- const db=await embedded();
- try{
-  await migrate(db);process.env.SETUP_TOKEN='staff-response-test-token-long-enough';
-  await setup(db,{token:process.env.SETUP_TOKEN,username:'staffrepair',password:'abcd',name:'Creator',companyName:'Pilot'});
-  const session=await login(db,{username:'staffrepair',password:'abcd'});
-  const actor=await authenticate(db,new Request('http://localhost',{headers:{Cookie:sessionCookie(session.token).split(';')[0]}}));
-  const id=randomUUID();await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-0049','DRAFT',$2,'{}','[]','{}')",[id,actor.id]);
-  const mapping={branchId:'amt',branchName:'AMT',lines:{}};
-  await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2)',[id,mapping]);
-  const request=()=>new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`);
-  const {parseRemoteResponse}=await import('../backend/integrations/core');
-  const malformed=await jobWorkspace(db,actor,request(),async()=>parseRemoteResponse(200,'text/html','<html>login</html>'));
-  assert.equal(malformed.diagnostic.code,'ENDPOINT_REQUIRED');assert.equal(malformed.directoryLoaded,false);assert.match(malformed.error,/HTML page/);
-  assert.deepEqual((await one(db,'SELECT data FROM sw_job_documents WHERE id=$1',[id]))!.data,mapping);
-  const incompatible=await jobWorkspace(db,actor,request(),async()=>({app:'workflow'}));assert.equal(incompatible.diagnostic.code,'UPDATE_REQUIRED');
-  const context={branchId:'amt',branchName:'AMT',branches:[{id:'amt',name:'AMT'}],ownerMappingRevision:1,actorMappingRevision:1,staff:[{id:'erp-ahmed',name:'Ahmed'}],readiness:{creatorWhatsApp:true,assignerWhatsApp:true}};
-  const repaired=await jobWorkspace(db,actor,request(),async()=>context);assert.equal(repaired.staff[0].name,'Ahmed');assert.equal(repaired.branchId,'amt');assert.equal(repaired.error,undefined);
- }finally{await db.close?.();}
+test("failed staff responses preserve document mappings; corrected response loads the branch staff", async () => {
+  const db = await embedded();
+  try {
+    await migrate(db);
+    process.env.SETUP_TOKEN = "staff-response-test-token-long-enough";
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "staffrepair",
+      password: "abcd",
+      name: "Creator",
+      companyName: "Pilot",
+    });
+    const session = await login(db, {
+      username: "staffrepair",
+      password: "abcd",
+    });
+    const actor = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(session.token).split(";")[0] },
+      }),
+    );
+    const id = randomUUID();
+    await db.query(
+      "INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-0049','DRAFT',$2,'{}','[]','{}')",
+      [id, actor.id],
+    );
+    const mapping = { branchId: "amt", branchName: "AMT", lines: {} };
+    await db.query("INSERT INTO sw_job_documents(id,data) VALUES($1,$2)", [
+      id,
+      mapping,
+    ]);
+    const request = () =>
+      new Request(`http://localhost/workflow-jobs?staff=1&documentId=${id}`);
+    const { parseRemoteResponse } =
+      await import("../backend/integrations/core");
+    const malformed = await jobWorkspace(db, actor, request(), async () =>
+      parseRemoteResponse(200, "text/html", "<html>login</html>"),
+    );
+    assert.equal(malformed.diagnostic.code, "ENDPOINT_REQUIRED");
+    assert.equal(malformed.directoryLoaded, false);
+    assert.match(malformed.error, /HTML page/);
+    assert.deepEqual(
+      (await one(db, "SELECT data FROM sw_job_documents WHERE id=$1", [id]))!
+        .data,
+      mapping,
+    );
+    const incompatible = await jobWorkspace(db, actor, request(), async () => ({
+      app: "workflow",
+    }));
+    assert.equal(incompatible.diagnostic.code, "UPDATE_REQUIRED");
+    const context = {
+      branchId: "amt",
+      branchName: "AMT",
+      branches: [{ id: "amt", name: "AMT" }],
+      ownerMappingRevision: 1,
+      actorMappingRevision: 1,
+      staff: [{ id: "erp-ahmed", name: "Ahmed" }],
+      readiness: { creatorWhatsApp: true, assignerWhatsApp: true },
+    };
+    const repaired = await jobWorkspace(
+      db,
+      actor,
+      request(),
+      async () => context,
+    );
+    assert.equal(repaired.staff[0].name, "Ahmed");
+    assert.equal(repaired.branchId, "amt");
+    assert.equal(repaired.error, undefined);
+  } finally {
+    await db.close?.();
+  }
 });
