@@ -39,7 +39,7 @@ export default function WorkflowCostReference({
           : t("Tax basis not confirmed", "أساس الضريبة غير مؤكد");
   return (
     <div style={style}>
-      <strong>
+      <strong style={{ color: "#b91c1c" }}>
         {t("Cost price", "سعر التكلفة")}: {cost.currency} {String(cost.cost)}/
         {cost.unit} · {taxText}
       </strong>
