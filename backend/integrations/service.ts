@@ -233,6 +233,7 @@ export async function integrationPublic(db: DB, req: Request, path: string) {
       return Response.json({
         ...ready(q, link),
         status: q.status,
+        number: q.number,
         ownerId: q.owner_id,
         version: q.version,
         ownershipRevision: link.data.ownershipRevision || 0,
