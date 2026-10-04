@@ -168,6 +168,10 @@ export const priceHooks: Hooks = {
   },
 };
 export async function integrationPublic(db: DB, req: Request, path: string) {
+  if (path === 'jobs-quotation-update') {
+    try { const { receiveSharedQuotation } = await import('./shared-quotation'); return Response.json(await receiveSharedQuotation(db, req)); }
+    catch (e) { return Response.json({error: e instanceof Error ? e.message : 'Quotation synchronization failed'}, {status: e instanceof ConnectionError ? e.status : 400}); }
+  }
   if (path === "jobs-pickup" || path === "jobs-orders-update") {
     try {
       const { workflowEnabled, receipt } = await import("./job-protocol");

@@ -443,6 +443,8 @@ export async function saveDraft(
     if (id) {
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const old = await getQuote(tx, actor, id, true);
+      const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+      assert(!shared?.data.sharedQuotations?.length, 409, 'Open Pricing & Collection Jobs to edit the shared quotation in both apps');
       oldLines = old.lines;
       assert(["DRAFT", "REJECTED"].includes(old.status), 409, "Only draft or rejected quotations can be edited");
       assert(
@@ -551,6 +553,8 @@ export async function reviewIssue(
       "SELECT data FROM settings WHERE id=1 FOR SHARE",
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
+    const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+    assert(!shared?.data.sharedQuotations?.length, 409, 'Print the shared quotation from Pricing & Collection Jobs');
     await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
@@ -586,6 +590,8 @@ export async function issue(
     ))!.data;
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
+    const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+    assert(!shared?.data.sharedQuotations?.length, 409, 'Print the shared quotation from Pricing & Collection Jobs');
     await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");

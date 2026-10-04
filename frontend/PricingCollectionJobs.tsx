@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from "react";
 import { api } from "./api";
 import CollectionOrders from "./CollectionOrders";
+import SharedQuotation from "./SharedQuotation";
 
 export default function PricingCollectionJobs({
   documentId,
@@ -223,6 +224,7 @@ export default function PricingCollectionJobs({
         </div>
       )}
 
+      <SharedQuotation documentId={current || undefined}/>
       {!current ? (
         <>
           <nav
@@ -571,6 +573,7 @@ export default function PricingCollectionJobs({
             </button>
           </div>
 
+          <SharedQuotation documentId={current || undefined}/>
           {doc && (
             <>
               <h3>
