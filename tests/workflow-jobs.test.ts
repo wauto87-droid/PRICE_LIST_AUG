@@ -14,6 +14,7 @@ import {
   receiveJobResult,
   preserveWorkflowCosts,
   assertWorkflowPricingReady,
+  ready,
 } from "../backend/integrations/jobs";
 import { integrationPublic } from "../backend/integrations/service";
 import { adminCommand } from "../backend/integrations/core";
@@ -293,10 +294,66 @@ test("10-line draft: two known prices, split assignments, retries, returned cost
       (await get()).lines.filter((l: any) => l.jobs.COLLECTION).length,
       10,
     );
+    const deliveryState = await get();
+    const delivery = {
+      action: "orderAction",
+      operation: "orderDelivered",
+      eventId: randomUUID(),
+      documentId: id,
+      version: deliveryState.version,
+      workflowVersion: deliveryState.workflowVersion,
+      orderId: order.id,
+      selected: [lines[0].input.watcherEventId],
+      quantities: { [lines[0].input.watcherEventId]: "2" },
+      deliveryDate: "2026-10-04",
+      invoiceNumber: "INV-10",
+      deliveryNumber: "",
+      receivedConfirmed: true,
+    };
+    await post(delivery);
+    await post(delivery);
+    const deliveryCommands = (
+      await db.query(
+        "SELECT payload FROM sw_job_outbox WHERE endpoint='jobs-order-command' AND payload->>'action'='orderDelivered'",
+      )
+    ).rows;
+    assert.equal(deliveryCommands.length, 1);
+    assert.deepEqual(deliveryCommands[0].payload.selected, [
+      lines[0].input.watcherEventId,
+    ]);
+    assert.equal(deliveryCommands[0].payload.invoiceNumber, "INV-10");
     assert.equal(hash({ a: 1, b: 2 }), hash({ b: 2, a: 1 }));
   } finally {
     await db.close?.();
   }
+});
+
+test("cost-not-requested decisions complete pricing without inventing purchase cost", () => {
+  const line = {
+    description: "Special assembly",
+    unit: "pcs",
+    input: { watcherEventId: randomUUID(), quantity: "1" },
+    price: { finalExcl: "250", quantity: "1" },
+    workflowCostDecision: {
+      status: "NOT_REQUESTED",
+      reason: "Customer supplied item",
+    },
+  };
+  const q = { status: "DRAFT", lines: [line] };
+  const link = {
+    data: {
+      lines: {
+        [line.input.watcherEventId]: { PRICING: { status: "SKIPPED" } },
+      },
+    },
+  };
+  assert.equal(ready(q, link).ready, true);
+  const rebuilt = preserveWorkflowCosts(
+    [{ ...line, workflowCostDecision: undefined }],
+    [line],
+  );
+  assert.equal(rebuilt[0].workflowCostDecision.status, "NOT_REQUESTED");
+  assert.equal(rebuilt[0].workflowCost, undefined);
 });
 
 test("WhatsApp outbox retains unknown delivery, retries missing phones and never sends an accepted event twice", async () => {

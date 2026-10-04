@@ -296,7 +296,7 @@ export default function Quotations({
           )}
         </div>
       )}
-      {selected && <details><summary>Pricing & Collection Jobs for {selected.number}</summary><PricingCollectionJobs key={selected.id} documentId={selected.id} /></details>}
+      {selected && <details open><summary>Quotation workflow for {selected.number}</summary><PricingCollectionJobs key={selected.id} documentId={selected.id} onPrepareQuotation={() => document.getElementById("quotation-review-actions")?.scrollIntoView({ behavior: "smooth", block: "center" })} /></details>}
       {selected && (
         <div className="modal-backdrop">
           <section className="modal">
@@ -445,7 +445,7 @@ export default function Quotations({
               {t("Internal reference", "المرجع الداخلي")}:{" "}
               {selected.internalReference}
             </small>
-            <div className="actions wrap">
+            <div className="actions wrap" id="quotation-review-actions">
               {["DRAFT", "REJECTED", "APPROVED"].includes(selected.status) && (
                 <>
                   <button

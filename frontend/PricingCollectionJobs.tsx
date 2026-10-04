@@ -5,8 +5,10 @@ import CollectionOrders from "./CollectionOrders";
 
 export default function PricingCollectionJobs({
   documentId,
+  onPrepareQuotation,
 }: {
   documentId?: string;
+  onPrepareQuotation?: () => void;
 }) {
   const [rows, setRows] = useState<any[]>([]);
   const [current, setCurrent] = useState(documentId || "");
@@ -27,7 +29,7 @@ export default function PricingCollectionJobs({
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selected, setSelected] = useState<string[]>([]);
   const [version, setVersion] = useState<number>();
-  const retry = useRef<{ hash: string; id: string } | null>(null);
+  const retries = useRef<Record<string, { hash: string; id: string }>>({});
   const [workflowVersion, setWorkflowVersion] = useState<number>();
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -107,6 +109,8 @@ export default function PricingCollectionJobs({
     setError("");
     try {
       delete body.eventId;
+      const operationKey = String(body.operationKey || "default");
+      delete body.operationKey;
       const payload = {
         branchId: context?.branchId,
         ownerMappingRevision: context?.ownerMappingRevision,
@@ -118,13 +122,13 @@ export default function PricingCollectionJobs({
           body.workflowVersion ?? workflowVersion ?? doc.workflowVersion,
       };
       const hash = JSON.stringify(payload);
-      if (retry.current?.hash !== hash)
-        retry.current = { hash, id: crypto.randomUUID() };
+      if (retries.current[operationKey]?.hash !== hash)
+        retries.current[operationKey] = { hash, id: crypto.randomUUID() };
       const result = await api("workflow-jobs", "POST", {
         ...payload,
-        eventId: retry.current.id,
+        eventId: retries.current[operationKey].id,
       });
-      retry.current = null;
+      delete retries.current[operationKey];
       setMessage(
         result.ready
           ? "All prices ready for creator review."
@@ -689,20 +693,28 @@ export default function PricingCollectionJobs({
                 Creator: <strong>{doc.creator?.name}</strong> ·{" "}
                 <code>{doc.creator?.reference || "Reference pending"}</code>
               </p>
+              <nav aria-label="Quotation fulfilment progress" style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(110px,1fr))", overflowX: "auto", gap: 4, margin: "16px 0" }}>
+                {[
+                  ["PRICING", "1", "Price sourcing"],
+                  ["QUOTATION", "2", "Prepare quotation"],
+                  ["CUSTOMER_ORDER", "3", "Customer confirms"],
+                  ["ASSIGN_COLLECTION", "4", "Assign collection"],
+                  ["COLLECTION", "5", "Collect"],
+                  ["DELIVERY", "6", "Deliver / close"],
+                ].map(([stage, number, label], index, all) => {
+                  const currentStage = doc.presentation?.stage || (doc.status === "DRAFT" ? (doc.ready ? "QUOTATION" : "PRICING") : "CUSTOMER_ORDER");
+                  const currentIndex = Math.max(0, all.findIndex(([candidate]) => candidate === currentStage));
+                  const complete = currentStage === "CLOSED" || index < currentIndex;
+                  const active = index === currentIndex && currentStage !== "CLOSED";
+                  return <div key={stage} aria-current={active ? "step" : undefined} style={{ borderTop: `4px solid ${complete ? "#16a34a" : active ? "var(--primary, #0284c7)" : "#cbd5e1"}`, padding: "8px 6px", color: complete || active ? "#0f172a" : "#64748b", fontSize: 13 }}><strong>{complete ? "✓" : number}</strong> {label}</div>;
+                })}
+              </nav>
+              <div className="notice" role="status"><strong>Next:</strong> {doc.presentation?.nextAction || (doc.ready ? "Prepare quotation" : "Complete price decisions")}</div>
               {doc.status !== "DRAFT" && (
                 <CollectionOrders
                   doc={doc}
-                  selected={selected}
-                  quantities={quantities}
+                  staff={staff}
                   command={command}
-                  orderId={orderId}
-                  onOrder={(id) => {
-                    setOrderId(id);
-                    const order = doc.collectionOrders?.find(
-                      (o: any) => o.id === id,
-                    );
-                    if (order) setQuantities({ ...order.quantities });
-                  }}
                   busy={busy}
                 />
               )}
@@ -713,7 +725,12 @@ export default function PricingCollectionJobs({
                     ? "All supplier prices ready for review. Finalize from the quotation screen."
                     : "Pricing or review remains pending."}
               </p>
-              {doc.failures.map((f: any) => (
+              {doc.status === "DRAFT" && doc.ready && (
+                <button className="primary" type="button" onClick={onPrepareQuotation}>
+                  Prepare quotation
+                </button>
+              )}
+              {doc.failures.filter((f: any) => f.channel !== "WHATSAPP").map((f: any) => (
                 <p
                   key={f.id}
                   role="status"
@@ -723,8 +740,15 @@ export default function PricingCollectionJobs({
                   {f.error || "Waiting for ERP acknowledgement"}
                 </p>
               ))}
+              {doc.failures.some((f: any) => f.channel === "WHATSAPP") && (
+                <details>
+                  <summary>Notification warnings</summary>
+                  <p>WhatsApp delivery does not block ERP jobs or this workflow.</p>
+                  {doc.failures.filter((f: any) => f.channel === "WHATSAPP").map((f: any) => <p key={f.id}>{f.error || f.state}</p>)}
+                </details>
+              )}
 
-              <div style={{ overflowX: "auto", margin: "16px 0" }}>
+              {doc.status === "DRAFT" && <div style={{ overflowX: "auto", margin: "16px 0" }}>
                 <table>
                   <thead>
                     <tr>
@@ -842,20 +866,16 @@ export default function PricingCollectionJobs({
                               )}
                             </>
                           ) : (
-                            <span
-                              style={{ color: "#64748b", fontStyle: "italic" }}
-                            >
-                              Pending
-                            </span>
+                            l.workflowCostDecision?.status === "NOT_REQUESTED" ? <><strong>Cost not requested</strong><br /><small style={{ color: "#b45309" }}>Margin unavailable · {l.workflowCostDecision.reason}</small></> : <span style={{ color: "#64748b", fontStyle: "italic" }}>Pending</span>
                           )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>}
 
-              {doc.canAssign && context?.branchId && !context.error && (
+              {doc.status === "DRAFT" && doc.canAssign && context?.branchId && !context.error && !doc.ready && (
                 <>
                   <form
                     onSubmit={(e) => {
@@ -1263,6 +1283,14 @@ export default function PricingCollectionJobs({
                           </button>
                         </div>
                       </form>
+                      <hr />
+                      <button type="button" disabled={busy} onClick={() => {
+                        const reason = window.prompt("Why is supplier cost not required for this line?");
+                        if (reason) void command({ action: "skipCost", operationKey: `skip-cost:${selected[0]}`, lineId: selected[0], reason });
+                      }}>
+                        Cost not requested
+                      </button>
+                      <p><small style={{ color: "#b45309" }}>The quotation can continue, but purchase margin will be unavailable for this line.</small></p>
                     </details>
                   )}
                 </>

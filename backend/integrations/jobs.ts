@@ -89,18 +89,94 @@ export function ready(q: any, link: any) {
     q.lines.length > 0 &&
     q.lines.every((l: any) => {
       const job = link.data.lines[idFor(l)]?.PRICING;
-      return (
-        l.workflowCost?.fingerprint === lineFingerprint(l) &&
-        (!job || job.status === "COMPLETED" || job.status === "KNOWN")
-      );
+      return l.workflowCostDecision?.status === "NOT_REQUESTED"
+        ? !job || job.status === "SKIPPED"
+        : l.workflowCost?.fingerprint === lineFingerprint(l) &&
+            (!job || job.status === "COMPLETED" || job.status === "KNOWN");
     });
   return {
     complete,
     ready: complete && q.status === "DRAFT",
     count: q.lines.length,
     round: complete
-      ? hash(q.lines.map((l: any) => [idFor(l), l.workflowCost]))
+      ? hash(
+          q.lines.map((l: any) => [
+            idFor(l),
+            l.workflowCost,
+            l.workflowCostDecision,
+          ]),
+        )
       : null,
+  };
+}
+
+function workflowPresentation(q: any, link: any) {
+  const completion = ready(q, link);
+  const localOrders = link.data.collectionOrders || [];
+  const snapshots = link.data.orders || [];
+  const active = [...localOrders]
+    .reverse()
+    .find((o: any) => {
+      const state = snapshots.find((s: any) => s.id === o.id);
+      return !["DELIVERED", "CANCELLED"].includes(state?.status);
+    });
+  const state = active && snapshots.find((s: any) => s.id === active.id);
+  const available = (state?.lines || []).reduce(
+    (sum: Decimal, line: any) =>
+      sum.plus(new Decimal(line.availableToDeliver || "0")),
+    new Decimal(0),
+  );
+  const assigned = active
+    ? Object.keys(active.quantities || {}).every(
+        (id) => !!link.data.lines[id]?.collections?.[active.id],
+      )
+    : false;
+  const orderableQuantities = Object.fromEntries(
+    q.lines
+      .map((line: any) => {
+        const id = idFor(line);
+        const ordered = localOrders.reduce((sum: Decimal, order: any) => {
+          const snapshot = snapshots.find((state: any) => state.id === order.id);
+          return snapshot?.status === "CANCELLED"
+            ? sum
+            : sum.plus(order.quantities?.[id] || "0");
+        }, new Decimal(0));
+        const remaining = Decimal.max(
+          new Decimal(lineQuantity(line) || "0").minus(ordered),
+          0,
+        );
+        return [id, remaining.toFixed()];
+      })
+      .filter(([, quantity]: any) => new Decimal(quantity).gt(0)),
+  );
+  let stage = "PRICING";
+  if (q.status === "DRAFT" && completion.complete) stage = "QUOTATION";
+  if (q.status !== "DRAFT" && !active) stage = "CUSTOMER_ORDER";
+  if (active && !assigned) stage = "ASSIGN_COLLECTION";
+  if (active && assigned) stage = available.gt(0) ? "DELIVERY" : "COLLECTION";
+  if (
+    localOrders.length > 0 &&
+    localOrders.every((o: any) =>
+      ["DELIVERED", "CANCELLED"].includes(
+        snapshots.find((s: any) => s.id === o.id)?.status,
+      ),
+    )
+  )
+    stage = "CLOSED";
+  return {
+    stage,
+    nextAction: {
+      PRICING: "Complete price decisions",
+      QUOTATION: "Prepare quotation",
+      CUSTOMER_ORDER: "Customer confirmed — create collection list",
+      ASSIGN_COLLECTION: "Assign collection by supplier",
+      COLLECTION: "Track collection",
+      DELIVERY: "Confirm delivery",
+      CLOSED: "Workflow closed",
+    }[stage],
+    activeOrderId: active?.id || null,
+    deliveryAvailable: available.toFixed(),
+    orderableQuantities,
   };
 }
 function branchLocked(link: any) {
@@ -349,7 +425,7 @@ export async function jobWorkspace(
       const link = await prepare(tx, q);
       const failures = (
         await tx.query(
-          "SELECT id,state,error FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC",
+          "SELECT id,state,error,channel,endpoint FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC",
           [id],
         )
       ).rows;
@@ -374,6 +450,7 @@ export async function jobWorkspace(
         orders: link.data.orders || [],
         collectionOrders: link.data.collectionOrders || [],
         ...ready(q, link),
+        presentation: workflowPresentation(q, link),
         canOverride: actor.role === "ADMIN" && q.owner_id !== actor.id,
         handoverPending: !!link.data.handover,
         canAssign:
@@ -394,6 +471,7 @@ export async function jobWorkspace(
           ...(mayCost(actor, q)
             ? {
                 workflowCost: l.workflowCost,
+                workflowCostDecision: l.workflowCostDecision,
                 sellingPrice: l.price?.finalExcl,
                 margin:
                   l.workflowCost &&
@@ -497,7 +575,12 @@ export async function jobWorkspace(
       }
       if (input.action === "orderAction") {
         const op = z
-          .enum(["orderCancel", "orderConfirm", "orderEdit"])
+          .enum([
+            "orderCancel",
+            "orderConfirm",
+            "orderEdit",
+            "orderDelivered",
+          ])
           .parse(input.operation);
         check(
           (link.data.collectionOrders || []).some(
@@ -519,24 +602,47 @@ export async function jobWorkspace(
           );
           o.suppliers = { ...o.suppliers, ...changes };
         }
+        const order = (link.data.collectionOrders || []).find(
+          (o: any) => o.id === input.orderId,
+        );
+        const selected =
+          op === "orderEdit"
+            ? Object.keys(input.suppliers || {})
+            : op === "orderDelivered"
+              ? z.array(z.string().uuid()).min(1).parse(input.selected)
+              : Object.keys(order.quantities);
+        check(
+          selected.every((id: string) => order.quantities[id]),
+          "Choose valid order products",
+        );
+        if (op === "orderDelivered") {
+          z.object({
+            deliveryDate: z.string().min(1),
+            invoiceNumber: z.string().trim().max(500).default(""),
+            deliveryNumber: z.string().trim().max(500).default(""),
+            quantities: z.record(
+              z.string(),
+              z.string().regex(/^\d+(\.\d+)?$/),
+            ),
+            receivedConfirmed: z.literal(true),
+          })
+            .refine(
+              (value) => value.invoiceNumber || value.deliveryNumber,
+              "Invoice number or delivery number is required",
+            )
+            .parse(input);
+        }
         await enqueue(tx, commandId, "jobs-order-command", {
           ...input,
           action: op,
           actorId: actor.id,
           revision: link.data.erpRevision,
           authorized: input.authorized === true,
-          selected:
-            input.operation === "orderEdit"
-              ? Object.keys(input.suppliers || {})
-              : Object.keys(
-                  (link.data.collectionOrders || []).find(
-                    (o: any) => o.id === input.orderId,
-                  ).quantities,
-                ),
+          selected,
         });
       } else if (input.action === "createOrder") {
         check(
-          ["ISSUED", "ACCEPTED"].includes(q.status),
+          ["ISSUED", "SENT", "VIEWED", "ACCEPTED"].includes(q.status),
           "Issue quotation before creating an order",
         );
         check(input.authorized === true, "Explicit authorization required");
@@ -554,11 +660,28 @@ export async function jobWorkspace(
         );
         for (const [id, qty] of Object.entries(order.quantities)) {
           const l = q.lines.find((l: any) => idFor(l) === id);
+          const previouslyOrdered = (link.data.collectionOrders || []).reduce(
+            (sum: Decimal, previous: any) => {
+              const snapshot = (link.data.orders || []).find(
+                (state: any) => state.id === previous.id,
+              );
+              return snapshot?.status === "CANCELLED"
+                ? sum
+                : sum.plus(previous.quantities?.[id] || "0");
+            },
+            new Decimal(0),
+          );
           check(
             l &&
               new Decimal(qty).gt(0) &&
-              new Decimal(qty).lte(lineQuantity(l) || "0"),
+              previouslyOrdered
+                .plus(qty)
+                .lte(lineQuantity(l) || "0"),
             "Order quantity invalid or missing",
+          );
+          check(
+            String(order.suppliers[id] || l.workflowCost?.supplier || "").trim(),
+            "A planned pickup shop is required for every ordered product",
           );
         }
         check(
@@ -601,9 +724,40 @@ export async function jobWorkspace(
           actorId: actor.id,
           updatedAt: new Date().toISOString(),
         };
+        delete line.workflowCostDecision;
         link.data.lines[input.lineId] = {
           ...link.data.lines[input.lineId],
           PRICING: { status: "KNOWN", updatedAt: line.workflowCost.updatedAt },
+        };
+        await tx.query(
+          "UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",
+          [q.id, J(q.lines)],
+        );
+      } else if (input.action === "skipCost") {
+        check(q.status === "DRAFT", "Only editable drafts can skip cost", 409);
+        const line = q.lines.find((l: any) => idFor(l) === input.lineId);
+        check(line, "Line missing");
+        const job = link.data.lines[input.lineId]?.PRICING;
+        check(
+          !job || ["COMPLETED", "KNOWN", "REVIEW_REQUIRED", "SKIPPED"].includes(job.status),
+          "Finish or reassign the pending pricing job before skipping cost",
+          409,
+        );
+        const reason = z.string().trim().min(3).max(500).parse(input.reason);
+        delete line.workflowCost;
+        line.workflowCostDecision = {
+          status: "NOT_REQUESTED",
+          reason,
+          actorId: actor.id,
+          actorName: (actor as any).name || "Creator",
+          updatedAt: new Date().toISOString(),
+        };
+        link.data.lines[input.lineId] = {
+          ...link.data.lines[input.lineId],
+          PRICING: {
+            status: "SKIPPED",
+            updatedAt: line.workflowCostDecision.updatedAt,
+          },
         };
         await tx.query(
           "UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",
@@ -634,7 +788,7 @@ export async function jobWorkspace(
         check(
           kind === "PRICING"
             ? q.status === "DRAFT"
-            : ["ISSUED", "ACCEPTED"].includes(q.status),
+            : ["ISSUED", "SENT", "VIEWED", "ACCEPTED"].includes(q.status),
           kind === "PRICING"
             ? "Save an editable draft before assigning pricing"
             : "Issue the quotation before authorizing collection",
@@ -918,6 +1072,8 @@ export function preserveWorkflowCosts(lines: any[], oldLines: any[]) {
         ...previous.workflowCost,
         stale: previous.workflowCost.fingerprint !== lineFingerprint(line),
       };
+    if (previous?.workflowCostDecision)
+      line.workflowCostDecision = { ...previous.workflowCostDecision };
   }
   return lines;
 }
