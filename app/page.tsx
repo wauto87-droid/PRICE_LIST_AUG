@@ -38,6 +38,8 @@ export default function App() {
     if(!session||workflowOpened.current)return;
     const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');const requestId=params.get('workflowRequest');if(!id&&!requestId)return;
     workflowOpened.current=true;
+    const quotationVersion = Number(params.get('quotationVersion'));
+    if (quotationVersion > 0) { openSharedQuotation({ documentId: id || undefined, requestId: requestId || undefined, version: quotationVersion }); return; }
     if(params.get('view')==='jobs'||requestId){setTab('workflow-jobs');return;}
     api(`quotations/${encodeURIComponent(id!)}`).then(openQuote).catch(e=>setError(e.message));
   },[session]);
@@ -276,7 +278,17 @@ export default function App() {
     setCsrf("");
     setCart(emptyCart());
   }
+  const [workflowIdentity, setWorkflowIdentity] = useState<any>();
+  async function openSharedDraft(identity: any) {
+    try {
+      const query = identity.documentId ? 'documentId=' + encodeURIComponent(identity.documentId) : 'requestId=' + encodeURIComponent(identity.requestId);
+      const draft = await api('shared-quotation?' + query + '&draft=1');
+      setCart(draft); setWorkflowIdentity(undefined); setTab('draft');
+    } catch (e) { setMessage((e as Error).message); }
+  }
+  function openSharedQuotation(identity: any) { setWorkflowIdentity({ ...identity }); setTab('quotations'); }
   function openQuote(q: any) {
+    if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }); return; }
     setCart({
       id: q.id,
       version: q.version,
@@ -620,6 +632,7 @@ export default function App() {
                   settings={session.settings}
                   online={online}
                   onSaved={(q) => {
+                    if (q.sharedWorkflow) { openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }); setCart(emptyCart()); return; }
                     setCart(emptyCart());
                     setMessage(
                       t(
@@ -629,6 +642,7 @@ export default function App() {
                     );
                   }}
                   onTemplates={() => setTab("quotations")}
+                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId })}
                 />
                 <div className="actions footer-actions">
                   <button
@@ -683,13 +697,16 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "workflow-jobs" && <PricingCollectionJobs requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
+            {tab === "workflow-jobs" && <PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={openSharedQuotation} requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations
                   t={t}
                   user={session.user}
                   onOpen={openQuote}
+                  workflowIdentity={workflowIdentity}
+                  onCloseWorkflow={() => setWorkflowIdentity(undefined)}
+                  onOpenSharedDraft={identity => void openSharedDraft(identity)}
                   cart={cart}
                   onUseTemplate={(next, warning) => {
                     setCart(next);

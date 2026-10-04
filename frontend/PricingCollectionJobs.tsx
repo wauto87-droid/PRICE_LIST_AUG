@@ -7,10 +7,14 @@ export default function PricingCollectionJobs({
   documentId,
   requestId,
   quotationVersion,
+  onOpenDraft,
+  onOpenQuotation,
 }: {
   documentId?: string;
   requestId?: string;
   quotationVersion?: number;
+  onOpenDraft?: (identity: any) => void;
+  onOpenQuotation?: (identity: any) => void;
 }) {
   const [rows, setRows] = useState<any[]>([]);
   const [current, setCurrent] = useState(documentId || "");
@@ -25,7 +29,7 @@ export default function PricingCollectionJobs({
     Array<{ id: string; name: string; username: string }>
   >([]);
   const [ownerFilter, setOwnerFilter] = useState<string>("me");
-  const [orderId, setOrderId] = useState("");
+
   const [section, setSection] = useState<"DRAFT" | "QUOTATIONS">("DRAFT");
   const [statusFilter, setStatusFilter] = useState<string>("DRAFT");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -36,7 +40,7 @@ export default function PricingCollectionJobs({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [quantities, setQuantities] = useState<Record<string, string>>({});
+
 
   async function load(
     id = current,
@@ -227,7 +231,7 @@ export default function PricingCollectionJobs({
         </div>
       )}
 
-      {!current && <SharedQuotation initialRequestId={requestId} initialVersion={quotationVersion}/>}
+      {!current && <SharedQuotation summaryOnly onOpenDraft={onOpenDraft} onOpenQuotation={onOpenQuotation} initialRequestId={requestId} initialVersion={quotationVersion}/>}
       {!current ? (
         <>
           <nav
@@ -576,7 +580,7 @@ export default function PricingCollectionJobs({
             </button>
           </div>
 
-          <SharedQuotation documentId={current || undefined} initialVersion={quotationVersion}/>
+          <SharedQuotation summaryOnly onOpenDraft={onOpenDraft} onOpenQuotation={onOpenQuotation} documentId={current || undefined} initialVersion={quotationVersion}/>
           {doc && (
             <>
               <h3>
@@ -697,9 +701,9 @@ export default function PricingCollectionJobs({
               </p>
               <p style={{ fontWeight: 500 }}>
                 {doc.status !== "DRAFT"
-                  ? "Open the creator workflow above to confirm the customer order, assign collection and mark delivery."
+                  ? "Open quotation to confirm the customer order, assign collectors with a PO reference, and mark delivery."
                   : doc.ready
-                    ? "Prices collected. Create the customer quotation in the creator workflow above."
+                    ? "Prices collected. Create quotation opens your existing Edit draft menu."
                     : "Pricing or review remains pending."}
               </p>
               {doc.failures.map((f: any) => (
@@ -712,6 +716,7 @@ export default function PricingCollectionJobs({
                   {f.error || "Waiting for ERP acknowledgement"}
                 </p>
               ))}
+              {doc.syncWarning && <p role="alert">{doc.syncWarning}</p>}
 
               <div style={{ overflowX: "auto", margin: "16px 0" }}>
                 <table>
@@ -731,7 +736,7 @@ export default function PricingCollectionJobs({
                           <input
                             aria-label={`Select ${l.description}`}
                             type="checkbox"
-                            checked={selected.includes(l.id)}
+                            checked={selected.includes(l.id)} disabled={doc.status !== "DRAFT"}
                             onChange={(e) => {
                               if (!selected.length) {
                                 setVersion(doc.version);
@@ -751,24 +756,7 @@ export default function PricingCollectionJobs({
                           <small style={{ color: "#64748b" }}>{l.unit}</small>
                         </td>
                         <td>
-                          {doc.status === "DRAFT" ? (
-                            l.quantity
-                          ) : (
-                            <input
-                              aria-label={`Collect quantity for ${l.description}`}
-                              type="number"
-                              min="0.000001"
-                              step="any"
-                              max={l.quantity}
-                              value={quantities[l.id] ?? l.quantity}
-                              onChange={(e) =>
-                                setQuantities({
-                                  ...quantities,
-                                  [l.id]: e.target.value,
-                                })
-                              }
-                            />
-                          )}
+                          {l.quantity}
                         </td>
                         <td>
                           {["PRICING", "COLLECTION"].map(
@@ -844,7 +832,7 @@ export default function PricingCollectionJobs({
                 </table>
               </div>
 
-              {doc.canAssign && context?.branchId && !context.error && (
+              {doc.status === "DRAFT" && doc.canAssign && context?.branchId && !context.error && (
                 <>
                   <form
                     onSubmit={(e) => {
@@ -853,7 +841,7 @@ export default function PricingCollectionJobs({
                       void command({
                         action: "assign",
                         eventId: crypto.randomUUID(),
-                        kind: doc.status === "DRAFT" ? "PRICING" : "COLLECTION",
+                        kind: "PRICING",
                         selected,
                         assignee: f.get("assignee"),
                         shops: f.get("shops"),
@@ -862,11 +850,11 @@ export default function PricingCollectionJobs({
                           ? new Date(String(f.get("due"))).toISOString()
                           : "",
                         noDueReason: f.get("noDueReason"),
-                        mode: f.get("mode") || undefined,
-                        poNumber: f.get("poNumber") || "",
-                        authorized: f.get("authorized") === "on",
-                        quantities,
-                        orderId,
+
+
+
+
+
                       });
                     }}
                     style={{
@@ -1022,20 +1010,12 @@ export default function PricingCollectionJobs({
                       />
                     </label>
 
-                    {doc.status !== "DRAFT" && (
-                      <p>
-                        Uses the selected collection order’s saved authorization
-                        and PO reference. Change the planned shop in the order
-                        before assignment.
-                      </p>
-                    )}
-
                     <div style={{ marginTop: 16 }}>
                       <button
                         disabled={
                           busy ||
                           !selected.length ||
-                          (doc.status !== "DRAFT" && !orderId)
+                          false
                         }
                         style={{
                           padding: "8px 20px",

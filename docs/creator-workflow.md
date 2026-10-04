@@ -6,10 +6,11 @@ Price List owns the creator screens and its existing pricing database. ERP store
 
 ## Using the apps
 
-- In Price List, open **Quotations** or **Pricing & Collection Jobs**. A linked draft opens its own creator workflow. ERP-originated requests appear in the request selector without creating another local quotation.
-- After prices are collected, choose **Create quotation** or **Open quotation**. Save customer details, selected items, quantities, selling prices, currency and tax as a new shared version.
+- In **Pricing & Collection Jobs**, **Create quotation** opens the linked document in the existing **Edit draft** menu. Supplier prices and the staff who collected them use the existing internal cost-note component. There is no second quotation editor.
+- Review customer details, selected items, quantities, selling prices and tax, then choose **Convert to quotation**. Existing shared quotations use **Save quotation version**. The document ID and quotation number stay unchanged; no parallel quotation is created.
+- **Open quotation** opens the existing quotation detail screen with the selected canonical version and its existing themed print/PDF engine. ERP-originated requests use the same editor/detail screens without creating a local quotation record.
 - **Confirm customer order** explicitly selects a saved version and accepted quantities, with an optional customer order reference. Confirmation creates no staff jobs.
-- **Assign collection** selects collectors and creates collection jobs against confirmed balances only. Staff record pickup quantities through existing ERP screens.
+- **Assign collection** in the quotation detail screen selects products and collectors, with an optional **PO reference**. The reference is informational and creates no procurement document or additional approval. The second collection-assignment form is removed; staff record pickup quantities through existing ERP screens.
 - **Mark delivery** accepts partial quantities up to collected balances and requires an invoice or delivery reference and delivery date. Delivery history stays visible in both apps.
 - ERP shows quotation versions, orders, collection balances and delivery history. Its creator links open the same Price List workspace, including the selected version for printing. ERP session commands cannot create/edit quotations, confirm orders, assign collectors or mark delivery.
 - Historical collected allocations without order records can also be delivered from Price List. Their original allocation and movements remain intact; no replacement quotation, order or job is created. Early-authorized historical allocations require explicit customer confirmation first.
@@ -27,20 +28,24 @@ PDF snapshots are output metadata in the existing jobs table. They do not insert
 - `jobs-quotation-list` and `jobs-quotation` retain creator/administrator and branch authorization. Reads include saved quotation versions, orders, historical allocation balances, and delivery history.
 - `jobs-quotation-command` accepts `saveQuotation`, `confirmQuotation`, `approveCollection`, `orderDelivered`, `orderConfirm`, `orderCancel`, `legacyDelivered` and `confirmLegacyCollection`. Commands use the existing ERP service, revision checks, serializable transactions, audits and persisted receipts.
 - Price List's `shared-quotation` endpoint additionally handles the local `quotationPdf` action and versioned print/status/download output. ERP's authenticated integration authorizes creator mutations independently of its session endpoint.
+- `shared-quotation?draft=1` adapts canonical versions into the existing draft controls. Shared saves retain customer code, reference and internal notes as additive version data. Existing saved currency, tax basis and totals are preserved instead of using current local pricing defaults.
+- `approveCollection` accepts an optional `poReference` on allocations without changing order acceptance or confirmation identity. Existing confirmed orders with historical local line keys can be assigned in place; no replacement order or quotation is created.
 - A lost response retains the original command payload, revision and event ID even after background refresh. Explicit validation/conflict responses allow a fresh attempt after loading the latest version. Failed saves never appear committed.
 - Identical saves create no extra version. Repeated confirmation content is rejected, and collection allocations cannot be created twice. Committed updates retain their existing outbox identities and stale-revision protection.
 - Later quotation edits do not alter accepted orders. Cancel remaining uncollected quantities explicitly before confirming changed accepted quantities against another quotation version.
-- Old local issue/revision/duplicate/PDF paths are guarded for workflow-managed quotations. The native quotation screen opens the shared creator workspace instead. New local collection-order creation is blocked; existing historical orders/jobs remain available for reassignment and delivery.
+- Old local issue/revision/duplicate/PDF paths are guarded for workflow-managed quotations. The native quotation screen routes shared documents through canonical commands. New local collection-order creation is blocked; existing historical orders, allocations and jobs are preserved.
+- Explicitly rejected obsolete collection assignments with the known ERP HTTP 409 are marked `REJECTED` and stop retrying. Their history remains visible. Uncertain network failures retain safe retries. Collection progress displays canonical jobs rather than rejected local pending markers.
+- Both quotation lists project committed canonical status and totals onto the original document. This is synchronized display metadata, not a second quotation record. Print/PDF presentation retains the original Price List quotation number and shared version identity.
 
 ## Manual rollout
 
 Deploy both applications together using the existing paired integration configuration and workflow flags. Keep the Price List worker running for PDF generation. Do not activate production until the manual staging pilot passes:
 
-1. Create a quotation in Price List and check the same version, amounts and identity in ERP. Verify ERP creator mutations are rejected while staff jobs still work.
+1. From Pricing & Collection Jobs, create a quotation through the existing Edit draft menu. Check staff price notes, conversion, the same document number, canonical values in both lists, and the ERP version. Verify ERP creator mutations are rejected while staff jobs still work.
 2. Confirm only some items, assign collectors, record partial pickups, and mark partial delivery with references. Reject collection before confirmation and delivery above collected balances.
 3. Retry after an uncertain response and attempt simultaneous edits. Check for duplicate versions, orders, allocations, tasks and delivery movements.
 4. Edit a quotation after confirmation and verify the accepted version remains unchanged. Test explicit cancellation/reconfirmation for changed remaining quantities.
-5. Open an existing collected order and an allocation without an order. Deliver against the original records and verify no replacement records appear.
+5. Open the previously failed legacy assignment: confirm it stops retrying the obsolete endpoint, assign its existing confirmed order from quotation details, and verify no replacement order appears. Also deliver existing collected orders and allocations against their original records.
 6. Interrupt integration, verify visible errors, restore connectivity and retry safely.
 7. Print/download the same selected version and compare the themed PDF with ERP values. Check multi-page output, branding, tax and absence of supplier costs.
 
@@ -48,6 +53,6 @@ Deployment and the live pilot remain manual. No external messages or remote depl
 
 ## Local verification — 5 October 2026
 
-All 93 ERP workflow tests and 30 Price List workflow/quotation tests pass, including creator authorization, retries and historical allocations. The actual existing PDF worker generated a multi-page branded quotation with canonical totals, repeated table headers, safe customer data and retained historical versions. Both production builds and the Price List typecheck pass.
+All 94 ERP workflow tests and 37 Price List workflow/quotation tests pass, including native draft rendering, original document/list identity, canonical totals, PO references, obsolete-command recovery, creator authorization, retries and historical allocations. The existing PDF worker and branded renderer remain in use. Both production builds and the Price List typecheck pass.
 
 ERP's full typecheck retains unrelated mobile, finance and page-export errors. Older workflow components retain existing React effect lint findings; changed server code and new components pass targeted lint.

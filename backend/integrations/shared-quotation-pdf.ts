@@ -29,7 +29,7 @@ export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
       price: { quantity: l.quantity, finalExcl: excl.toFixed(2), finalIncl: incl.toFixed(2), subtotal: lineSubtotal.toFixed(2), vatAmount: lineTax.toFixed(2), vatRate: rate.toFixed(), total: lineSubtotal.plus(lineTax).toFixed(2) } };
   });
   return { id: q.id, sharedVersion: q.version, number: `${number || q.id} · V${q.version}`, status: 'ISSUED', created_at: q.date, issued_at: q.date,
-    customer: { name: q.customer, mobile: q.contact || '', number: '', reference: '' }, lines,
+    customer: { name: q.customer, mobile: q.contact || '', number: q.customerDetails?.number || '', reference: q.customerDetails?.reference || '' }, lines,
     totals: { subtotal: q.subtotal, vat: q.taxTotal, total: q.total },
     company_snapshot: { ...structuredClone(company), currency: q.currency, pdfUnitPrices: q.taxBasis === 'INCLUSIVE' ? 'INCL' : 'EXCL' } };
 }

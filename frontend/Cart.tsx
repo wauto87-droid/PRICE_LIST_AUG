@@ -27,6 +27,8 @@ import {
 import RecentQuotationPrices, { priceHistoryItemKey } from "./RecentQuotationPrices";
 import { showConfirm } from "./confirm";
 
+import { recalculateSharedDraft, sharedDraftCommand } from '../shared/shared-draft';
+import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
   line?.input?.importMeta?.source === "DELIVERY_NOTE"
@@ -165,6 +167,7 @@ export default function Cart({
   online,
   onSaved,
   onTemplates,
+  onReloadShared,
 }: {
   t: Translate;
   user: any;
@@ -174,6 +177,7 @@ export default function Cart({
   online: boolean;
   onSaved: (q: any) => void;
   onTemplates?: () => void;
+  onReloadShared?: () => void;
 }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -187,13 +191,16 @@ export default function Cart({
   const activePriceRow = useRef<number | null>(null);
   const customerIdentity = useRef(`${cart.id || "NEW"}|${cart.customer.number?.trim() || ""}|${cart.customer.name?.trim() || ""}`);
   const cartRef = useRef(cart);
+  const pendingSharedSave = useRef<PendingQuotationCommand | null>(null);
+  const sharedSaving = useRef(false);
   const pricingTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const pricingSignatures = useRef<Record<number, string>>({});
   const pricingGenerations = useRef<Record<number, number>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
   const targetTotalValue =
     cart.adjustment?.targetTotal ?? cart.totals?.targetTotal ?? "";
-  const sum = computeCartTotals(cart.lines, targetTotalValue);
+  const calculatedSum = computeCartTotals(cart.lines, cart.sharedWorkflow ? "" : targetTotalValue);
+  const sum = cart.sharedWorkflow && !cart.sharedDirty && cart.sharedCanonicalTotals ? { ...calculatedSum, ...cart.sharedCanonicalTotals } : calculatedSum;
   const hasBlockingErrors =
     cart.lines.some((line: any) => cartLineHasBlockingError(line)) ||
     !!sum.error;
@@ -228,6 +235,7 @@ export default function Cart({
   }, [cart.id, cart.customer.number, cart.customer.name]);
 
   useEffect(() => {
+    if (cart.sharedWorkflow) return;
     let recovered = 0;
     const lines = cart.lines.map((line: any) => {
       const input = recoverImportedCustomUnitPrice(line.input);
@@ -475,6 +483,12 @@ export default function Cart({
   }
 
   function change(index: number, key: string, value: string) {
+    if (cart.sharedWorkflow) {
+      if (!['quantity', 'unitPriceExcl'].includes(key)) return;
+      const lines = cart.lines.map((l: any, i: number) => i === index ? { ...l, input: { ...l.input, [key]: value } } : l);
+      try { setCart(recalculateSharedDraft({ ...cart, lines })); setError(''); } catch { setError('Enter a valid quantity and selling price.'); }
+      return;
+    }
     setError("");
     const lines = cart.lines.map((l: any, i: number) => {
       if (i !== index) return l;
@@ -585,7 +599,7 @@ export default function Cart({
   }
 
   useEffect(() => {
-    if (!online) return;
+    if (!online || cart.sharedWorkflow) return;
     let changed = false;
     const lines = cart.lines.map((line: any) => {
       const currentMode = line.price?.adjustmentMode;
@@ -621,7 +635,7 @@ export default function Cart({
       delete pricingSignatures.current[index];
       delete pricingGenerations.current[index];
     }
-    if (!online) return;
+    if (!online || cart.sharedWorkflow) return;
     cart.lines.forEach((line: any, index: number) => {
       const nextInput = catalogLivePricingInput(line);
       if (!line.pending || !nextInput) {
@@ -714,6 +728,7 @@ export default function Cart({
   }, [cart.lines, online]);
 
   async function reprice() {
+    if (cart.sharedWorkflow) { setCart(recalculateSharedDraft(cart)); return; }
     setBusy(true);
     setError("");
     setNotice("");
@@ -748,6 +763,20 @@ export default function Cart({
   }
 
   async function save() {
+    if (cart.sharedWorkflow) {
+      if (sharedSaving.current) return;
+      sharedSaving.current = true; setBusy(true); setError('');
+      try {
+        const payload = sharedDraftCommand(cart);
+        const pendingSave: PendingQuotationCommand = cart.sharedPendingCommand || pendingQuotationCommand(pendingSharedSave.current, payload, () => crypto.randomUUID());
+        pendingSharedSave.current = pendingSave;
+        setCart({ ...cart, sharedPendingCommand: pendingSave });
+        await api('shared-quotation', 'POST', { ...pendingSave.payload, eventId: pendingSave.eventId });
+        pendingSharedSave.current = null; onSaved(cart);
+      } catch (e) { if (quotationCommandRejected(e)) { pendingSharedSave.current = null; setCart({ ...cart, sharedPendingCommand: undefined }); } setError((e as Error).message); }
+      finally { sharedSaving.current = false; setBusy(false); }
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
@@ -822,6 +851,7 @@ export default function Cart({
 
   return (
     <section className="card">
+      <fieldset disabled={!!cart.sharedWorkflow && (busy || !!cart.sharedPendingCommand)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="section-title">
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
@@ -837,7 +867,7 @@ export default function Cart({
           {cart.lines.length} {t("items", "أصناف")}
         </span>
       </div>
-      {user.permissions.includes("QUOTE_PRICE_HISTORY") && (
+      {!cart.sharedWorkflow && user.permissions.includes("QUOTE_PRICE_HISTORY") && (
         <label className="notice previous-price-toggle">
           <input
             type="checkbox"
@@ -848,7 +878,7 @@ export default function Cart({
           <span><b>{t("Use this customer's previous prices", "استخدام أسعار العميل السابقة")}</b><small>{t("Issued prices are preferred, then Draft prices. Applied prices remain editable.", "تُفضّل الأسعار المصدرة ثم أسعار المسودات. تبقى الأسعار قابلة للتعديل.")}</small></span>
         </label>
       )}
-      <CustomLineForm
+      {!cart.sharedWorkflow && <CustomLineForm
         t={t}
         vat={String(settings.vat)}
         suggestedPart={suggestedCustomPart}
@@ -856,7 +886,13 @@ export default function Cart({
           setCart({ ...cart, lines: [...cart.lines, line] });
           setSuggestedCustomPart("");
         }}
-      />
+      />}
+      {cart.sharedWorkflow && <div className="form-grid">
+        <label>Currency<input value={cart.workflowCurrency} readOnly/></label>
+        <label>Tax<select value={cart.sharedTaxBasis} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxBasis: e.target.value, sharedTaxRate: e.target.value === 'EXEMPT' ? '0' : cart.sharedTaxRate }))}><option value="EXCLUSIVE">Tax additional</option><option value="INCLUSIVE">Tax included</option><option value="EXEMPT">Exempt</option></select></label>
+        <label>Tax rate %<input type="number" min="0" max="100" value={cart.sharedTaxRate} disabled={cart.sharedTaxBasis === 'EXEMPT'} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxRate: e.target.value }))}/></label>
+        {user.role === 'ADMIN' && <label>Administrator reason<input value={cart.sharedOverrideReason} onChange={e => setCart({ ...cart, sharedOverrideReason: e.target.value })}/></label>}
+      </div>}
       <div className="form-grid">
         {[
           ["name", "Customer name", "اسم العميل"],
@@ -923,13 +959,13 @@ export default function Cart({
                 <th>{t("Part / description", "الصنف / الوصف")}</th>
                 <th>{t("Qty", "الكمية")}</th>
                 <th>{t("Discount / Markup %", "الخصم / هامش الربح %")}</th>
-                <th>{t("Final excl. VAT", "النهائي قبل الضريبة")}</th>
+                <th>{cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE" ? t("Selling price incl. VAT", "السعر شامل الضريبة") : t("Final excl. VAT", "النهائي قبل الضريبة")}</th>
                 <th>{t("Total incl. VAT", "الإجمالي شامل الضريبة")}</th>
                 <th>{t("Actions", "إجراءات")}</th>
               </tr>
             </thead>
             <tbody>
-              <QuotationLineQuickAdd
+              {!cart.sharedWorkflow && <QuotationLineQuickAdd
                 t={t}
                 user={user}
                 online={online}
@@ -951,7 +987,7 @@ export default function Cart({
                     ),
                   );
                 }}
-              />
+              />}
               {cart.lines.map((l: any, i: number) => {
                 const pn = l.input?.partNumber || l.partNumber;
                 const isDuplicate = pn && partCounts[pn] > 1;
@@ -959,7 +995,7 @@ export default function Cart({
                 return (
                 <tr className={isDuplicate ? `duplicate-line duplicate-color-${(dupIndex % 6) || 6}` : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
                   <td>
-                    {l.input?.type === "CUSTOM" ? (
+                    {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
                         <span className="pill custom-line-badge">
                           {t("Custom", "مخصص")}
@@ -1112,7 +1148,7 @@ export default function Cart({
                     />
                   </td>
                   <td>
-                    {l.input?.type === "CUSTOM" && (
+                    {l.input?.type === "CUSTOM" && !cart.sharedWorkflow && (
                       <select aria-label={t("Adjustment", "التعديل") + " " + (i + 1)}
                         value={l.input.markup === undefined ? "DISCOUNT" : "MARKUP"}
                         onChange={(e) => change(i, "adjustmentMode", e.target.value)}>
@@ -1146,6 +1182,7 @@ export default function Cart({
                       step="any"
                       placeholder="0"
                       {...discountSafeNumberInputProps}
+                      disabled={cart.sharedWorkflow}
                       data-cart-field="discount"
                       data-cart-row={i}
                       value={
@@ -1283,6 +1320,7 @@ export default function Cart({
                         onClick={() =>
                           setCart({
                             ...cart,
+                            sharedDirty: cart.sharedWorkflow ? true : undefined,
                             lines: cart.lines.filter(
                               (_: any, n: number) => n !== i,
                             ),
@@ -1318,7 +1356,7 @@ export default function Cart({
           <span>
             {t("VAT", "الضريبة")} <b>{sum.vat}</b>
           </span>
-          <label className="cart-roundoff-field">
+          {!cart.sharedWorkflow && <label className="cart-roundoff-field">
             <span>{t("Round-off total", "إجمالي التقريب")}</span>
             <input
               value={targetTotalValue}
@@ -1336,14 +1374,14 @@ export default function Cart({
                 "أدخل إجمالي العميل النهائي وسيتم حساب خصم الإجمالي تلقائياً.",
               )}
             </small>
-          </label>
+          </label>}
           {sum.quoteDiscount !== "0.00" && (
             <span>
               {t("Total discount", "خصم الإجمالي")} <b>{sum.quoteDiscount}</b>
             </span>
           )}
           <span className="grand-total">
-            {t("Grand total", "الإجمالي")} <b>SAR {sum.total}</b>
+            {t("Grand total", "الإجمالي")} <b>{cart.workflowCurrency || "SAR"} {sum.total}</b>
           </span>
         </div>
       )}
@@ -1362,8 +1400,11 @@ export default function Cart({
           {notice}
         </div>
       )}
+      </fieldset>
       <div className="actions footer-actions">
-        {user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
+        {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={onReloadShared}>Refresh prices and version</button>}
+        {cart.sharedPendingCommand && <p role="status">Retry the pending save before editing or refreshing. It will use the original command.</p>}
+        {!cart.sharedWorkflow && user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
           <button disabled={!cart.lines.length} onClick={onTemplates}>
             {t("Save as template", "حفظ كقالب")}
           </button>
@@ -1381,6 +1422,8 @@ export default function Cart({
         >
           {busy
             ? t("Saving…", "جارٍ الحفظ…")
+            : cart.sharedWorkflow
+              ? cart.sharedQuoteVersion ? t("Save quotation version", "حفظ نسخة العرض") : t("Convert to quotation", "تحويل إلى عرض سعر")
             : cart.id
               ? t("Update quotation", "تحديث عرض السعر")
               : t("Save quotation", "حفظ عرض السعر")}

@@ -28,6 +28,15 @@ const J = JSON.stringify;
 export const lineQuantity = (line: any) =>
   String(line.input?.quantity ?? line.price?.quantity ?? line.quantity ?? "");
 const idFor = (line: any) => line.input?.watcherEventId;
+/** Read canonical assignments for display, never manufacture a local collection job. */
+export function canonicalCollectionProgress(canonical: any, lineId: string, previous: any) {
+  const item = canonical?.items.find((i: any) => i.localLineId === lineId);
+  if (!item) return previous;
+  const assigned = (canonical.orders || []).flatMap((o: any) => o.lines.filter((l: any) => l.itemId === item.id && l.allocations.length).map((l: any) => ({ ...l, orderId: o.id, status: o.status })));
+  if (!assigned.length) return previous;
+  const line = assigned.at(-1), staff = line.staff[0];
+  return { ...previous, COLLECTION: { status: Number(line.outstanding) <= 0 ? 'COMPLETED' : 'ASSIGNED', owner: staff?.id, ownerName: canonical.people?.[staff?.id], shops: line.supplier, notes: line.poReferences?.length ? 'PO reference: ' + line.poReferences.join(', ') : '', movements: line.movements, orderId: line.orderId } };
+}
 function mayCost(actor: Actor, quote: any) {
   return (
     quote.owner_id === actor.id ||
@@ -281,10 +290,10 @@ export async function jobWorkspace(
     const params: any[] = [];
 
     if (statusParam === "QUOTATIONS") {
-      conditions.push("q.status<>'DRAFT'");
+      conditions.push("(CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END)<>'DRAFT'");
     } else if (statusParam && statusParam !== "ALL") {
       params.push(statusParam);
-      conditions.push(`q.status = $${params.length}`);
+      conditions.push(`(CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END) = $${params.length}`);
     }
 
     if (!isAdmin) {
@@ -334,7 +343,7 @@ export async function jobWorkspace(
         return {
           id: q.id,
           number: q.number,
-          status: q.status,
+          status: q.workflow?.sharedQuotations?.length ? "ISSUED" : q.status,
           customer: q.customer,
           creator: q.creator || "Unknown",
           ownerId: q.owner_id,
@@ -354,11 +363,21 @@ export async function jobWorkspace(
       }),
     };
   }
+  if (req.method === 'GET' && id) {
+    await document(db, actor, id);
+    await retireObsoleteCollectionAssignments(db, id);
+  }
   if (req.method === "GET" && id)
     return db.transaction(async (tx) => {
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const q = await document(tx, actor, id);
       const link = await prepare(tx, q);
+      let canonical: any;
+      let syncWarning = '';
+      if (link.data.erpRequestId && (q.owner_id === actor.id || actor.role === 'ADMIN')) {
+        try { canonical = await remote(await state(tx), 'jobs-quotation', { documentId: id, actorId: actor.id }); }
+        catch (e) { syncWarning = `Collection progress could not refresh: ${(e as Error).message}`; }
+      }
       const failures = (
         await tx.query(
           "SELECT id,state,error FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC",
@@ -368,7 +387,7 @@ export async function jobWorkspace(
       return {
         id: q.id,
         number: q.number,
-        status: q.status,
+        status: canonical?.quotations?.length || link.data.sharedQuotations?.length ? "ISSUED" : q.status,
         version: q.version,
         workflowVersion: link.revision,
         creatorId: q.owner_id,
@@ -396,13 +415,14 @@ export async function jobWorkspace(
                 Date.now())) &&
           has(actor, "QUOTE_EDIT"),
         failures,
+        syncWarning,
         lines: q.lines.map((l: any) => ({
           id: idFor(l),
           description: l.description,
           partNumber: l.partNumber,
           unit: l.unit,
           quantity: lineQuantity(l),
-          jobs: link.data.lines[idFor(l)] || {},
+          jobs: canonicalCollectionProgress(canonical, idFor(l), link.data.lines[idFor(l)] || {}),
           ...(mayCost(actor, q)
             ? {
                 workflowCost: l.workflowCost,
@@ -924,10 +944,29 @@ export async function receiveJobResult(db: DB, req: Request) {
   });
 }
 let running = false;
+/** Retire only explicitly rejected obsolete commands; retain their receipts/history. */
+export async function retireObsoleteCollectionAssignments(db: DB, documentId?: string) {
+  await db.transaction(async tx => {
+    const rejected = (await tx.query("SELECT * FROM sw_job_outbox WHERE endpoint='jobs-assign' AND payload->>'kind'='COLLECTION' AND state IN ('FAILED','REJECTED') AND error LIKE '%Remote HTTP 409: Confirm the shared quotation and assign collection through jobs-quotation-command%' AND ($1::text IS NULL OR payload->>'documentId'=$1) FOR UPDATE", [documentId || null])).rows;
+    for (const row of rejected) {
+      await tx.query("UPDATE sw_job_outbox SET state='REJECTED',lease_until=NULL WHERE id=$1", [row.id]);
+      const link = await one(tx, 'SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE', [row.payload.documentId]);
+      if (!link) continue;
+      for (const lineId of row.payload.selected || []) {
+        const entry = link.data.lines[lineId];
+        for (const job of [entry?.COLLECTION, ...Object.values<any>(entry?.collections || {})]) {
+          if (job?.token === row.payload.eventId && job.status === 'PENDING_ERP_SYNC') { job.status = 'REJECTED'; job.blocker = 'Previous collection assignment was rejected. Open quotation to assign the confirmed order.'; }
+        }
+      }
+      await tx.query('UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1', [link.id, J(link.data)]);
+    }
+  });
+}
 export async function runPriceJobs(db: DB) {
   if (running || process.env.WORKFLOW_INTEGRATION_ENABLED !== "true") return;
   running = true;
   try {
+    await retireObsoleteCollectionAssignments(db);
     await deliver(db, "REMOTE", undefined, async (row, response) => {
       if (row.endpoint === "jobs-pricing-decision") {
         await acknowledgePricingDecision(db, row, response);

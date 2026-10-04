@@ -5,6 +5,7 @@ import { authenticate, check, readBody, remote, state, ConnectionError } from '.
 import { receipt, workflowEnabled } from './job-protocol';
 import { getQuote } from '../quotations/service';
 import { sharedQuotationPrint, sharedQuotationPdfJob, sharedQuotationPdfDownload } from './shared-quotation-pdf';
+import { sharedDraft } from '../../shared/shared-draft';
 
 export async function receiveSharedQuotation(db: DB, req: Request) {
   workflowEnabled(); await authenticate(db, req, 'jobs:results');
@@ -31,8 +32,9 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   const input: any = req.method === 'POST' ? await readBody(req) : {};
   const documentId = input.documentId || params.get('documentId');
   const requestId = input.requestId || params.get('requestId');
+  let sourceQuote: any;
   if (documentId) {
-    const q = await getQuote(db, actor, documentId, true);
+    const q = sourceQuote = await getQuote(db, actor, documentId, true);
     check(q.owner_id === actor.id || actor.role === 'ADMIN', 'Only creator can manage shared quotations', 403);
   }
   const config = await state(db);
@@ -52,6 +54,17 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
     if (error instanceof ConnectionError && [400, 409, 422].includes(error.remoteStatus || 0)) throw new ConnectionError(error.message, error.remoteStatus, error.remoteStatus, error.code);
     throw error;
   }
+  if (documentId && !localPdf && !params.has('pdfJob') && !params.has('print')) {
+    await db.transaction(async tx => {
+      const link = await one(tx, 'SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE', [documentId]);
+      if (link && Number(link.data.quotationRevision || 0) <= result.requestRevision) {
+        link.data.sharedQuotations = result.quotations.map((q: any) => ({ ...q, lines: q.lines.map(({ offer, actor, ...line }: any) => line) }));
+        link.data.quotationRevision = result.requestRevision;
+        link.data.erpRequestId = result.requestId;
+        await tx.query('UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1', [link.id, JSON.stringify(link.data)]);
+      }
+    });
+  }
   if (params.has('pdfJob')) {
     z.string().uuid().parse(params.get('pdfJob'));
     return sharedQuotationPdfDownload(db, result, params.get('pdfJob')!, params.has('download'));
@@ -59,11 +72,17 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   if (localPdf) {
     const version = z.number().int().positive().parse(input.quoteVersion);
     const q = result.quotations.find((q: any) => q.version === version); check(q, 'Quotation missing', 404);
-    const job = await sharedQuotationPdfJob(db, actor.id, result.requestId, q, result.number);
+    if (!sourceQuote && result.documentId) sourceQuote = await getQuote(db, actor, result.documentId, true);
+    const job = await sharedQuotationPdfJob(db, actor.id, result.requestId, q, sourceQuote?.number || result.number);
     return Response.json({ id: job.id, status: job.status, error: job.error });
   }
   if (params.has('print')) {
-    return sharedQuotationPrint(db, actor.id, result, Number(params.get('version')));
+    if (!sourceQuote && result.documentId) sourceQuote = await getQuote(db, actor, result.documentId, true);
+    return sharedQuotationPrint(db, actor.id, { ...result, number: sourceQuote?.number || result.number }, Number(params.get('version')));
+  }
+  if (params.has('draft')) {
+    const source = sourceQuote || (result.documentId ? await getQuote(db, actor, result.documentId, true) : undefined);
+    return Response.json(sharedDraft(result, source, Number(params.get('version')) || undefined));
   }
   return Response.json(result);
 }

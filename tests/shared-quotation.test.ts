@@ -67,7 +67,7 @@ test('Price List themed print uses canonical currency, decimals and customer-saf
 test('shared quotation editor prints through the real Price List API route and retains version selection', () => {
   const html = renderToStaticMarkup(createElement(QuotationActions, { row: { id: 'request', ownerId: 'owner', items: [], orders: [], quotations: [{ id: 'shared', version: 1, customer: 'Buyer', currency: 'INR', total: '10', lines: [] }] }, data: { actorId: 'owner', suppliers: [], collectionStaff: [] }, busy: false, submit: async () => {} }));
   assert.match(html, /\/amt_price_list\/api\/v1\/shared-quotation\?print=1/);
-  assert.match(html, /Quotation version 1/); assert.match(html, /Confirm customer order/);
+  assert.match(html, /Quotation version 1/); assert.doesNotMatch(html, /Close editor|Save quotation version/);
 });
 
 

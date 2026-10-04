@@ -13,12 +13,18 @@ export default function Quotations({
   user,
   cart,
   onUseTemplate,
+  workflowIdentity,
+  onOpenSharedDraft,
+  onCloseWorkflow,
 }: {
   t: Translate;
   onOpen: (q: any) => void;
   user: any;
   cart: any;
   onUseTemplate: (cart: any, message?: string) => void;
+  workflowIdentity?: any;
+  onOpenSharedDraft?: (identity: any) => void;
+  onCloseWorkflow?: () => void;
 }) {
   const [rows, setRows] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(null),
@@ -64,6 +70,15 @@ export default function Quotations({
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (!workflowIdentity) return;
+    let active = true;
+    const { documentId, requestId } = workflowIdentity;
+    const query = documentId ? 'documentId=' + encodeURIComponent(documentId) : 'requestId=' + encodeURIComponent(requestId);
+    const read = documentId ? api('quotations/' + documentId) : api('shared-quotation?' + query + '&draft=1');
+    void read.then(q => { if (active) { setSelected({ ...q, sharedWorkflow: true, workflowIdentity }); setReview(null); setPdf(null); } }).catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [workflowIdentity]);
   async function action(fn: () => Promise<any>) {
     setBusy(true);
     setError("");
@@ -141,12 +156,12 @@ export default function Quotations({
                   let regex = /(?:\"([^\"]*)\"|([^,]*))(?:,|$)/g;
                   let m;
                   while ((m = regex.exec(row)) !== null && m[0] !== "") cols.push(m[1] !== undefined ? m[1] : m[2]);
-                  
+
                   const partNumber = cols[0] || "";
                   const description = cols[1] || "";
                   const quantity = Number(cols[2] || 1);
                   const unitPriceExcl = cols[3] || "";
-                  
+
                   return {
                     source: "CUSTOM",
                     partNumber,
@@ -270,7 +285,7 @@ export default function Quotations({
                         : t("Draft", "مسودة")}
                   </span>
                 </td>
-                <td>SAR {q.totals.total}</td>
+                <td>{q.currency || "SAR"} {q.totals.total}</td>
                 <td>
                   <button
                     onClick={() =>
@@ -297,7 +312,7 @@ export default function Quotations({
           )}
         </div>
       )}
-      {!selected && user.permissions?.includes("QUOTE_EDIT") && <SharedQuotation/>}
+
       {selected && (
         <div className="modal-backdrop">
           <section className="modal">
@@ -306,6 +321,7 @@ export default function Quotations({
               <button
                 onClick={() => {
                   setSelected(null);
+                  onCloseWorkflow?.();
                   setReview(null);
                   setSharing(false);
                 }}
@@ -313,7 +329,7 @@ export default function Quotations({
                 ×
               </button>
             </div>
-            <PricingCollectionJobs key={selected.id} documentId={selected.id} />
+            {selected.sharedWorkflow ? <SharedQuotation key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/> : <PricingCollectionJobs key={selected.id} documentId={selected.id} onOpenDraft={onOpenSharedDraft} onOpenQuotation={identity => setSelected({ ...selected, sharedWorkflow: true, workflowIdentity: identity })}/>}
             {!selected.sharedWorkflow && <>
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}
