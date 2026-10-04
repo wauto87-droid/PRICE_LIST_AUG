@@ -329,7 +329,7 @@ export default function Quotations({
                 ×
               </button>
             </div>
-            {selected.sharedWorkflow ? <SharedQuotation key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/> : <PricingCollectionJobs key={selected.id} documentId={selected.id} onOpenDraft={onOpenSharedDraft} onOpenQuotation={identity => setSelected({ ...selected, sharedWorkflow: true, workflowIdentity: identity })}/>}
+            {selected.sharedWorkflow ? <SharedQuotation showFulfillment={selected.workflowIdentity?.fulfillment === true} key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/> : <PricingCollectionJobs key={selected.id} documentId={selected.id} onOpenDraft={onOpenSharedDraft} onOpenQuotation={identity => setSelected({ ...selected, sharedWorkflow: true, workflowIdentity: { ...identity, fulfillment: true } })}/>}
             {!selected.sharedWorkflow && <>
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}

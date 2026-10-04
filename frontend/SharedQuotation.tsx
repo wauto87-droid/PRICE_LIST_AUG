@@ -4,7 +4,7 @@ import { api } from './api';
 import QuotationActions from './SharedQuotationActions';
 import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
 
-export default function SharedQuotation({ documentId, initialRequestId, initialVersion, summaryOnly = false, onOpenDraft, onOpenQuotation }: { documentId?: string; initialRequestId?: string; initialVersion?: number; summaryOnly?: boolean; onOpenDraft?: (identity: any) => void; onOpenQuotation?: (identity: any) => void }) {
+export default function SharedQuotation({ documentId, initialRequestId, initialVersion, summaryOnly = false, showFulfillment = false, onOpenDraft, onOpenQuotation }: { documentId?: string; initialRequestId?: string; initialVersion?: number; summaryOnly?: boolean; showFulfillment?: boolean; onOpenDraft?: (identity: any) => void; onOpenQuotation?: (identity: any) => void }) {
   const [requests, setRequests] = useState<any[]>([]);
   const [requestId, setRequestId] = useState(initialRequestId || '');
   const [data, setData] = useState<any>();
@@ -56,6 +56,6 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
     {error && <p role="alert" style={{ color: '#b91c1c' }}>{error}</p>}
     {pdf && <p role="status">{pdf.status === 'DONE' ? <a href={`/amt_price_list/api/v1/shared-quotation?requestId=${encodeURIComponent(pdf.requestId)}&pdfJob=${encodeURIComponent(pdf.id)}&download=1`}>Download quotation PDF</a> : pdf.status === 'FAILED' ? 'PDF generation failed. Check the worker and retry Download themed PDF.' : 'Preparing themed quotation PDF…'}</p>}
     {data && summaryOnly && <button className="primary" disabled={busy || !data.items.some((i: any) => i.offers.length)} onClick={() => { const identity = { documentId: documentId || data.documentId, requestId: data.requestId, version: initialVersion }; if (data.quotations.length) onOpenQuotation?.(identity); else onOpenDraft?.(identity); }}>{data.quotations.length ? 'Open quotation' : 'Create quotation'}</button>}
-    {data && !summaryOnly && <QuotationActions key={data.requestId} row={row} data={data} busy={busy} submit={submit} onPdf={version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? () => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId }) : undefined}/>}
+    {data && !summaryOnly && <QuotationActions showFulfillment={showFulfillment} key={data.requestId} row={row} data={data} busy={busy} submit={submit} onPdf={version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? () => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId }) : undefined}/>}
   </section>;
 }

@@ -42,7 +42,7 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   check(documentId || requestId, 'Choose a request');
   if (req.method === 'POST') {
     z.string().uuid().parse(input.eventId);
-    check(['saveQuotation', 'confirmQuotation', 'approveCollection', 'orderDelivered', 'legacyDelivered', 'confirmLegacyCollection', 'orderConfirm', 'orderCancel', 'quotationPdf'].includes(input.action), 'Unsupported quotation action');
+    check(['saveQuotation', 'confirmQuotation', 'approveCollection', 'orderDelivered', 'markDelivery', 'legacyDelivered', 'confirmLegacyCollection', 'orderConfirm', 'orderCancel', 'quotationPdf'].includes(input.action), 'Unsupported quotation action');
   }
   // Send the browser's revision unchanged. Retrying uses the same event ID and payload.
   const localPdf = input.action === 'quotationPdf';

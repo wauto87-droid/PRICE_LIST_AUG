@@ -47,10 +47,10 @@ test('edited draft preview rounds once at the quotation total, retaining small f
 });
 
 test('quotation detail has confirmation and PO assignment, with no second quotation editor', () => {
-  const quote = { id: 'shared-1', version: 1, customer: 'Buyer', total: '345', lines: [{ itemId: 'item-1', name: 'Contactor', quantity: '3', unit: 'pcs', sellingPrice: '100', offer }] };
-  const order = { id: 'order-1', mode: 'ORDER_CONFIRMED', quoteVersion: 1, lines: [{ lineId: 'item-1', itemId: 'item-1', name: 'Contactor', quantity: '1', cancelled: '0', toDeliver: '1', outstanding: '1', allocations: [], availableToDeliver: '0' }] };
+  const quote = { id: 'shared-1', version: 1, customer: 'Buyer', total: '345', lines: [{ itemId: 'item-1', name: 'Contactor', quantity: '3', confirmableQuantity: '2', unit: 'pcs', sellingPrice: '100', offer }] };
+  const order = { id: 'order-1', mode: 'ORDER_CONFIRMED', quoteVersion: 1, lines: [{ lineId: 'item-1', itemId: 'item-1', name: 'Contactor', quantity: '1', cancelled: '0', toDeliver: '1', outstanding: '1', customerConfirmed: true, confirmedQuantity: '1', remainingToAssign: '1', allocations: [], availableToDeliver: '0' }] };
   const row = { ...result, id: result.requestId, quotations: [quote], orders: [order] };
-  const html = renderToStaticMarkup(React.createElement(Actions, { row, data: row, busy: false, submit: async () => true, onOpenDraft() {} }));
+  const html = renderToStaticMarkup(React.createElement(Actions, { row, data: row, showFulfillment: true, busy: false, submit: async () => true, onOpenDraft() {} }));
   assert.match(html, /Edit draft/); assert.match(html, /PO reference \(optional\)/); assert.match(html, /Assign collection/); assert.match(html, /Confirm customer order/);
   assert.doesNotMatch(html, /Close editor|Save quotation version|Selling price \/|Supplier cost<select/);
   assert.match(html, /value="2"/);

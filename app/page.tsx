@@ -697,7 +697,7 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "workflow-jobs" && <PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={openSharedQuotation} requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
+            {tab === "workflow-jobs" && <PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations

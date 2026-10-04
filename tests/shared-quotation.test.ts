@@ -132,18 +132,18 @@ test('PDF retry creates no second quotation or job; company snapshot and histori
   } finally { await db.close!(); }
 });
 
-test('Price List shows delivery balances and reference controls for existing collected orders', () => {
-  const html = renderToStaticMarkup(createElement(QuotationActions, { row: { id: 'r', ownerId: 'owner', items: [], quotations: [], orders: [{ id: 'old', number: 'SO-OLD', mode: 'ORDER_CONFIRMED', status: 'PARTIALLY_COLLECTED', lines: [{ lineId: 'line', name: 'Part', quantity: '5', collected: '3', delivered: '1', availableToDeliver: '2', outstanding: '2', unit: 'pcs', movements: [] }] }] }, data: { actorId: 'owner', suppliers: [], collectionStaff: [] }, busy: false, submit: async () => {} }));
-  assert.match(html, /SO-OLD/); assert.match(html, /Mark delivery/); assert.match(html, /Invoice reference/); assert.match(html, /Delivery reference/); assert.match(html, /max=\"2\"/); assert.doesNotMatch(html, /Create a collection order/);
-});
-
-test('historical allocations appear in Price List without orders; early collections require explicit confirmation', () => {
-  const props: any = { row: { id: 'r', ownerId: 'owner', items: [], quotations: [], orders: [], legacyCollections: [{ allocationId: 'old', itemId: 'item', name: 'Contactor', poNumber: 'PO-OLD', quantity: '5', collected: '3', delivered: '1', availableToDeliver: '2', unit: 'pcs', customerConfirmed: false, deliveries: [] }] }, data: { actorId: 'owner', suppliers: [], collectionStaff: [] }, busy: false, submit: async () => {} };
+test('quotation creation shows quotation controls only; jobs origin exposes one gated delivery form', () => {
+  const props: any = { row: { id: 'r', ownerId: 'owner', items: [{ id: 'item', name: 'Contactor', quantity: '5', unit: 'pcs', offers: [], confirmableQuantity: '5' }], quotations: [{ id: 'q', version: 2, customer: 'Buyer', currency: 'SAR', total: '2500', lines: [{ itemId: 'item', name: 'Contactor', quantity: '5', confirmableQuantity: '5', unit: 'pcs', sellingPrice: '500' }] }], orders: [], legacyCollections: [{ allocationId: 'old', itemId: 'item', name: 'Contactor', quantity: '5', collected: '3', delivered: '1', availableToDeliver: '2', unit: 'pcs', customerConfirmed: false, deliveries: [] }] }, data: { actorId: 'owner', suppliers: [], collectionStaff: [] }, busy: false, submit: async () => {} };
+  const draft = renderToStaticMarkup(createElement(QuotationActions, props));
+  assert.match(draft, /Print quotation/); assert.doesNotMatch(draft, /<summary[^>]*>Confirm customer order|<h4>Mark delivery|<h4[^>]*>Assign collection/);
+  props.showFulfillment = true;
   const pending = renderToStaticMarkup(createElement(QuotationActions, props));
-  assert.match(pending, /PO-OLD/); assert.match(pending, /Confirm existing customer order/); assert.doesNotMatch(pending, /Mark delivery/);
+  assert.match(pending, /Confirm customer order from version 2/); assert.doesNotMatch(pending, /<h4>Mark delivery|Confirm existing customer order/);
   props.row.legacyCollections[0].customerConfirmed = true;
+  props.row.legacyCollections.push({ ...props.row.legacyCollections[0], allocationId: 'old-second', availableToDeliver: '1' });
   const confirmed = renderToStaticMarkup(createElement(QuotationActions, props));
-  assert.match(confirmed, /Mark delivery/); assert.match(confirmed, /max="2"/); assert.doesNotMatch(confirmed, /Confirm existing customer order/);
+  assert.equal((confirmed.match(/<h4>Mark delivery/g) || []).length, 1);
+  assert.match(confirmed, /max="3"/); assert.match(confirmed, /Invoice reference/); assert.match(confirmed, /Delivery reference/);
 });
 
 test('native quotation routes direct shared records to the creator workspace and cannot duplicate or issue them', async () => {
