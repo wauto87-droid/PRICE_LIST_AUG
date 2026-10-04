@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import Decimal from 'decimal.js';
 import { DB, one } from '../core/db';
 import { Actor, requirePermission } from '../auth/service';
-import { authenticate, check, readBody, remote, state } from './core';
+import { authenticate, check, readBody, remote, state, ConnectionError } from './core';
 import { receipt, workflowEnabled } from './job-protocol';
 import { getQuote } from '../quotations/service';
-import { quotationHTML } from './quotation-print';
+import { sharedQuotationPrint, sharedQuotationPdfJob, sharedQuotationPdfDownload } from './shared-quotation-pdf';
 
 export async function receiveSharedQuotation(db: DB, req: Request) {
   workflowEnabled(); await authenticate(db, req, 'jobs:results');
@@ -41,15 +40,30 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   check(documentId || requestId, 'Choose a request');
   if (req.method === 'POST') {
     z.string().uuid().parse(input.eventId);
-    check(['saveQuotation', 'confirmQuotation', 'approveCollection'].includes(input.action), 'Unsupported quotation action');
+    check(['saveQuotation', 'confirmQuotation', 'approveCollection', 'orderDelivered', 'legacyDelivered', 'confirmLegacyCollection', 'orderConfirm', 'orderCancel', 'quotationPdf'].includes(input.action), 'Unsupported quotation action');
   }
   // Send the browser's revision unchanged. Retrying uses the same event ID and payload.
-  const result = await transport(config, req.method === 'POST' ? 'jobs-quotation-command' : 'jobs-quotation', { ...input, documentId: documentId || undefined, requestId: requestId || undefined, actorId: actor.id });
+  const localPdf = input.action === 'quotationPdf';
+  let result;
+  try {
+    result = await transport(config, req.method === 'POST' && !localPdf ? 'jobs-quotation-command' : 'jobs-quotation', { ...input, documentId: documentId || undefined, requestId: requestId || undefined, actorId: actor.id });
+  } catch (error) {
+    // Preserve explicit validation/conflict responses so the editor can refresh after a rejected save.
+    if (error instanceof ConnectionError && [400, 409, 422].includes(error.remoteStatus || 0)) throw new ConnectionError(error.message, error.remoteStatus, error.remoteStatus, error.code);
+    throw error;
+  }
+  if (params.has('pdfJob')) {
+    z.string().uuid().parse(params.get('pdfJob'));
+    return sharedQuotationPdfDownload(db, result, params.get('pdfJob')!, params.has('download'));
+  }
+  if (localPdf) {
+    const version = z.number().int().positive().parse(input.quoteVersion);
+    const q = result.quotations.find((q: any) => q.version === version); check(q, 'Quotation missing', 404);
+    const job = await sharedQuotationPdfJob(db, actor.id, result.requestId, q, result.number);
+    return Response.json({ id: job.id, status: job.status, error: job.error });
+  }
   if (params.has('print')) {
-    const q = result.quotations.find((q: any) => q.version === Number(params.get('version'))); check(q, 'Quotation missing', 404);
-    const safe = { ...q, lines: q.lines.map((l: any) => ({ name: l.name, specifications: l.specifications, unit: l.unit, quantity: l.quantity, sellingPrice: l.sellingPrice, total: new Decimal(l.quantity).mul(l.sellingPrice).toFixed(2) })) };
-    // Canonical totals and prices are returned by ERP; no internal fields are rendered.
-    return new Response(quotationHTML(safe), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
+    return sharedQuotationPrint(db, actor.id, result, Number(params.get('version')));
   }
   return Response.json(result);
 }

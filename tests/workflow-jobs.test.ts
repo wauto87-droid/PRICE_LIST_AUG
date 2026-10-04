@@ -257,8 +257,17 @@ test("10-line draft: two known prices, split assignments, retries, returned cost
       order,
       poNumber: "PO-TEST",
     };
-    await post(create);
-    await post(create);
+    await assert.rejects(post(create), /creator workflow/);
+    assert.equal((await get()).collectionOrders.length, 0);
+    // Existing pre-rollout orders and jobs remain reassignable; no new legacy order is created.
+    const historical = (await one(db, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]))!;
+    historical.data.collectionOrders = [{ ...order, poNumber: 'PO-TEST', createdAt: new Date().toISOString() }];
+    for (const line of lines) {
+      const entry = historical.data.lines[line.input.watcherEventId];
+      entry.COLLECTION = { token: randomUUID(), status: 'PENDING', owner: staff[0] };
+      entry.collections = { [order.id]: { ...entry.COLLECTION, orderId: order.id } };
+    }
+    await db.query('UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1', [id, JSON.stringify(historical.data)]);
     assert.equal((await get()).collectionOrders.length, 1);
     for (let n = 0; n < 2; n++) {
       const d = await get();

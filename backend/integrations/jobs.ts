@@ -551,43 +551,7 @@ export async function jobWorkspace(
                 ),
         });
       } else if (input.action === "createOrder") {
-        check(
-          ["ISSUED", "ACCEPTED"].includes(q.status),
-          "Issue quotation before creating an order",
-        );
-        check(input.authorized === true, "Explicit authorization required");
-        const order = z
-          .object({
-            id: z.string().uuid(),
-            mode: z.enum(["ORDER_CONFIRMED", "EARLY_AUTHORIZED"]),
-            quantities: z.record(z.string(), z.string().regex(/^\d+(\.\d+)?$/)),
-            suppliers: z.record(z.string(), z.string().max(500)).default({}),
-          })
-          .parse(input.order);
-        check(
-          Object.keys(order.quantities).length > 0,
-          "Select ordered products",
-        );
-        for (const [id, qty] of Object.entries(order.quantities)) {
-          const l = q.lines.find((l: any) => idFor(l) === id);
-          check(
-            l &&
-              new Decimal(qty).gt(0) &&
-              new Decimal(qty).lte(lineQuantity(l) || "0"),
-            "Order quantity invalid or missing",
-          );
-        }
-        check(
-          !(link.data.collectionOrders || []).some(
-            (o: any) => o.id === order.id,
-          ),
-          "Order already exists",
-        );
-        (link.data.collectionOrders ||= []).push({
-          ...order,
-          poNumber: String(input.poNumber || ""),
-          createdAt: new Date().toISOString(),
-        });
+        check(input.action !== "createOrder", "Confirm the customer quotation in the creator workflow; it creates the shared order", 409);
       } else if (["known", "skip", "remove"].includes(input.action)) {
         check(
           q.status === "DRAFT",
@@ -711,6 +675,9 @@ export async function jobWorkspace(
           403,
         );
         const kind = z.enum(["PRICING", "COLLECTION"]).parse(input.kind);
+        if (kind === 'COLLECTION') {
+          check(Array.isArray(input.selected) && input.selected.every((id: string) => link.data.lines[id]?.collections?.[input.orderId]?.token || link.data.lines[id]?.COLLECTION?.token), 'Assign new collections through the shared creator workflow after customer confirmation', 409);
+        }
         const order =
           kind === "COLLECTION"
             ? (link.data.collectionOrders || []).find(

@@ -1,13 +1,16 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { api } from "./api";
-import CollectionOrders from "./CollectionOrders";
 import SharedQuotation from "./SharedQuotation";
 
 export default function PricingCollectionJobs({
   documentId,
+  requestId,
+  quotationVersion,
 }: {
   documentId?: string;
+  requestId?: string;
+  quotationVersion?: number;
 }) {
   const [rows, setRows] = useState<any[]>([]);
   const [current, setCurrent] = useState(documentId || "");
@@ -224,7 +227,7 @@ export default function PricingCollectionJobs({
         </div>
       )}
 
-      <SharedQuotation documentId={current || undefined}/>
+      {!current && <SharedQuotation initialRequestId={requestId} initialVersion={quotationVersion}/>}
       {!current ? (
         <>
           <nav
@@ -573,7 +576,7 @@ export default function PricingCollectionJobs({
             </button>
           </div>
 
-          <SharedQuotation documentId={current || undefined}/>
+          <SharedQuotation documentId={current || undefined} initialVersion={quotationVersion}/>
           {doc && (
             <>
               <h3>
@@ -692,28 +695,11 @@ export default function PricingCollectionJobs({
                 Creator: <strong>{doc.creator?.name}</strong> ·{" "}
                 <code>{doc.creator?.reference || "Reference pending"}</code>
               </p>
-              {doc.status !== "DRAFT" && (
-                <CollectionOrders
-                  doc={doc}
-                  selected={selected}
-                  quantities={quantities}
-                  command={command}
-                  orderId={orderId}
-                  onOrder={(id) => {
-                    setOrderId(id);
-                    const order = doc.collectionOrders?.find(
-                      (o: any) => o.id === id,
-                    );
-                    if (order) setQuantities({ ...order.quantities });
-                  }}
-                  busy={busy}
-                />
-              )}
               <p style={{ fontWeight: 500 }}>
                 {doc.status !== "DRAFT"
-                  ? "Quotation issued. Create a collection order, assign pickups, then confirm delivery in ERP."
+                  ? "Open the creator workflow above to confirm the customer order, assign collection and mark delivery."
                   : doc.ready
-                    ? "All supplier prices ready for review. Finalize from the quotation screen."
+                    ? "Prices collected. Create the customer quotation in the creator workflow above."
                     : "Pricing or review remains pending."}
               </p>
               {doc.failures.map((f: any) => (

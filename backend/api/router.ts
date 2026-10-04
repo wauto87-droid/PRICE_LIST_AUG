@@ -1645,10 +1645,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         );
       if (id) {
         uuid(id);
+        const workflowLink = await one(db, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+        const workflowManaged = Boolean(workflowLink && (workflowLink.data.erpRequestId || workflowLink.data.sharedQuotations?.length || Object.keys(workflowLink.data.lines || {}).length));
         if (!action && method === "GET")
-          return response(
-            quotes.publicQuote(await quotes.getQuote(db, actor, id), actor),
-          );
+          return response({ ...quotes.publicQuote(await quotes.getQuote(db, actor, id), actor), sharedWorkflow: workflowManaged });
+        if (workflowManaged && (['duplicate', 'revision', 'print', 'pdf', 'customer-link', 'submit-approval', 'review', 'issue'].includes(action || '') || (!action && method === 'DELETE'))) {
+          await quotes.getQuote(db, actor, id, true);
+          assert(false, 409, 'Use the creator workflow in Price List for this shared quotation, its versions and themed PDF');
+        }
         if (!action && method === "PUT") {
           const { version, ...data } = await body(req);
           return response(

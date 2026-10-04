@@ -36,10 +36,10 @@ export default function App() {
   const workflowOpened=useRef(false);
   useEffect(()=>{
     if(!session||workflowOpened.current)return;
-    const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');if(!id)return;
+    const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');const requestId=params.get('workflowRequest');if(!id&&!requestId)return;
     workflowOpened.current=true;
-    if(params.get('view')==='jobs'){setTab('workflow-jobs');return;}
-    api(`quotations/${encodeURIComponent(id)}`).then(openQuote).catch(e=>setError(e.message));
+    if(params.get('view')==='jobs'||requestId){setTab('workflow-jobs');return;}
+    api(`quotations/${encodeURIComponent(id!)}`).then(openQuote).catch(e=>setError(e.message));
   },[session]);
   const releaseRef = useRef("");
   const t = (en: string, ar: string) => (lang === "ar" ? ar : en);
@@ -683,7 +683,7 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "workflow-jobs" && <PricingCollectionJobs documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
+            {tab === "workflow-jobs" && <PricingCollectionJobs requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations

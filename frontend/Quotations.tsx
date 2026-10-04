@@ -5,6 +5,7 @@ import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
 import PricingCollectionJobs from "./PricingCollectionJobs";
+import SharedQuotation from "./SharedQuotation";
 import QuotationTemplates from "./QuotationTemplates";
 export default function Quotations({
   t,
@@ -296,7 +297,7 @@ export default function Quotations({
           )}
         </div>
       )}
-      {selected && <details><summary>Pricing & Collection Jobs for {selected.number}</summary><PricingCollectionJobs key={selected.id} documentId={selected.id} /></details>}
+      {!selected && user.permissions?.includes("QUOTE_EDIT") && <SharedQuotation/>}
       {selected && (
         <div className="modal-backdrop">
           <section className="modal">
@@ -312,6 +313,8 @@ export default function Quotations({
                 ×
               </button>
             </div>
+            <PricingCollectionJobs key={selected.id} documentId={selected.id} />
+            {!selected.sharedWorkflow && <>
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}
             </p>
@@ -646,6 +649,7 @@ export default function Quotations({
                       )}
                 </div>
               ))}
+            </>}
             {error && <div className="notice error">{error}</div>}
           </section>
         </div>
