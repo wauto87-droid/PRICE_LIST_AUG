@@ -82,7 +82,8 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   }
   if (params.has('draft')) {
     const source = sourceQuote || (result.documentId ? await getQuote(db, actor, result.documentId, true) : undefined);
-    return Response.json(sharedDraft(result, source, Number(params.get('version')) || undefined));
+    const mode = z.enum(['edit', 'all', 'priced', 'version']).parse(params.get('mode') || (params.has('version') ? 'version' : 'edit'));
+    return Response.json(sharedDraft(result, source, Number(params.get('version')) || undefined, mode));
   }
   return Response.json(result);
 }

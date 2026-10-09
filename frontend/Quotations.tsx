@@ -16,6 +16,7 @@ export default function Quotations({
   workflowIdentity,
   onOpenSharedDraft,
   onCloseWorkflow,
+  onOpenWorkflow,
 }: {
   t: Translate;
   onOpen: (q: any) => void;
@@ -25,6 +26,7 @@ export default function Quotations({
   workflowIdentity?: any;
   onOpenSharedDraft?: (identity: any) => void;
   onCloseWorkflow?: () => void;
+  onOpenWorkflow?: (identity: any) => void;
 }) {
   const [rows, setRows] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(null),
@@ -79,6 +81,7 @@ export default function Quotations({
     void read.then(q => { if (active) { setSelected({ ...q, sharedWorkflow: true, workflowIdentity }); setReview(null); setPdf(null); } }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [workflowIdentity]);
+  useEffect(() => { if (selected?.sharedWorkflow && onOpenWorkflow) { onOpenWorkflow({documentId:selected.id || selected.sharedDocumentId,requestId:selected.sharedRequestId,...selected.workflowIdentity,fulfillment:true}); setSelected(null); } }, [selected, onOpenWorkflow]);
   async function action(fn: () => Promise<any>) {
     setBusy(true);
     setError("");

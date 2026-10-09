@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, setCsrf } from "@/frontend/api";
 import Lookup from "@/frontend/Lookup";
 import Cart from "@/frontend/Cart";
+import SharedQuotation from "@/frontend/SharedQuotation";
 import PricingCollectionJobs from "@/frontend/PricingCollectionJobs";
 import Quotations from "@/frontend/Quotations";
 import DeliveryQuoteImport from "@/frontend/DeliveryQuoteImport";
@@ -279,14 +280,15 @@ export default function App() {
     setCart(emptyCart());
   }
   const [workflowIdentity, setWorkflowIdentity] = useState<any>();
+  const [workflowEditor,setWorkflowEditor] = useState(false);
   async function openSharedDraft(identity: any) {
     try {
       const query = identity.documentId ? 'documentId=' + encodeURIComponent(identity.documentId) : 'requestId=' + encodeURIComponent(identity.requestId);
-      const draft = await api('shared-quotation?' + query + '&draft=1');
-      setCart(draft); setWorkflowIdentity(undefined); setTab('draft');
+      const draft = await api('shared-quotation?' + query + '&draft=1&mode=' + encodeURIComponent(identity.mode || 'edit'));
+      setCart(draft); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab('workflow-jobs');
     } catch (e) { setMessage((e as Error).message); }
   }
-  function openSharedQuotation(identity: any) { setWorkflowIdentity({ ...identity }); setTab('quotations'); }
+  function openSharedQuotation(identity: any) { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab('workflow-jobs'); }
   function openQuote(q: any) {
     if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }); return; }
     setCart({
@@ -545,7 +547,7 @@ export default function App() {
               ["draft", "Quotation", "عرض السعر"],
               ["delivery", "Delivery note to quotation", "إذن التسليم إلى عرض سعر"],
               ["quotations", "Quotations", "العروض"],
-              ["workflow-jobs", "Pricing & Collection Jobs", "مهام التسعير والتحصيل"],
+              ["workflow-jobs", "Workflow", "سير العمل"],
               ...(session.user.permissions.includes("COMMERCIAL_VIEW")
                 ? [["commercial", "Commercial", "التجاري"]]
                 : []),
@@ -585,6 +587,8 @@ export default function App() {
                 <h1>
                   {tab === "workspace"
                     ? t("Catalog workspace", "مساحة الكتالوج")
+                    : tab === "workflow-jobs"
+                      ? t("Workflow", "سير العمل")
                     : tab === "draft"
                       ? t("Current quotation", "عرض السعر الحالي")
                       : tab === "delivery"
@@ -622,8 +626,9 @@ export default function App() {
                 />
               </div>
             )}
-            {tab === "draft" && (
-              <div className="workspace-side">
+            {(tab === "draft" || (tab === "workflow-jobs" && workflowEditor)) && (
+              <div className={tab === "workflow-jobs" ? "workflow-editor" : "workspace-side"}>
+                {tab === "workflow-jobs" && <><button onClick={() => setWorkflowEditor(false)}>Back to workflow</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
                 <Cart
                   t={t}
                   user={session.user}
@@ -632,7 +637,7 @@ export default function App() {
                   settings={session.settings}
                   online={online}
                   onSaved={(q) => {
-                    if (q.sharedWorkflow) { openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }); setCart(emptyCart()); return; }
+                    if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }); setCart(emptyCart()); return; }
                     setCart(emptyCart());
                     setMessage(
                       t(
@@ -642,7 +647,7 @@ export default function App() {
                     );
                   }}
                   onTemplates={() => setTab("quotations")}
-                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId })}
+                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId, mode:cart.sharedDraftMode })}
                 />
                 <div className="actions footer-actions">
                   <button
@@ -697,7 +702,8 @@ export default function App() {
                   )}
                 </div>
               ))}
-            {tab === "workflow-jobs" && <PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
+            {tab === "workflow-jobs" && !workflowEditor && workflowIdentity && <section><button onClick={() => setWorkflowIdentity(undefined)}>Back to workflow requests</button><SharedQuotation documentId={workflowIdentity.documentId} initialRequestId={workflowIdentity.requestId} initialVersion={workflowIdentity.version} showFulfillment onOpenDraft={identity => void openSharedDraft(identity)}/></section>}
+            {tab === "workflow-jobs" && !workflowEditor && !workflowIdentity && <PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined} quotationVersion={typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined} documentId={typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined} />}
             {tab === "quotations" &&
               (online ? (
                 <Quotations
@@ -706,6 +712,7 @@ export default function App() {
                   onOpen={openQuote}
                   workflowIdentity={workflowIdentity}
                   onCloseWorkflow={() => setWorkflowIdentity(undefined)}
+                  onOpenWorkflow={openSharedQuotation}
                   onOpenSharedDraft={identity => void openSharedDraft(identity)}
                   cart={cart}
                   onUseTemplate={(next, warning) => {
