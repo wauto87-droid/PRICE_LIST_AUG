@@ -4,7 +4,7 @@ import { api } from './api';
 import QuotationActions from './SharedQuotationActions';
 import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
 
-export default function SharedQuotation({ documentId, initialRequestId, initialVersion, summaryOnly = false, showFulfillment = false, onOpenDraft, onOpenQuotation }: { documentId?: string; initialRequestId?: string; initialVersion?: number; summaryOnly?: boolean; showFulfillment?: boolean; onOpenDraft?: (identity: any) => void; onOpenQuotation?: (identity: any) => void }) {
+export default function SharedQuotation({ documentId, initialRequestId, initialVersion, summaryOnly = false, showFulfillment = false, view = 'all', refreshKey = 0, onUnavailable, onData, onOpenDraft, onOpenQuotation }: { documentId?: string; initialRequestId?: string; initialVersion?: number; summaryOnly?: boolean; showFulfillment?: boolean; view?: string; refreshKey?: number; onUnavailable?: (error:string)=>void; onData?: (data:any)=>void; onOpenDraft?: (identity: any) => void; onOpenQuotation?: (identity: any) => void }) {
   const [requests, setRequests] = useState<any[]>([]);
   const [requestId, setRequestId] = useState(initialRequestId || '');
   const [data, setData] = useState<any>();
@@ -15,6 +15,9 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
   const sending = useRef(false);
   const generation = useRef(0);
   const [pdf, setPdf] = useState<any>();
+  const onDataRef=useRef(onData);onDataRef.current=onData;
+  const onUnavailableRef=useRef(onUnavailable);onUnavailableRef.current=onUnavailable;
+  useEffect(()=>{if(data)onDataRef.current?.(data);},[data]);
   const query = documentId ? `documentId=${encodeURIComponent(documentId)}` : `requestId=${encodeURIComponent(requestId)}`;
   async function load() {
     if (sending.current) return;
@@ -22,10 +25,12 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
     try {
       const result = await api(`shared-quotation${documentId || requestId ? `?${query}` : ''}`);
       if (current !== generation.current) return;
+      setError('');
       if (documentId || requestId) setData(result); else setRequests(result.rows || []);
-    } catch (e) { if (current === generation.current) setError((e as Error).message); }
+    } catch (e) { if (current === generation.current) {setError((e as Error).message);onUnavailableRef.current?.((e as Error).message);} }
   }
   useEffect(() => { setData(undefined); void load(); const timer = setInterval(() => void load(), 15000); return () => clearInterval(timer); }, [documentId, requestId]);
+  useEffect(()=>{if(refreshKey)void load();},[refreshKey]);
   async function submit(body: any) {
     if (sending.current) return false;
     const payload = { ...body, documentId, requestId: data.requestId, revision: body.revision ?? data.requestRevision };
@@ -34,13 +39,24 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
     setBusy(true); setError('');
     try {
       const result = await api('shared-quotation', 'POST', { ...pending.current.payload, eventId: pending.current.eventId });
-      setData(result); pending.current = null; setNotice(body.action === 'confirmQuotation' ? 'Customer order confirmed' : 'Workflow update saved'); return true;
+      setData(result); pending.current = null; setNotice((body.action === 'confirmQuotation' ? 'Customer order confirmed' : 'Workflow update saved') + (result.syncWarning ? ' locally. ERP synchronization is pending.' : ' in ERP.')); return true;
     } catch (e) { if (quotationCommandRejected(e)) pending.current = null; setError((e as Error).message); return false; } finally { sending.current = false; setBusy(false); }
   }
   async function createPdf(version: number) {
     setBusy(true); setError('');
     try { const result = await api('shared-quotation', 'POST', { action: 'quotationPdf', requestId: data.requestId, documentId, quoteVersion: version, eventId: crypto.randomUUID() }); setPdf({ ...result, requestId: data.requestId }); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  async function collectionSlip(orderId:string) {
+    if(!documentId)return;
+    setBusy(true);setError('');
+    try {
+      const result=await api('workflow-jobs','POST',{action:'pickup',documentId,orderId,supplier:'',staff:'',internal:true});
+      const bytes=Uint8Array.from(atob(result.pdf),(c)=>c.charCodeAt(0));
+      const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+      const link=document.createElement('a');link.href=url;link.download=result.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      setNotice('Internal collection slip ready to download');
+    }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
   useEffect(() => {
     if (!pdf || !['PENDING', 'RUNNING'].includes(pdf.status)) return;
@@ -50,15 +66,15 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
   }, [pdf?.id, pdf?.status]);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timer); }, [notice]);
   const row = data && { ...data, id: data.requestId, quotations: data.quotations, orders: data.orders };
-  return <section className="shared-quotation-panel card" style={{ margin: '16px 0', padding: 16 }}>
+  return <section hidden={view==='overview'} className="shared-quotation-panel card" style={{ margin: '16px 0', padding: 16 }}>
     <style>{`.shared-quotation-panel form{display:grid;gap:12px;margin-top:16px}.shared-quotation-panel .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.shared-quotation-panel .flex{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.shared-quotation-panel label{font-size:14px}.shared-quotation-panel input:not([type=checkbox]),.shared-quotation-panel select{display:block;max-width:100%;width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:var(--surface,#fff);color:inherit;box-sizing:border-box}.shared-quotation-panel button:not(.primary),.shared-quotation-panel a{display:inline-block;padding:8px 12px;border:1px solid #94a3b8;border-radius:6px;margin:4px 0;background:var(--surface,#fff);color:inherit}.shared-quotation-panel button:disabled{opacity:.5}.shared-quotation-panel .border{border:1px solid #cbd5e1;border-radius:6px;padding:12px}.shared-quotation-panel details{margin-top:16px}.shared-quotation-panel summary{cursor:pointer;font-weight:600}`}</style>
 
     {!documentId && <label>Request<select disabled={busy} value={requestId} onChange={e => setRequestId(e.target.value)}><option value="">Choose a request</option>{requestId && !requests.some(r => r.id === requestId) && <option value={requestId}>{data?.number || requestId}</option>}{requests.map(r => <option key={r.id} value={r.id}>{r.number} · {r.customer || r.title}</option>)}</select></label>}
-    {!summaryOnly && <button onClick={() => { setError(''); void load(); }} disabled={busy}>Refresh progress</button>}
+    {!summaryOnly && view==='all' && <button onClick={() => { setError(''); void load(); }} disabled={busy}>Refresh progress</button>}
     {error && <p role="alert" style={{ color: '#b91c1c' }}>{error}</p>}
     {pdf && <p role="status">{pdf.status === 'DONE' ? <a href={`/amt_price_list/api/v1/shared-quotation?requestId=${encodeURIComponent(pdf.requestId)}&pdfJob=${encodeURIComponent(pdf.id)}&download=1`}>Download quotation PDF</a> : pdf.status === 'FAILED' ? 'PDF generation failed. Check the worker and retry Download themed PDF.' : 'Preparing themed quotation PDF…'}</p>}
     {notice && <div className="toast" role="status">{notice}</div>}
-    {data && <QuotationActions showFulfillment={showFulfillment && !summaryOnly} key={data.requestId} row={row} data={data} busy={busy} submit={submit} onPdf={summaryOnly ? undefined : version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? mode => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId, mode }) : undefined}/>}
+    {data && <QuotationActions view={view} onPickup={documentId ? id=>void collectionSlip(id) : undefined} showFulfillment={showFulfillment && !summaryOnly} key={data.requestId} row={row} data={data} busy={busy} submit={submit} onPdf={summaryOnly ? undefined : version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? mode => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId, mode }) : undefined}/>}
     {data && summaryOnly && data.quotations.length > 0 && <button className="primary" onClick={() => onOpenQuotation?.({documentId: documentId || data.documentId,requestId:data.requestId,version:initialVersion})}>Open quotation and confirm order</button>}
 
   </section>;
