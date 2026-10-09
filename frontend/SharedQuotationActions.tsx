@@ -1,13 +1,14 @@
 'use client';
 import { useState } from 'react';
 import Decimal from 'decimal.js';
+import DeliveryHistory from './DeliveryHistory';
 function Button({ asChild, ...props }: any) { return asChild ? props.children : <button className="primary" {...props}/>; }
 function Input(props: any) { return <input {...props}/>; }
 
 type Row = Record<string, any>;
 const control = 'w-full rounded-md border border-input bg-background p-2 text-sm';
 
-export default function QuotationActions({ row, data, busy, submit, onPdf, initialVersion, onOpenDraft, showFulfillment = false }: { row: Row; data: Row; busy: boolean; submit: (body: Row) => Promise<unknown>; onPdf?: (version: number) => void; initialVersion?: number; onOpenDraft?: (mode: 'edit' | 'all' | 'priced') => void; showFulfillment?: boolean }) {
+export default function QuotationActions({ row, data, busy, submit, onPdf, initialVersion, onOpenDraft, showFulfillment = false, view = 'all', onPickup }: { row: Row; data: Row; busy: boolean; submit: (body: Row) => Promise<unknown>; onPdf?: (version: number) => void; initialVersion?: number; onOpenDraft?: (mode: 'edit' | 'all' | 'priced') => void; showFulfillment?: boolean; view?: string; onPickup?: (orderId:string)=>void }) {
   const quotes: Row[] = row.quotations || [];
   const latest = quotes.at(-1);
   const [version, setVersion] = useState<number | undefined>(initialVersion);
@@ -21,14 +22,17 @@ export default function QuotationActions({ row, data, busy, submit, onPdf, initi
   }).filter((l: Row) => l.remaining > 0);
   const reason = admin && <label className="block text-sm">Administrator reason<Input required minLength={5} name="overrideReason"/></label>;
   return <section className="space-y-4 rounded-xl border bg-card p-5">
-    <h4 className="font-semibold">Customer quotation</h4>
+    <div hidden={!'all quotation'.split(' ').includes(view)}><h4 className="font-semibold">Customer quotation</h4>
     {onOpenDraft && <div className="flex flex-wrap gap-3"><Button type="button" disabled={busy} onClick={() => onOpenDraft('edit')}>Edit draft ({activeItems.length})</Button><Button type="button" disabled={busy || !activeItems.length} onClick={() => onOpenDraft('all')}>Create quotation — all items ({activeItems.length})</Button><Button type="button" disabled={busy || !priced.length} onClick={() => onOpenDraft('priced')}>Create quotation — priced items ({priced.length})</Button></div>}
     <p>{priced.length} of {activeItems.length} items have confirmed supplier prices. All-items quotations require selling prices for every item.</p>
+    </div><div hidden={!'all pricing'.split(' ').includes(view)}><h3>Internal pricing</h3>
     <div className="table-scroll"><table><thead><tr><th>Part number</th><th>Description</th><th>Quantity</th><th>Supplier</th><th>Supplier price</th><th>VAT treatment</th><th>Selling price</th><th>Status</th></tr></thead><tbody>{activeItems.map((i: Row) => { const offer = i.offers.find((o: Row) => o.id === i.selectedOffer) || i.offers.at(-1); const saved = selected?.lines.find((l: Row) => l.itemId === i.id); return <tr key={i.id}><td>{i.partNumber || '—'}</td><td>{i.name}</td><td>{i.quantity} {i.unit}</td><td>{data.suppliers?.find((s: Row) => s.id === offer?.supplier)?.name || offer?.supplier || 'Pending'}</td><td>{offer ? `${offer.currency} ${offer.cost}/${offer.unit}` : 'Pending'}</td><td>{offer?.taxBasis || 'Not confirmed'}</td><td>{saved?.sellingPrice ?? (i.sellingPrice || 'Pending')}</td><td>{priced.some((p: Row) => p.id === i.id) ? 'Supplier price confirmed' : 'Pricing pending'}</td></tr>; })}</tbody></table></div>
+    </div><div hidden={!'all quotation'.split(' ').includes(view)}>
     {selected && <div className="flex flex-wrap items-center gap-3"><select aria-label="Quotation version" className={`${control} max-w-56`} value={selected.version} onChange={e => setVersion(Number(e.target.value))}>{quotes.map(q => <option key={q.version} value={q.version}>Quotation version {q.version}</option>)}</select><span>{selected.customer} · {selected.currency} {selected.total}</span><Button asChild variant="outline"><a href={`/amt_price_list/api/v1/shared-quotation?print=1&requestId=${encodeURIComponent(row.id)}&version=${selected.version}`} target="_blank" rel="noreferrer">Print quotation / Save PDF</a></Button>{onPdf && <Button disabled={busy} onClick={() => onPdf(selected.version)}>Download themed PDF</Button>}</div>}
     {selected && <><p>{selected.customer} · {selected.contact}</p>{selected.lines.map((l: Row) => <div className="quote-line" key={l.itemId}><span><strong>{l.name}</strong><small>{l.specifications}</small></span><span>{l.quantity} {l.unit} × {l.sellingPrice}</span></div>)}<p className="text-end">Subtotal {selected.currency} {selected.subtotal} · Tax {selected.taxTotal}</p><h3 className="text-end">{selected.currency} {selected.total}</h3></>}
     {!showFulfillment && latest && <p>Open this quotation from Workflow to confirm the customer order, assign pickups and mark delivery.</p>}
     {showFulfillment && selected && !!confirmable.length && <ConfirmationTable key={`${selected.version}`} lines={confirmable} revision={row.requestRevision} version={selected.version} busy={busy} reason={reason} submit={submit}/>}
+    </div><div hidden={!'all fulfillment'.split(' ').includes(view)}>
     {showFulfillment && (row.orders || []).filter((o: Row) => o.lines.some((l: Row) => l.customerConfirmed)).map((order: Row) => {
       const available = order.lines.filter((l: Row) => Number(l.remainingToAssign) > 0 && row.items.some((i: Row) => i.id === l.itemId && i.offers.length));
       if (!available.length) return null;
@@ -38,30 +42,9 @@ export default function QuotationActions({ row, data, busy, submit, onPdf, initi
         <label>PO reference (optional)<Input name="poReference" maxLength={500}/></label><label>Deadline (optional)<Input type="date" name="due"/></label>{reason}<Button disabled={busy}>Assign collection</Button>
       </form>;
     })}
-    {showFulfillment && <FulfillmentHistory row={row} busy={busy} admin={admin} submit={submit}/>}
+    {showFulfillment && <DeliveryHistory row={row} busy={busy} admin={admin} submit={submit} onPickup={onPickup}/>}
+    </div>
   </section>;
-}
-
-function FulfillmentHistory({ row, admin, busy, submit }: { row: Row; admin: boolean; busy: boolean; submit: (body: Row) => Promise<unknown> }) {
-  const balances: Row[] = [...(row.legacyCollections || []), ...(row.orders || []).flatMap((o: Row) => o.lines)];
-  const lines: Row[] = row.items.map((item: Row) => ({ ...item, itemId: item.id, availableToDeliver: balances.filter(l => l.itemId === item.id && l.customerConfirmed).reduce((n, l) => n.plus(l.availableToDeliver || 0), new Decimal(0)).toFixed() })).filter((l: Row) => l.availableToDeliver > 0);
-  const [error, setError] = useState('');
-  return <>
-    {!!lines.length && <form onSubmit={e => {
-      e.preventDefault(); const form = e.currentTarget; const f = new FormData(form);
-      const selected = lines.filter(l => Number(f.get(l.itemId)) > 0);
-      if (!selected.length || (!String(f.get('invoiceNumber') || '').trim() && !String(f.get('deliveryNumber') || '').trim())) { setError('Choose quantities and enter an invoice or delivery reference.'); return; }
-      setError('');
-      void submit({ action: 'markDelivery', lines: selected.map(l => ({ itemId: l.itemId, quantity: f.get(l.itemId) })), invoiceNumber: f.get('invoiceNumber'), deliveryNumber: f.get('deliveryNumber'), date: new Date(String(f.get('date'))).toISOString(), receivedConfirmed: true, overrideReason: f.get('overrideReason') || '' }).then(result => { if (result !== false) form.reset(); });
-    }}>
-      <h4>Mark delivery</h4>
-      {lines.map(l => <label key={l.itemId}>{l.name} · Available {l.availableToDeliver} {l.unit}<Input type="number" min="0" max={l.availableToDeliver} step="0.000001" name={l.itemId} placeholder="Quantity to deliver"/></label>)}
-      <label>Invoice reference<Input name="invoiceNumber" maxLength={500}/></label><label>Delivery reference<Input name="deliveryNumber" maxLength={500}/></label><label>Delivery date<Input name="date" type="datetime-local" required/></label>
-      {admin && <label>Administrator reason<Input name="overrideReason" required minLength={5}/></label>}
-      <label><input required type="checkbox"/>I confirm these goods were delivered to the customer.</label>{error && <p role="alert">{error}</p>}<Button disabled={busy}>Mark selected quantities delivered</Button>
-    </form>}
-    {!!balances.length && <details><summary>Collection and delivery history</summary>{balances.map((l, index) => <div key={index}><p>{l.name} · Confirmed {l.confirmedQuantity || '0'} · Collected {l.collected} · Delivered {l.delivered} {l.unit}</p>{(l.deliveries || l.movements?.filter((m: Row) => m.type === 'DELIVER') || []).map((m: Row) => <p key={m.id}>{m.quantity} {l.unit} · Invoice {m.invoiceNumber || '—'} · Delivery {m.deliveryNumber || '—'} · {new Date(m.date).toLocaleString()}</p>)}</div>)}</details>}
-  </>;
 }
 
 function ConfirmationTable({lines,version,revision,busy,reason,submit}: any) {

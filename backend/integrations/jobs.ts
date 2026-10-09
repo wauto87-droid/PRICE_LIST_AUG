@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dashboardList } from './workflow-dashboard';
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { DB, one } from "../core/db";
@@ -199,6 +200,7 @@ export async function jobWorkspace(
   workflowEnabled();
   const url = new URL(req.url);
   const id = url.searchParams.get("documentId");
+  if (req.method === 'GET' && !id && url.searchParams.get('dashboard') === '1') return dashboardList(db, actor, url, transport);
   if (req.method === "GET" && url.searchParams.has("staff")) {
     check(id, "Choose a document first");
     const q = await document(db, actor, id);
@@ -391,6 +393,8 @@ export async function jobWorkspace(
         version: q.version,
         workflowVersion: link.revision,
         creatorId: q.owner_id,
+        customer: q.customer,
+        internalReference: q.internal_reference,
         creator: await one(
           tx,
           "SELECT name,integration_reference reference FROM users WHERE id=$1",
