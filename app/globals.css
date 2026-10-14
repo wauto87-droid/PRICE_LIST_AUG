@@ -2591,6 +2591,18 @@ td button {
 .modal.wide {
   width: min(1150px, 100%);
 }
+.quotation-document-actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface, white);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line, #ddd);
+  margin-bottom: 12px;
+}
+.quotation-document .section-title { flex-wrap: wrap; gap: 12px; }
+.quotation-document-actions > button,
+.quotation-document-actions > a { min-height: 40px; }
 .admin-action-modal {
   width: min(420px, 100%);
   text-align: center;

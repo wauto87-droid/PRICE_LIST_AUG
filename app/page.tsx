@@ -281,16 +281,25 @@ export default function App() {
   }
   const [workflowIdentity, setWorkflowIdentity] = useState<any>();
   const [workflowEditor,setWorkflowEditor] = useState(false);
-  async function openSharedDraft(identity: any) {
+  const [workflowFromQuotations,setWorkflowFromQuotations] = useState(false);
+  useEffect(() => {
+    const restore = (event: PopStateEvent) => {
+      if (!event.state?.amtQuotations) return;
+      setWorkflowIdentity(undefined); setWorkflowEditor(false); setWorkflowFromQuotations(false); setTab('quotations');
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, []);
+  async function openSharedDraft(identity: any, destination = 'workflow-jobs') {
     try {
       const query = identity.documentId ? 'documentId=' + encodeURIComponent(identity.documentId) : 'requestId=' + encodeURIComponent(identity.requestId);
       const draft = await api('shared-quotation?' + query + '&draft=1&mode=' + encodeURIComponent(identity.mode || 'edit'));
-      setCart(draft); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab('workflow-jobs');
+      setCart(draft); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab(destination);
     } catch (e) { setMessage((e as Error).message); }
   }
-  function openSharedQuotation(identity: any) { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab('workflow-jobs'); }
+  function openSharedQuotation(identity: any, destination = 'workflow-jobs') { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab(destination); }
   function openQuote(q: any) {
-    if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }); return; }
+    if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }, 'quotations'); return; }
     setCart({
       id: q.id,
       version: q.version,
@@ -561,7 +570,7 @@ export default function App() {
               <button
                 key={key}
                 className={tab === key ? "active" : ""}
-                onClick={() => setTab(key)}
+                onClick={() => { setWorkflowEditor(false); setWorkflowFromQuotations(false); if (key === 'quotations') setWorkflowIdentity(undefined); setTab(key); }}
               >
                 {t(en, ar)}
                 {key === "draft" && !!cart.lines.length && (
@@ -574,6 +583,7 @@ export default function App() {
             </div>
           </nav>
           <main className={compactWorkspace ? "workspace-compact-main" : ""}>
+            {tab === 'workflow-jobs' && workflowFromQuotations && <button type="button" onClick={() => { setWorkflowFromQuotations(false); setWorkflowEditor(false); setWorkflowIdentity(undefined); setTab('quotations'); }}>{t('Back to quotations','العودة إلى عروض الأسعار')}</button>}
             <div
               className={
                 "page-heading" +
@@ -626,9 +636,9 @@ export default function App() {
                 />
               </div>
             )}
-            {(tab === "draft" || (tab === "workflow-jobs" && workflowEditor)) && (
-              <div className={tab === "workflow-jobs" ? "workflow-editor" : "workspace-side"}>
-                {tab === "workflow-jobs" && <><button onClick={() => setWorkflowEditor(false)}>Back to workflow</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
+            {(tab === "draft" || (['workflow-jobs','quotations'].includes(tab) && workflowEditor)) && (
+              <div className={workflowEditor ? "workflow-editor" : "workspace-side"}>
+                {workflowEditor && <><button onClick={() => setWorkflowEditor(false)}>{tab === 'quotations' ? 'Back to quotation' : 'Back to workflow'}</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
                 <Cart
                   t={t}
                   user={session.user}
@@ -637,7 +647,7 @@ export default function App() {
                   settings={session.settings}
                   online={online}
                   onSaved={(q) => {
-                    if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }); setCart(emptyCart()); return; }
+                    if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }, tab === 'quotations' ? 'quotations' : 'workflow-jobs'); setCart(emptyCart()); return; }
                     setCart(emptyCart());
                     setMessage(
                       t(
@@ -647,7 +657,7 @@ export default function App() {
                     );
                   }}
                   onTemplates={() => setTab("quotations")}
-                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId, mode:cart.sharedDraftMode })}
+                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId, mode:cart.sharedDraftMode }, tab === 'quotations' ? 'quotations' : 'workflow-jobs')}
                 />
                 <div className="actions footer-actions">
                   <button
@@ -665,7 +675,7 @@ export default function App() {
                   >
                     {t("New quotation", "عرض سعر جديد")}
                   </button>
-                  <button onClick={() => setTab("quotations")}>
+                  <button onClick={() => { setWorkflowEditor(false); setWorkflowIdentity(undefined); setTab("quotations"); }}>
                     {t("Open saved quotations", "فتح العروض المحفوظة")}
                   </button>
                 </div>
@@ -705,14 +715,14 @@ export default function App() {
             {tab === "workflow-jobs" && <div hidden={workflowEditor}><PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={workflowIdentity?.requestId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined)} quotationVersion={workflowIdentity?.version || (typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined)} documentId={workflowIdentity?.documentId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined)} /></div>}
             {tab === "quotations" &&
               (online ? (
-                <Quotations
+                <div hidden={workflowEditor}><Quotations
                   t={t}
                   user={session.user}
                   onOpen={openQuote}
                   workflowIdentity={workflowIdentity}
-                  onCloseWorkflow={() => setWorkflowIdentity(undefined)}
-                  onOpenWorkflow={openSharedQuotation}
-                  onOpenSharedDraft={identity => void openSharedDraft(identity)}
+                  onCloseWorkflow={() => { setWorkflowIdentity(undefined); setWorkflowEditor(false); }}
+                  onOpenWorkflow={identity => { setWorkflowFromQuotations(true); openSharedQuotation(identity); }}
+                  onOpenSharedDraft={identity => void openSharedDraft(identity, 'quotations')}
                   cart={cart}
                   onUseTemplate={(next, warning) => {
                     setCart(next);
@@ -725,7 +735,7 @@ export default function App() {
                         ),
                     );
                   }}
-                />
+                /></div>
               ) : (
                 <div className="card notice">
                   {t(

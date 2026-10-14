@@ -4,7 +4,6 @@ import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
-import PricingCollectionJobs from "./PricingCollectionJobs";
 import SharedQuotation from "./SharedQuotation";
 import QuotationTemplates from "./QuotationTemplates";
 export default function Quotations({
@@ -47,7 +46,9 @@ export default function Quotations({
     scope: "mine",
   });
   const searchGeneration = useRef(0);
-  const totalQuantity = selected?.lines.reduce(
+  const selectionGeneration = useRef(0);
+  const actionGeneration = useRef(0);
+  const totalQuantity = selected?.lines?.reduce(
     (sum: number, line: any) => sum + Number(line.price?.quantity ?? 0),
     0,
   );
@@ -81,30 +82,67 @@ export default function Quotations({
     void read.then(q => { if (active) { setSelected({ ...q, sharedWorkflow: true, workflowIdentity }); setReview(null); setPdf(null); } }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [workflowIdentity]);
-  useEffect(() => { if (selected?.sharedWorkflow && onOpenWorkflow) { onOpenWorkflow({documentId:selected.id || selected.sharedDocumentId,requestId:selected.sharedRequestId,...selected.workflowIdentity,fulfillment:true}); setSelected(null); } }, [selected, onOpenWorkflow]);
-  async function action(fn: () => Promise<any>) {
+  const selectedPdf = pdf?.quotationId === selected?.id && pdf?.quotationVersion === selected?.version ? pdf : null;
+  async function openDocument(id: string, remember = true) {
+    const generation = ++selectionGeneration.current;
+    const document = await api('quotations/' + encodeURIComponent(id));
+    if (generation !== selectionGeneration.current) return;
+    if (remember) {
+      const current = window.history.state || {};
+      if (!current.amtQuotations) window.history.replaceState({ ...current, amtQuotations: { documentId: null } }, '');
+      window.history.pushState({ ...window.history.state, amtQuotations: { documentId: id } }, '');
+    }
+    setSelected(document); setReview(null); setPdf(null); setShareLink(''); setSharing(false);
+  }
+  function closeDocument(navigate = true) {
+    ++selectionGeneration.current;
+    ++actionGeneration.current;
+    setBusy(false);
+    if (navigate && window.history.state?.amtQuotations?.documentId) window.history.back();
+    setSelected(null);
+    setPdf(null);
+    setReview(null);
+    setSharing(false);
+    setShareLink('');
+    onCloseWorkflow?.();
+  }
+  useEffect(() => {
+    let active = true;
+    const restore = () => {
+      const id = window.history.state?.amtQuotations?.documentId;
+      if (typeof id === 'string' && id.length <= 100) void openDocument(id, false).catch(e => { if (active) setError(e.message); });
+      else closeDocument(false);
+    };
+    if (window.history.state?.amtQuotations) restore();
+    window.addEventListener('popstate', restore);
+    return () => { active = false; ++selectionGeneration.current; window.removeEventListener('popstate', restore); };
+  }, []);
+  async function action(fn: (current: () => boolean) => Promise<any>) {
+    const generation = ++actionGeneration.current;
+    const current = () => generation === actionGeneration.current;
     setBusy(true);
     setError("");
     try {
-      await fn();
-      await load();
+      await fn(current);
+      if (current()) await load();
     } catch (e) {
-      setError((e as Error).message);
+      if (current()) setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
   useEffect(() => {
-    if (!pdf || ["DONE", "FAILED"].includes(pdf.status)) return;
+    if (!selectedPdf || ["DONE", "FAILED"].includes(selectedPdf.status)) return;
+    let active = true;
     const timer = setInterval(
       () =>
         api("documents/" + pdf.id)
-          .then(setPdf)
-          .catch((e) => setError(e.message)),
+          .then(result => { if (active) setPdf({ ...pdf, ...result }); })
+          .catch((e) => { if (active) setError(e.message); }),
       1500,
     );
-    return () => clearInterval(timer);
-  }, [pdf]);
+    return () => { active = false; clearInterval(timer); };
+  }, [pdf, selected?.id, selected?.version]);
 
   const exportToExcel = () => {
     if (!selected) return;
@@ -291,11 +329,10 @@ export default function Quotations({
                 <td>{q.currency || "SAR"} {q.totals.total}</td>
                 <td>
                   <button
+                    disabled={busy}
                     onClick={() =>
                       action(async () => {
-                        setSelected(await api("quotations/" + q.id));
-                        setReview(null);
-                        setPdf(null);
+                        await openDocument(q.id);
                       })
                     }
                   >
@@ -318,22 +355,212 @@ export default function Quotations({
 
       {selected && (
         <div className="modal-backdrop">
-          <section className="modal">
+          <section className="modal wide quotation-document" role="dialog" aria-modal="true" aria-label={selected.number}>
             <div className="section-title">
               <h2>{selected.number}</h2>
-              <button
-                onClick={() => {
-                  setSelected(null);
-                  onCloseWorkflow?.();
-                  setReview(null);
-                  setSharing(false);
-                }}
-              >
-                ×
-              </button>
+              <button type="button" onClick={() => closeDocument()}>{t("Back to quotations", "العودة إلى عروض الأسعار")}</button>
             </div>
-            {selected.sharedWorkflow ? <SharedQuotation showFulfillment={selected.workflowIdentity?.fulfillment === true} key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/> : <PricingCollectionJobs key={selected.id} documentId={selected.id} onOpenDraft={onOpenSharedDraft} onOpenQuotation={identity => setSelected({ ...selected, sharedWorkflow: true, workflowIdentity: { ...identity, fulfillment: true } })}/>}
+            {onOpenWorkflow && <button type="button" onClick={() => onOpenWorkflow({ documentId: selected.id || selected.sharedDocumentId, requestId: selected.sharedRequestId, ...selected.workflowIdentity, fulfillment: true })}>{t("Open workflow", "فتح سير العمل")}</button>}
+            {selected.sharedWorkflow && <SharedQuotation view="quotation" showFulfillment={false} key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/>}
             {!selected.sharedWorkflow && <>
+            <div className="actions wrap quotation-document-actions" role="toolbar" aria-label={t("Quotation actions", "إجراءات عرض السعر")}>
+              {["DRAFT", "REJECTED", "APPROVED"].includes(selected.status) && (
+                <>
+                  <button
+                    disabled={busy || selected.status === "APPROVED"}
+                    onClick={() => onOpen(selected)}
+                  >
+                    {t("Edit quotation", "تعديل عرض السعر")}
+                  </button>
+                  {user.permissions.includes("QUOTE_CREATE") && (
+                    <button disabled={busy} onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const res = await api("quotation-templates");
+                        setAvailableUsers(res.availableUsers || []);
+                        setSharedWith(selected.sharedWith || []);
+                        setSharing(true);
+                      } catch(e) { setError((e as Error).message); }
+                      finally { setBusy(false); }
+                    }}>
+                      {t("Share", "مشاركة")}
+                    </button>
+                  )}
+                  {user.permissions.includes("QUOTE_ISSUE") &&
+                    selected.status === "APPROVED" && (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          action(async current => {
+                            const result = await api(
+                                "quotations/" + selected.id + "/review",
+                                "POST",
+                                {},
+                              );
+                            if (current()) setReview(result);
+                          })
+                        }
+                      >
+                        {t("Review & issue", "مراجعة وإصدار")}
+                      </button>
+                    )}
+                  {user.permissions.includes("QUOTE_ISSUE") &&
+                    selected.status !== "APPROVED" && (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          action(async current => {
+                            const result = await api(
+                              "quotations/" + selected.id + "/submit-approval",
+                              "POST",
+                              {},
+                            );
+                            if (current()) setSelected({ ...selected, status: result.status });
+                          })
+                        }
+                      >
+                        {t("Submit for approval", "إرسال للموافقة")}
+                      </button>
+                    )}
+                </>
+              )}
+              {[
+                "ISSUED",
+                "SENT",
+                "VIEWED",
+                "ACCEPTED",
+                "DECLINED",
+                "EXPIRED",
+              ].includes(selected.status) && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    action(async current => {
+                      const result = await api(
+                          "quotations/" + selected.id + "/revision",
+                          "POST",
+                          {},
+                        );
+                      if (current()) onOpen(result);
+                    })
+                  }
+                >
+                  {t("Create revision", "إنشاء مراجعة")}
+                </button>
+              )}
+              {["ISSUED", "SENT", "VIEWED"].includes(selected.status) &&
+                user.permissions.includes("QUOTE_ISSUE") && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      action(async current => {
+                        const result = await api(
+                          "quotations/" + selected.id + "/customer-link",
+                          "POST",
+                          { days: 30 },
+                        );
+                        const link = `${location.origin}${appPath("/customer-quotation/" + result.token)}`;
+                        if (current()) { setShareLink(link); await navigator.clipboard?.writeText(link); }
+                      })
+                    }
+                  >
+                    {t("Copy customer link", "نسخ رابط العميل")}
+                  </button>
+                )}
+              <button
+                disabled={busy}
+                onClick={() =>
+                  action(async current => {
+                    const result = await api(
+                        "quotations/" + selected.id + "/duplicate",
+                        "POST",
+                        {},
+                      );
+                    if (current()) onOpen(result);
+                  })
+                }
+              >
+                {t("Duplicate", "نسخ")}
+              </button>
+              <a
+                className="button"
+                href={appPath("/api/v1/quotations/" + selected.id + "/print")}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t("Print view", "عرض الطباعة")}
+              </a>
+              <button
+                disabled={busy || ['PENDING','RUNNING'].includes(selectedPdf?.status)}
+                onClick={() =>
+                  action(async () =>
+                    setPdf(
+                      { ...await api(
+                        "quotations/" + selected.id + "/pdf",
+                        "POST",
+                        {},
+                      ), quotationId: selected.id, quotationVersion: selected.version },
+                    ),
+                  )
+                }
+              >
+                {t("Generate PDF", "إنشاء PDF")}
+              </button>
+              <button
+                disabled={busy}
+                onClick={exportToExcel}
+              >
+                {t("Export to Excel", "تصدير إلى Excel")}
+              </button>
+              {selected.status === "DRAFT" &&
+                user.permissions.includes("QUOTE_DELETE") && (
+                  <button
+                    className="danger"
+                    onClick={async () => {
+                      if (
+                        await showConfirm(
+                          t("Delete this draft?", "حذف هذه المسودة؟"),
+                        )
+                      )
+                        action(async current => {
+                          await api("quotations/" + selected.id, "DELETE");
+                          if (current()) closeDocument();
+                        });
+                    }}
+                  >
+                    {t("Delete", "حذف")}
+                  </button>
+                )}
+            </div>
+            {shareLink && (
+              <div className="notice">
+                <strong>
+                  {t("Customer link copied", "تم نسخ رابط العميل")}
+                </strong>
+                <small className="break-all">{shareLink}</small>
+              </div>
+            )}
+            {selectedPdf &&
+              (selectedPdf.status === "DONE" ? (
+                <a
+                  className="button primary"
+                  href={appPath("/api/v1/documents/" + selectedPdf.id + "/download")}
+                >
+                  {t("Download PDF", "تنزيل PDF")}
+                </a>
+              ) : (
+                <div className="notice">
+                  {selectedPdf.status === "FAILED"
+                    ? selectedPdf.error
+                    : t(
+                        "Preparing PDF in background…",
+                        "جارٍ تجهيز PDF في الخلفية…",
+                      )}
+                </div>
+              ))}
+
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}
             </p>
@@ -405,14 +632,13 @@ export default function Quotations({
                   className="primary"
                   disabled={busy}
                   onClick={() =>
-                    action(async () => {
+                    action(async current => {
                       const q = await api(
                         "quotations/" + selected.id + "/issue",
                         "POST",
                         { token: review.token },
                       );
-                      setSelected(q);
-                      setReview(null);
+                      if (current()) { setSelected(q); setReview(null); }
                     })
                   }
                 >
@@ -467,207 +693,6 @@ export default function Quotations({
               {t("Internal reference", "المرجع الداخلي")}:{" "}
               {selected.internalReference}
             </small>
-            <div className="actions wrap">
-              {["DRAFT", "REJECTED", "APPROVED"].includes(selected.status) && (
-                <>
-                  <button
-                    disabled={busy || selected.status === "APPROVED"}
-                    onClick={() => onOpen(selected)}
-                  >
-                    {t("Edit quotation", "تعديل عرض السعر")}
-                  </button>
-                  {user.permissions.includes("QUOTE_CREATE") && (
-                    <button disabled={busy} onClick={async () => {
-                      setBusy(true);
-                      try {
-                        const res = await api("quotation-templates");
-                        setAvailableUsers(res.availableUsers || []);
-                        setSharedWith(selected.sharedWith || []);
-                        setSharing(true);
-                      } catch(e) { setError((e as Error).message); }
-                      finally { setBusy(false); }
-                    }}>
-                      {t("Share", "مشاركة")}
-                    </button>
-                  )}
-                  {user.permissions.includes("QUOTE_ISSUE") &&
-                    selected.status === "APPROVED" && (
-                      <button
-                        className="primary"
-                        disabled={busy}
-                        onClick={() =>
-                          action(async () =>
-                            setReview(
-                              await api(
-                                "quotations/" + selected.id + "/review",
-                                "POST",
-                                {},
-                              ),
-                            ),
-                          )
-                        }
-                      >
-                        {t("Review & issue", "مراجعة وإصدار")}
-                      </button>
-                    )}
-                  {user.permissions.includes("QUOTE_ISSUE") &&
-                    selected.status !== "APPROVED" && (
-                      <button
-                        className="primary"
-                        disabled={busy}
-                        onClick={() =>
-                          action(async () => {
-                            const result = await api(
-                              "quotations/" + selected.id + "/submit-approval",
-                              "POST",
-                              {},
-                            );
-                            setSelected({ ...selected, status: result.status });
-                          })
-                        }
-                      >
-                        {t("Submit for approval", "إرسال للموافقة")}
-                      </button>
-                    )}
-                </>
-              )}
-              {[
-                "ISSUED",
-                "SENT",
-                "VIEWED",
-                "ACCEPTED",
-                "DECLINED",
-                "EXPIRED",
-              ].includes(selected.status) && (
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    action(async () =>
-                      onOpen(
-                        await api(
-                          "quotations/" + selected.id + "/revision",
-                          "POST",
-                          {},
-                        ),
-                      ),
-                    )
-                  }
-                >
-                  {t("Create revision", "إنشاء مراجعة")}
-                </button>
-              )}
-              {["ISSUED", "SENT", "VIEWED"].includes(selected.status) &&
-                user.permissions.includes("QUOTE_ISSUE") && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      action(async () => {
-                        const result = await api(
-                          "quotations/" + selected.id + "/customer-link",
-                          "POST",
-                          { days: 30 },
-                        );
-                        const link = `${location.origin}${appPath("/customer-quotation/" + result.token)}`;
-                        setShareLink(link);
-                        await navigator.clipboard?.writeText(link);
-                      })
-                    }
-                  >
-                    {t("Copy customer link", "نسخ رابط العميل")}
-                  </button>
-                )}
-              <button
-                disabled={busy}
-                onClick={() =>
-                  action(async () =>
-                    onOpen(
-                      await api(
-                        "quotations/" + selected.id + "/duplicate",
-                        "POST",
-                        {},
-                      ),
-                    ),
-                  )
-                }
-              >
-                {t("Duplicate", "نسخ")}
-              </button>
-              <a
-                className="button"
-                href={appPath("/api/v1/quotations/" + selected.id + "/print")}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {t("Print view", "عرض الطباعة")}
-              </a>
-              <button
-                disabled={busy}
-                onClick={() =>
-                  action(async () =>
-                    setPdf(
-                      await api(
-                        "quotations/" + selected.id + "/pdf",
-                        "POST",
-                        {},
-                      ),
-                    ),
-                  )
-                }
-              >
-                {t("Generate PDF", "إنشاء PDF")}
-              </button>
-              <button
-                disabled={busy}
-                onClick={exportToExcel}
-              >
-                {t("Export to Excel", "تصدير إلى Excel")}
-              </button>
-              {selected.status === "DRAFT" &&
-                user.permissions.includes("QUOTE_DELETE") && (
-                  <button
-                    className="danger"
-                    onClick={async () => {
-                      if (
-                        await showConfirm(
-                          t("Delete this draft?", "حذف هذه المسودة؟"),
-                        )
-                      )
-                        action(async () => {
-                          await api("quotations/" + selected.id, "DELETE");
-                          setSelected(null);
-                        });
-                    }}
-                  >
-                    {t("Delete", "حذف")}
-                  </button>
-                )}
-            </div>
-            {shareLink && (
-              <div className="notice">
-                <strong>
-                  {t("Customer link copied", "تم نسخ رابط العميل")}
-                </strong>
-                <small className="break-all">{shareLink}</small>
-              </div>
-            )}
-            {pdf &&
-              (pdf.status === "DONE" ? (
-                <a
-                  className="button primary"
-                  href={appPath("/api/v1/documents/" + pdf.id + "/download")}
-                >
-                  {t("Download PDF", "تنزيل PDF")}
-                </a>
-              ) : (
-                <div className="notice">
-                  {pdf.status === "FAILED"
-                    ? pdf.error
-                    : t(
-                        "Preparing PDF in background…",
-                        "جارٍ تجهيز PDF في الخلفية…",
-                      )}
-                </div>
-              ))}
             </>}
             {error && <div className="notice error">{error}</div>}
           </section>
