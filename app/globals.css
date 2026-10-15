@@ -5596,3 +5596,38 @@ body :is(h1, h2, h3, strong, b) {
   margin-top: 8px;
 }
 
+
+/* Quotation preparation: keep the main entry table visible and actions reachable. */
+.quotation-editor { min-width: 0; }
+.quotation-editor-actions { position: sticky; top: 0; z-index: 8; flex-wrap: wrap; gap: 8px; padding: 10px 0; background: var(--surface, #fff); border-bottom: 1px solid var(--border, #dbe2ea); }
+.quotation-editor-actions .editor-total { margin-inline-end: auto; font-variant-numeric: tabular-nums; }
+.quotation-editor .section-title { margin: 12px 0; flex-wrap: wrap; }
+.quotation-editor .quotation-customer-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.quotation-customer-fields > *, .quotations-list .form-grid > * { min-width: 0; }
+.quotation-customer-fields input, .quotations-list .form-grid input, .quotations-list .form-grid select { width: 100%; min-width: 0; }
+.quotation-customer-extras { margin: 8px 0; }
+.quotation-editor summary { cursor: pointer; font-size: .85rem; }
+.quotation-editor .previous-price-toggle { margin: 8px 0; padding: 8px; }
+.quotation-editor .previous-price-toggle small { display: none; }
+.quotation-entry-table { max-height: 62vh; overflow: auto; margin-top: 12px; }
+.quotation-entry-table table { min-width: 800px; table-layout: fixed; }
+.quotation-entry-table th { position: sticky; top: 0; z-index: 2; background: var(--surface, #fff); }
+.quotation-entry-table th:first-child { width: 34%; }
+.quotation-entry-table th:nth-child(2) { width: 9%; }
+.quotation-entry-table th:last-child { width: 15%; }
+.quotation-entry-table td, .quotation-entry-table th { padding: 8px; vertical-align: top; }
+.quotation-entry-table td:first-child { overflow-wrap: anywhere; }
+.quotation-entry-table input, .quotation-entry-table select { min-height: 34px; padding: 6px 8px; max-width: 100%; width: 100%; }
+.quotation-entry-table td .actions { flex-wrap: wrap; gap: 3px; }
+.quotation-entry-table td button { min-height: 32px; padding: 4px 7px; }
+.quotation-line-options { margin-top: 4px; }
+.quotation-line-options[open] { padding: 8px; border: 1px solid var(--border, #dbe2ea); border-radius: 6px; }
+.quotations-list .section-title { flex-wrap: wrap; gap: 12px; }
+.quotations-list .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) {
+ .quotation-editor .quotation-customer-fields, .quotations-list .form-grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+ .quotation-editor-actions .editor-total { flex-basis: 100%; }
+ .quotations-list .form-grid.three { grid-template-columns: minmax(0, 1fr); }
+}

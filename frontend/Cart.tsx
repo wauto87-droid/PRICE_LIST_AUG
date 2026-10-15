@@ -76,10 +76,10 @@ export function matchingCustomLineIndexes(
 export function nextEditableRow(
   lines: any[],
   currentIndex: number,
-  field: "discount" | "unitPriceExcl",
+  field: "discount" | "unitPriceExcl" | "quantity",
 ) {
   for (let index = currentIndex + 1; index < lines.length; index++) {
-    if (field === "discount" || field === "unitPriceExcl") return index;
+    if (["discount", "unitPriceExcl", "quantity"].includes(field)) return index;
   }
   return -1;
 }
@@ -337,12 +337,12 @@ export default function Cart({
   const moveToNextEntry = (
     event: React.KeyboardEvent<HTMLInputElement>,
     index: number,
-    field: "discount" | "unitPriceExcl",
+    field: "discount" | "unitPriceExcl" | "quantity",
   ) => {
     if (event.key !== "Enter") return;
+    event.preventDefault();
     const nextIndex = nextEditableRow(cartRef.current.lines, index, field);
     if (nextIndex < 0) return;
-    event.preventDefault();
     const next = document.querySelector<HTMLInputElement>(
       `[data-cart-field="${field}"][data-cart-row="${nextIndex}"]`,
     );
@@ -850,18 +850,42 @@ export default function Cart({
   }, [cart.lines]);
 
   return (
-    <section className="card">
+    <section className="card quotation-editor">
+      <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
+        <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {sum.total || "—"}</strong>
+        {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={onReloadShared}>Refresh prices and version</button>}
+        {cart.sharedPendingCommand && <p role="status">Retry the pending save before editing or refreshing. It will use the original command.</p>}
+        {!cart.sharedWorkflow && user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
+          <button disabled={!cart.lines.length} onClick={onTemplates}>
+            {t("Save as template", "حفظ كقالب")}
+          </button>
+        )}
+        <button
+          disabled={!online || busy || !cart.lines.length}
+          onClick={reprice}
+        >
+          {t("Recalculate", "إعادة الحساب")}
+        </button>
+        <button
+          className="primary"
+          disabled={!online || busy || !cart.lines.length || hasBlockingErrors}
+          onClick={save}
+        >
+          {busy
+            ? t("Saving…", "جارٍ الحفظ…")
+            : cart.sharedWorkflow
+              ? cart.sharedQuoteVersion ? t("Save quotation version", "حفظ نسخة العرض") : t("Convert to quotation", "تحويل إلى عرض سعر")
+            : cart.id
+              ? t("Update quotation", "تحديث عرض السعر")
+              : t("Save quotation", "حفظ عرض السعر")}
+        </button>
+      </div>
       <fieldset disabled={!!cart.sharedWorkflow && (busy || !!cart.sharedPendingCommand)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="section-title">
         <div>
           <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
           <h2>{cart.number || t("Current quotation", "عرض السعر الحالي")}</h2>
-          <p className="muted cart-subtitle">
-            {t(
-              "Review customer details, add internal notes, and save the quotation when ready.",
-              "راجع بيانات العميل وأضف الملاحظات واحفظ عرض السعر عندما يصبح جاهزاً.",
-            )}
-          </p>
+
         </div>
         <span className="pill">
           {cart.lines.length} {t("items", "أصناف")}
@@ -887,13 +911,13 @@ export default function Cart({
           setSuggestedCustomPart("");
         }}
       />}
-      {cart.sharedWorkflow && <div className="form-grid">
+      {cart.sharedWorkflow && <div className="form-grid quotation-customer-fields">
         <label>Currency<input value={cart.workflowCurrency} readOnly/></label>
         <label>Tax<select value={cart.sharedTaxBasis} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxBasis: e.target.value, sharedTaxRate: e.target.value === 'EXEMPT' ? '0' : cart.sharedTaxRate }))}><option value="EXCLUSIVE">Tax additional</option><option value="INCLUSIVE">Tax included</option><option value="EXEMPT">Exempt</option></select></label>
         <label>Tax rate %<input type="number" min="0" max="100" value={cart.sharedTaxRate} disabled={cart.sharedTaxBasis === 'EXEMPT'} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxRate: e.target.value }))}/></label>
         {user.role === 'ADMIN' && <label>Administrator reason<input value={cart.sharedOverrideReason} onChange={e => setCart({ ...cart, sharedOverrideReason: e.target.value })}/></label>}
       </div>}
-      <div className="form-grid">
+      <div className="form-grid quotation-customer-fields">
         {[
           ["name", "Customer name", "اسم العميل"],
           ["number", "Customer Code", "رمز العميل"],
@@ -919,6 +943,8 @@ export default function Cart({
             />
           </label>
         ))}
+      </div>
+      <details className="quotation-customer-extras"><summary>{t("Notes & customer options", "الملاحظات وخيارات العميل")}{cart.customer.notes ? " •" : ""}</summary>
         <div className="notice">
           <span>{t("Customer Code improves same-customer price highlighting.", "رمز العميل يحسن تمييز الأسعار السابقة لنفس العميل.")}</span>
           <button type="button" onClick={() => setCart({ ...cart, customer: { ...cart.customer, name: "", number: "1" } })}>{t("Walk-in Customer", "عميل نقدي")}</button>
@@ -926,7 +952,7 @@ export default function Cart({
         <label className="cart-notes">
           {t("Notes", "ملاحظات")}
           <textarea
-            rows={4}
+            rows={2}
             value={cart.customer.notes || ""}
             onChange={(e) =>
               setCart({
@@ -940,7 +966,7 @@ export default function Cart({
             )}
           />
         </label>
-      </div>
+      </details>
       {!cart.lines.length ? (
         <div className="empty-state">
           <h2>{t("Your cart is ready", "سلتك جاهزة")}</h2>
@@ -952,7 +978,7 @@ export default function Cart({
           </p>
         </div>
       ) : (
-        <div className="table-scroll">
+        <div className="table-scroll quotation-entry-table">
           <table>
             <thead>
               <tr>
@@ -1014,7 +1040,7 @@ export default function Cart({
                             change(i, "description", e.target.value)
                           }
                         />
-                        <CustomLineCatalogResolver
+                        <details><summary>{t("Find catalog match", "مطابقة الكتالوج")}</summary><CustomLineCatalogResolver
                           t={t}
                           sourceReference={String(l.input.partNumber ?? "")}
                           sourceDescription={String(l.input.description ?? "")}
@@ -1031,7 +1057,7 @@ export default function Cart({
                           onReplace={(product, scope, remember) =>
                             replaceCustomWithCatalog(i, product, scope, remember)
                           }
-                        />
+                        /></details>
                       </>
                     ) : (
                       <>
@@ -1062,6 +1088,7 @@ export default function Cart({
                         {importedDeliveryMeta(l)?.docDate || "—"}
                       </small>
                     )}
+                    <details className="quotation-line-options"><summary>{t("Cost & selling level", "التكلفة ومستوى البيع")}</summary>
                     <WorkflowCostReference
                       line={l}
                       visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
@@ -1123,6 +1150,7 @@ export default function Cart({
                         </select>
                       </label>
                     )}
+                    </details>
                     {!!l.livePriceError && (
                       <small className="sales-check-error">{l.livePriceError}</small>
                     )}
@@ -1137,6 +1165,9 @@ export default function Cart({
                   </td>
                   <td>
                     <input
+                      data-cart-field="quantity"
+                      data-cart-row={i}
+                      onKeyDown={(e) => moveToNextEntry(e, i, "quantity")}
                       aria-label={t("Quantity", "الكمية") + " " + l.partNumber}
                       className="compact"
                       type="number"
@@ -1401,34 +1432,6 @@ export default function Cart({
         </div>
       )}
       </fieldset>
-      <div className="actions footer-actions">
-        {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={onReloadShared}>Refresh prices and version</button>}
-        {cart.sharedPendingCommand && <p role="status">Retry the pending save before editing or refreshing. It will use the original command.</p>}
-        {!cart.sharedWorkflow && user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
-          <button disabled={!cart.lines.length} onClick={onTemplates}>
-            {t("Save as template", "حفظ كقالب")}
-          </button>
-        )}
-        <button
-          disabled={!online || busy || !cart.lines.length}
-          onClick={reprice}
-        >
-          {t("Recalculate", "إعادة الحساب")}
-        </button>
-        <button
-          className="primary"
-          disabled={!online || busy || !cart.lines.length || hasBlockingErrors}
-          onClick={save}
-        >
-          {busy
-            ? t("Saving…", "جارٍ الحفظ…")
-            : cart.sharedWorkflow
-              ? cart.sharedQuoteVersion ? t("Save quotation version", "حفظ نسخة العرض") : t("Convert to quotation", "تحويل إلى عرض سعر")
-            : cart.id
-              ? t("Update quotation", "تحديث عرض السعر")
-              : t("Save quotation", "حفظ عرض السعر")}
-        </button>
-      </div>
       <p className="muted">
         {online
           ? t(

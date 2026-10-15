@@ -171,3 +171,23 @@ test('native quotation routes direct shared records to the creator workspace and
     assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 0);
   } finally { await db.close!(); }
 });
+
+
+test('document preview hides workflow creation controls while Workflow retains all three actions', () => {
+ const row = { id:'request',ownerId:'owner',items:[{id:'item',partNumber:'CURRENT',name:'Part',offers:[]}],quotations:[{version:1,customer:'Buyer',currency:'SAR',total:'10',subtotal:'10',taxTotal:'0',lines:[{itemId:'item',partNumber:'SAVED-1',name:'Part',quantity:'1',unit:'pcs',sellingPrice:'10'}]}] };
+ const props = {row,data:{actorId:'owner'},busy:false,submit:async()=>{},onOpenDraft:()=>{},onPdf:()=>{},view:'quotation'};
+ const document = renderToStaticMarkup(createElement(QuotationActions,{...props,documentView:true}));
+ assert.match(document,/Edit quotation/); assert.doesNotMatch(document,/Create quotation —|Open this quotation from Workflow/);
+ assert.match(document,/SAVED-1/); assert.doesNotMatch(document,/CURRENT/);
+ const workflow = renderToStaticMarkup(createElement(QuotationActions,props));
+ for(const action of ['Edit draft (1)','Create quotation — all items (1)','Create quotation — priced items (0)']) assert.ok(workflow.includes(action));
+});
+
+test('PDF prints the saved part reference without current catalog or supplier information', () => {
+ const q = {id:'q',version:1,date:'2026-10-15',customer:'Buyer',currency:'SAR',taxBasis:'EXEMPT',taxRate:'0',subtotal:'10',taxTotal:'0',total:'10',lines:[{partNumber:'REF-<A>',name:'Part',quantity:'1',sellingPrice:'10',unit:'pcs',offer:{supplier:'private-shop',cost:'secret'}}]};
+ const company={companyName:'Synthetic',currency:'SAR'};
+ const snapshot=sharedQuotationSnapshot(q,company);
+ assert.equal(snapshot.lines[0].partNumber,'REF-<A>');
+ const html=quotationHtml(snapshot,company,'');
+ assert.match(html,/REF-&lt;A&gt;/); assert.doesNotMatch(html,/private-shop|secret/);
+});

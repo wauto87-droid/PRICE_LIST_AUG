@@ -206,7 +206,7 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
   await click("Open");
   await tick();
   for (const text of [
-    "Edit draft (1)",
+    "Edit quotation",
     "Generate PDF",
     "Print quotation / Save PDF",
     "Back to quotations",
@@ -220,7 +220,11 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
   assert.ok(print.href.includes("version=1"));
   await click("Generate PDF");
   assert.ok(document.querySelector("a[href*=shared-pdf]"));
-  await click("Back to quotations");
+  assert.equal(document.querySelector("button[aria-label=\"Close quotation\"]")?.textContent, "Close ×");
+  const visible = Array.from(document.querySelectorAll("button,p")).filter(e => !e.closest("[hidden]"));
+  assert.equal(visible.some(e => e.textContent?.includes("Create quotation —")), false);
+  assert.equal(visible.some(e => e.textContent?.startsWith("Open this quotation from Workflow")), false);
+  await act(async () => (document.querySelector("button[aria-label=\"Close quotation\"]") as HTMLButtonElement).click());
   await tick();
   assert.equal(document.querySelectorAll("[role=dialog]").length, 0);
   await act(async () => root.unmount());
@@ -238,7 +242,7 @@ test("unavailable ERP details leave visible disabled actions and Retry restores 
     await tick();
     assert.ok(document.querySelector("[role=alert]"));
     for (const text of [
-      "Edit draft",
+      "Edit quotation",
       "Generate PDF",
       "Print quotation / Save PDF",
     ]) {
@@ -249,7 +253,7 @@ test("unavailable ERP details leave visible disabled actions and Retry restores 
       assert.equal(button.disabled, true);
     }
     sharedUnavailable = false;
-    await click("Refresh progress");
+    await click("Refresh quotation");
     await tick();
     assert.equal(
       Array.from(document.querySelectorAll("button")).find(
@@ -319,7 +323,7 @@ test("the actual app keeps shared editing in Quotations and returns without refr
     await tick();
     await click("Open");
     await tick();
-    await click("Edit draft (1)");
+    await click("Edit quotation");
     await tick();
     assert.ok(document.querySelector(".workflow-editor"));
     assert.ok(document.body.textContent?.includes("Back to quotation"));
@@ -335,4 +339,44 @@ test("the actual app keeps shared editing in Quotations and returns without refr
     await act(async () => root.unmount());
     globalThis.fetch = previousFetch;
   }
+});
+
+
+test("quotation preparation keeps 25 editable rows, one save toolbar and keyboard focus after errors", async () => {
+  const {useState} = await import('react');
+  const Cart = (await import('../frontend/Cart')).default;
+  const {calculateCustom} = await import('../backend/pricing/engine');
+  const previousFetch=globalThis.fetch;
+  globalThis.fetch=async(input:any, init:any={})=> {
+    if(String(input).endsWith('/quotations') && init.method==='POST') return new Response(JSON.stringify({error:'Synthetic save rejected'}),{status:409,headers:{'content-type':'application/json'}});
+    return previousFetch(input,init);
+  };
+  const initial={customer:{name:'Synthetic',number:'',mobile:'',reference:'',notes:'Retain these notes'},lines:Array.from({length:25},(_,i)=>{
+    const input={type:'CUSTOM' as const,partNumber:`SYN-${i}`,description:`Synthetic item ${i}`,quantity:'1',unitPriceExcl:'10',discount:'0',unit:'pcs'};
+    return {partNumber:input.partNumber,description:input.description,input,price:calculateCustom(input,'15'),pending:false};
+  })};
+  function Harness(){const [cart,setCart]=useState(initial);return createElement(Cart,{t:(en:string)=>en,user:{id:'synthetic',permissions:['QUOTE_CREATE']},cart,setCart,settings:{vat:'15'},online:true,onSaved:()=>{throw new Error('Failed save cannot succeed')}});}
+  const root=createRoot(document.getElementById('root')!);
+  try {
+    await act(async()=>root.render(createElement(Harness))); await tick();
+    assert.equal(document.querySelectorAll('[data-cart-row-index]').length,25);
+    assert.equal(document.querySelectorAll('[aria-label="Quotation preparation actions"]').length,1);
+    const table=document.querySelector('.quotation-entry-table')!;
+    assert.ok(document.querySelector('[aria-label="Quotation preparation actions"]')!.compareDocumentPosition(table)&window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.equal((document.querySelector('.quotation-customer-extras') as HTMLDetailsElement).open,false);
+    const fields=Array.from(document.querySelectorAll<HTMLInputElement>('input[data-cart-field="quantity"]'));
+    fields[0].focus();
+    const enter=new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
+    await act(async()=>fields[0].dispatchEvent(enter));
+    assert.equal(enter.defaultPrevented,true);assert.equal(document.activeElement,fields[1]);
+    const setValue=Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value')!.set!;
+    await act(async()=>{setValue.call(fields[1],'3');fields[1].dispatchEvent(new dom.window.Event('input',{bubbles:true}));});
+    await tick();
+    await click('Save quotation');await tick();
+    assert.ok(document.querySelector('[role="alert"]'));
+    assert.equal((document.querySelector('input[data-cart-field="quantity"][data-cart-row="1"]') as HTMLInputElement).value,'3');
+    assert.equal((document.querySelector('.cart-notes textarea') as HTMLTextAreaElement).value,'Retain these notes');
+    fields.at(-1)!.focus();const lastEnter=new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
+    await act(async()=>fields.at(-1)!.dispatchEvent(lastEnter));assert.equal(lastEnter.defaultPrevented,true);
+  }finally{await act(async()=>root.unmount());globalThis.fetch=previousFetch;}
 });
