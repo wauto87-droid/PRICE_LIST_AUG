@@ -978,8 +978,8 @@ export default function Cart({
           </p>
         </div>
       ) : (
-        <div className="table-scroll quotation-entry-table">
-          <table>
+        <div className="table-scroll quotation-entry-table" tabIndex={0} role="region" aria-label={t("Quotation preparation table", "جدول إعداد عرض السعر")}>
+          <table aria-label={t("Quotation preparation items", "أصناف إعداد عرض السعر")}>
             <thead>
               <tr>
                 <th>{t("Part / description", "الصنف / الوصف")}</th>
@@ -1062,7 +1062,7 @@ export default function Cart({
                     ) : (
                       <>
                         <strong>{l.partNumber}</strong>
-                        <small>{l.description}</small>
+                        <small className="quotation-line-description" title={l.description}>{l.description}</small>
                         {importedDeliveryMeta(l) && (
                           <small>
                             {t("Delivery row", "صف التسليم")}{" "}
@@ -1088,7 +1088,8 @@ export default function Cart({
                         {importedDeliveryMeta(l)?.docDate || "—"}
                       </small>
                     )}
-                    <details className="quotation-line-options"><summary>{t("Cost & selling level", "التكلفة ومستوى البيع")}</summary>
+                    <details className="quotation-line-options"><summary>{t("Item details", "تفاصيل الصنف")}</summary>
+                    {(l.description || l.input?.description) && <p className="quotation-full-description">{l.description || l.input.description}</p>}
                     <WorkflowCostReference
                       line={l}
                       visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
