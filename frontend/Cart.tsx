@@ -2,6 +2,10 @@
 import ResponsiveTable from "./ResponsiveTable";
 import { compactQuotationNumber, quotationMoney } from "./quotation-display";
 import { useEffect, useRef, useState, useMemo } from "react";
+import { DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import SortableQuotationRow from './SortableQuotationRow';
+import { QuotationRowIdentity, reorderQuotationRows } from './quotation-row-order';
 import { api, type Translate } from "./api";
 import { totals, calculateCustom } from "@/backend/pricing/engine";
 import { levelLabel, visibleLevels } from "./levels";
@@ -183,17 +187,28 @@ export default function Cart({
 }) {
   const [error, setError] = useState("");
   const [focusTable, setFocusTable] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const activeDrag = useRef<string | null>(null);
+  const dragStartOrder = useRef<string[]>([]);
+  const identity = useRef(new QuotationRowIdentity());
+  const rowIds = identity.current.sync(cart.lines, String(cart.sharedDocumentId || cart.id || 'NEW'));
+  const colourGroups = useRef(new Map<string, number>());
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const [editingPriceRow, setEditingPriceRow] = useState<number | null>(null);
   const focusButton = useRef<HTMLButtonElement>(null);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
-    if (error) { setDetailsOpen(true); detailsRef.current?.scrollIntoView?.({block: 'nearest'}); }
+    if (error) { setFocusTable(false); setDetailsOpen(true); detailsRef.current?.scrollIntoView?.({block: 'nearest'}); }
   }, [error]);
   useEffect(() => {
     if (!focusTable) return;
     const exit = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setFocusTable(false); focusButton.current?.focus(); }
+      if (event.key === 'Escape' && !event.defaultPrevented && !activeDrag.current) { setFocusTable(false); focusButton.current?.focus(); }
     };
     window.addEventListener('keydown', exit);
     return () => window.removeEventListener('keydown', exit);
@@ -223,10 +238,38 @@ export default function Cart({
   const pricingSignatures = useRef<Record<number, string>>({});
   const pricingGenerations = useRef<Record<number, number>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
+  const reorderDisabled = busy || reuseBusy || !!cart.sharedPendingCommand || hasPendingLines || Object.values(repricingRows).some(Boolean);
+  function reorderRows(from: number, to: number) {
+    if (reorderDisabled) return;
+    const current = cartRef.current;
+    const lines = reorderQuotationRows(current.lines, from, to);
+    if (lines === current.lines) return;
+    const focused = document.activeElement as HTMLElement | null;
+    const remap = (index: number | null) => index === null ? null : lines.indexOf(current.lines[index]);
+    setEditingPriceRow(remap(editingPriceRow));
+    setRecentPriceRow(remap(recentPriceRow));
+    activePriceRow.current = remap(activePriceRow.current);
+    // Invalidate index-addressed responses before changing positions.
+    for (const timer of Object.values(pricingTimers.current)) clearTimeout(timer);
+    pricingTimers.current = {};
+    pricingSignatures.current = {};
+    for (const key of Object.keys(pricingGenerations.current)) pricingGenerations.current[Number(key)]++;
+    setRepricingRows({});
+    const next = { ...current, lines, ...(current.sharedWorkflow ? { sharedDirty: true } : {}) };
+    cartRef.current = next;
+    setCart(next);
+    requestAnimationFrame(() => { if (focused?.isConnected) focused.focus({ preventScroll: true }); });
+  }
   const targetTotalValue =
     cart.adjustment?.targetTotal ?? cart.totals?.targetTotal ?? "";
   const calculatedSum = computeCartTotals(cart.lines, cart.sharedWorkflow ? "" : targetTotalValue);
-  const sum = cart.sharedWorkflow && !cart.sharedDirty && cart.sharedCanonicalTotals ? { ...calculatedSum, ...cart.sharedCanonicalTotals } : calculatedSum;
+  // Changing display order must not replace authoritative saved totals with a
+  // local preview. Actual quantity/price/tax changes still use the preview.
+  const pricingKey = JSON.stringify([cart.workflowCurrency, cart.sharedTaxBasis, cart.sharedTaxRate,
+    cart.lines.map((line: any) => [line.sharedItemId, line.input?.quantity, line.input?.unitPriceExcl]).sort((a: any[], b: any[]) => String(a[0]).localeCompare(String(b[0])))]);
+  const savedPricing = useRef({ document: cart.sharedDocumentId, key: pricingKey });
+  if (!cart.sharedDirty || savedPricing.current.document !== cart.sharedDocumentId) savedPricing.current = { document: cart.sharedDocumentId, key: pricingKey };
+  const sum = cart.sharedWorkflow && (!cart.sharedDirty || pricingKey === savedPricing.current.key) && cart.sharedCanonicalTotals ? { ...calculatedSum, ...cart.sharedCanonicalTotals } : calculatedSum;
   const hasBlockingErrors =
     cart.lines.some((line: any) => cartLineHasBlockingError(line)) ||
     !!sum.error;
@@ -865,11 +908,11 @@ export default function Cart({
       const pn = l.input?.partNumber || l.partNumber;
       if (pn) counts[pn] = (counts[pn] || 0) + 1;
     }
-    let colorIndex = 1;
     const indices: Record<string, number> = {};
     for (const [pn, count] of Object.entries(counts)) {
       if (count > 1) {
-        indices[pn] = colorIndex++;
+        if (!colourGroups.current.has(pn)) colourGroups.current.set(pn, colourGroups.current.size % 6 + 1);
+        indices[pn] = colourGroups.current.get(pn)!;
       }
     }
     return { partCounts: counts, duplicateIndices: indices };
@@ -970,6 +1013,20 @@ export default function Cart({
           </p>
         </div>
       ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter}
+          accessibility={{ screenReaderInstructions: { draggable: t('Press Space to pick up this item, arrow keys to move, Space to drop, or Escape to cancel.', 'اضغط المسافة لالتقاط الصنف والأسهم لنقله والمسافة لوضعه أو Escape للإلغاء.') }, announcements: {
+            onDragStart: ({active}) => t(`Picked up item ${rowIds.indexOf(String(active.id))+1}.`, `تم التقاط الصنف ${rowIds.indexOf(String(active.id))+1}.`),
+            onDragOver: ({over}) => over ? t(`Move to position ${rowIds.indexOf(String(over.id))+1}.`, `النقل إلى الموضع ${rowIds.indexOf(String(over.id))+1}.`) : undefined,
+            onDragEnd: ({over}) => over ? t(`Dropped at position ${rowIds.indexOf(String(over.id))+1}.`, `تم الوضع في الموضع ${rowIds.indexOf(String(over.id))+1}.`) : t('Move cancelled.', 'تم إلغاء النقل.'),
+            onDragCancel: () => t('Move cancelled.', 'تم إلغاء النقل.'),
+          } }}
+          onDragStart={({active}) => { activeDrag.current=String(active.id); dragStartOrder.current=[...rowIds]; setDragId(String(active.id)); }}
+          onDragCancel={() => { activeDrag.current=null; setDragId(null); }}
+          onDragEnd={({active,over}) => {
+            if (over && dragStartOrder.current.join('|')===rowIds.join('|')) reorderRows(rowIds.indexOf(String(active.id)),rowIds.indexOf(String(over.id)));
+            activeDrag.current=null; setDragId(null);
+          }}>
+        <SortableContext items={rowIds}>
         <div className="table-scroll quotation-entry-table">
           <ResponsiveTable aria-label={t("Quotation preparation items", "أصناف إعداد عرض السعر")}>
             <thead>
@@ -1011,9 +1068,10 @@ export default function Cart({
                 const isDuplicate = pn && partCounts[pn] > 1;
                 const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
                 return (
-                <tr className={isDuplicate ? `duplicate-line duplicate-color-${(dupIndex % 6) || 6}` : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                <SortableQuotationRow id={rowIds[i]} disabled={reorderDisabled} handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)} className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""} key={rowIds[i]} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                  {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary"><span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
@@ -1318,12 +1376,8 @@ export default function Cart({
                           `Move ${l.partNumber} up`,
                           `نقل ${l.partNumber} للأعلى`,
                         )}
-                        disabled={i === 0}
-                        onClick={() => {
-                          const lines = [...cart.lines];
-                          [lines[i - 1], lines[i]] = [lines[i], lines[i - 1]];
-                          setCart({ ...cart, lines });
-                        }}
+                        disabled={reorderDisabled || i === 0}
+                        onClick={() => reorderRows(i, i-1)}
                       >
                         ↑
                       </button>
@@ -1333,12 +1387,8 @@ export default function Cart({
                           `Move ${l.partNumber} down`,
                           `نقل ${l.partNumber} للأسفل`,
                         )}
-                        disabled={i === cart.lines.length - 1}
-                        onClick={() => {
-                          const lines = [...cart.lines];
-                          [lines[i], lines[i + 1]] = [lines[i + 1], lines[i]];
-                          setCart({ ...cart, lines });
-                        }}
+                        disabled={reorderDisabled || i === cart.lines.length - 1}
+                        onClick={() => reorderRows(i, i+1)}
                       >
                         ↓
                       </button>
@@ -1359,11 +1409,15 @@ export default function Cart({
                       </button>
                     </div>
                   </td>
-                </tr>
+                  </>}
+                </SortableQuotationRow>
               )})}
             </tbody>
           </ResponsiveTable>
         </div>
+        </SortableContext>
+        <DragOverlay>{dragId && <div className="quotation-drag-preview">{t('Move item','نقل الصنف')} {rowIds.indexOf(dragId)+1} · {cart.lines[rowIds.indexOf(dragId)]?.input?.partNumber || cart.lines[rowIds.indexOf(dragId)]?.partNumber}</div>}</DragOverlay>
+        </DndContext>
       )}
       {hasPendingLines && (
         <div className="notice">

@@ -5683,6 +5683,21 @@ body :is(h1, h2, h3, strong, b) {
 
 /* Screen-only tables: one scroll boundary, semantic rows at every width. */
 @media screen {
+ .quotation-entry-table .duplicate-color-1 { --quotation-row-tint:#fff0f0; }
+ .quotation-entry-table .duplicate-color-2 { --quotation-row-tint:#f0f8ff; }
+ .quotation-entry-table .duplicate-color-3 { --quotation-row-tint:#f0fff0; }
+ .quotation-entry-table .duplicate-color-4 { --quotation-row-tint:#fffaf0; }
+ .quotation-entry-table .duplicate-color-5 { --quotation-row-tint:#f8f0ff; }
+ .quotation-entry-table .duplicate-color-6 { --quotation-row-tint:#f0ffff; }
+ .quotation-entry-table .responsive-table tr.duplicate-line>td { background:var(--quotation-row-tint); }
+ .quotation-duplicate-label { font-size:9px; font-weight:500; border:1px solid currentColor; border-radius:3px; padding:0 3px; }
+ .quotation-entry-table .quotation-drag-handle { cursor:grab; touch-action:none; min-width:24px; min-height:32px; padding:0; flex-shrink:0; background:transparent; border-color:transparent; font-size:18px; }
+ .quotation-entry-table .quotation-drag-handle:disabled { cursor:wait; opacity:.4; }
+ .quotation-entry-table .quotation-drag-handle:focus-visible { outline:2px solid var(--red); outline-offset:1px; }
+ .quotation-entry-table tr[data-dragging]>td { opacity:.55; }
+ .quotation-entry-table tr[data-drop-position=before]>td { border-block-start:3px solid var(--red); }
+ .quotation-entry-table tr[data-drop-position=after]>td { border-block-end:3px solid var(--red); }
+ .quotation-drag-preview { border:2px solid var(--red); background:var(--surface,#fff); padding:12px; box-shadow:0 4px 20px #0003; border-radius:6px; max-width:320px; overflow-wrap:anywhere; cursor:grabbing; }
  .responsive-table-region { max-width:100%; min-width:0; max-height:70dvh; overflow:auto; overscroll-behavior-inline:contain; position:relative; isolation:isolate; border-radius:8px; }
  .wf-desktop:has(.responsive-table-region) { display:block!important; }
  .responsive-table-region:focus-visible { outline:2px solid var(--red); outline-offset:2px; }
@@ -5751,9 +5766,14 @@ body :is(h1, h2, h3, strong, b) {
  .quotation-editor .cart-roundoff-field input { min-height:30px; padding:4px; }
  body:has(.quotation-focus-table) :is(.app-header,.main-nav,.app-footer,.footer-actions) { display:none; }
  body:has(.quotation-focus-table) main { padding:6px; max-width:none; }
- .quotation-focus-table fieldset>.quotation-customer-fields,.quotation-focus-table :is(.previous-price-toggle,.custom-line-entry),.quotation-focus-table .quotation-customer-extras:not([open]) { display:none; }
- .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 155px); }
+ .quotation-focus-table fieldset>.quotation-customer-fields,.quotation-focus-table :is(.previous-price-toggle,.custom-line-entry,.quotation-customer-extras) { display:none; }
+ .quotation-focus-table { height:calc(100dvh - 12px); box-sizing:border-box; display:flex; flex-direction:column; }
+ .quotation-focus-table>.quotation-compact-header,.quotation-focus-table>.quotation-editor-actions { flex-shrink:0; }
+ .quotation-focus-table>fieldset { flex:1; min-height:0; display:flex; flex-direction:column; }
+ .quotation-focus-table .quotation-entry-table { flex:1; min-height:96px; display:flex; flex-direction:column; }
+ .quotation-focus-table .quotation-entry-table>.responsive-table-region { flex:1; min-height:0; max-height:none; }
  .quotation-focus-table>p.muted { display:none; }
+ .quotation-focus-table .cart-totals { flex-shrink:0; }
  @media(max-width:760px) {
   .responsive-table-region .responsive-table :is(th,td) { width:auto!important; min-height:0; text-align:start; padding:6px; }
   .responsive-table-region .responsive-table tr { margin:0!important; border-radius:0!important; padding:0!important; }
@@ -5765,6 +5785,6 @@ body :is(h1, h2, h3, strong, b) {
   .quotation-editor-actions .editor-total { flex-basis:auto; font-size:12px; }
   .quotation-editor-actions button { min-height:36px; }
   .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 300px); }
-  .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 150px); }
+  .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:none; }
  }
 }

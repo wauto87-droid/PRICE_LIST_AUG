@@ -23,6 +23,12 @@ Object.assign(globalThis, {
   localStorage: dom.window.localStorage,
   HTMLElement: dom.window.HTMLElement,
   HTMLInputElement: dom.window.HTMLInputElement,
+  SVGElement: dom.window.SVGElement,
+  Element: dom.window.Element,
+  Document: dom.window.Document,
+  getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+  requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0),
+  cancelAnimationFrame: clearTimeout,
   FormData: dom.window.FormData,
   IS_REACT_ACT_ENVIRONMENT: true,
 });
@@ -366,7 +372,7 @@ test("quotation preparation keeps 25 editable rows, one save toolbar and keyboar
     assert.equal(document.querySelectorAll('[aria-label="Quotation preparation actions"]').length,1);
     const table=document.querySelector('.quotation-entry-table')!;
     assert.ok(document.querySelector('[aria-label="Quotation preparation actions"]')!.compareDocumentPosition(table)&window.Node.DOCUMENT_POSITION_FOLLOWING);
-    assert.equal((document.querySelector('.quotation-customer-extras') as HTMLDetailsElement).open,false);
+    assert.equal((document.querySelector('.quotation-customer-extras') as HTMLDetailsElement).open,true);
     const fields=Array.from(document.querySelectorAll<HTMLInputElement>('input[data-cart-field="quantity"]'));
     fields[0].focus();
     const enter=new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
@@ -410,7 +416,8 @@ test('33-item and 100-item editors retain precision, focus mode and hidden detai
         await act(async()=>root.render(createElement(Harness)));await tick();
         assert.equal(document.querySelectorAll('[data-cart-row-index]').length,count);
         const details=document.querySelector('.quotation-customer-extras') as HTMLDetailsElement;
-        assert.equal(details.open,false);
+        assert.equal(details.open,true);
+        await act(async()=>details.querySelector('summary')!.click());await tick();assert.equal(details.open,false);
         const price=document.querySelector('input[data-cart-field="unitPriceExcl"]') as HTMLInputElement;
         assert.equal(price.value,'1.005');
         await act(async()=>price.focus());await tick();assert.equal(price.value,'1.005000');
@@ -459,4 +466,96 @@ test('responsive table preserves selection, sort actions and complete columns', 
     await act(async()=>(region.querySelector('input') as HTMLInputElement).click());await tick();assert.equal((region.querySelector('input') as HTMLInputElement).checked,true);
     await click('Sort item');assert.equal(region.querySelector('tbody tr td:nth-child(2)')?.textContent,'Part B');
   }finally{await act(async()=>root.unmount());}
+});
+
+test('ordinary and linked quotation rows retain identities, colours, focus and exact save order through arrows and keyboard drag', async()=>{
+  const {useState}=await import('react');
+  const Cart=(await import('../frontend/Cart')).default;
+  const {calculateCustom}=await import('../backend/pricing/engine');
+  const previousRect=dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const previousFetch=globalThis.fetch;
+  // Synthetic geometry exercises sensors, not rendered-layout acceptance.
+  dom.window.HTMLElement.prototype.getBoundingClientRect=function(){
+    const row=this.closest('[data-cart-row-index]') || ((this.matches('.quotation-drag-preview') || this.firstElementChild?.matches('.quotation-drag-preview')) ? document.querySelector('tr[data-dragging]') : null);
+    const index=Number(row?.getAttribute('data-cart-row-index')||0);
+    const y=row?index*48:0;
+    return {x:0,y,top:y,bottom:y+(row?48:480),left:0,right:720,width:720,height:row?48:480,toJSON(){return {};}};
+  };
+  dom.window.requestAnimationFrame=globalThis.requestAnimationFrame;
+  dom.window.cancelAnimationFrame=globalThis.cancelAnimationFrame;
+  dom.window.scrollTo=()=>{};
+  let submitted:any;
+  globalThis.fetch=async(input:any,init:any={})=>{
+    if (/\/(quotations|shared-quotation)$/.test(String(input)) && init.method==='POST') {
+      submitted=JSON.parse(init.body);
+      return new Response(JSON.stringify({error:'Synthetic failed save'}),{status:422,headers:{'content-type':'application/json'}});
+    }
+    return previousFetch(input,init);
+  };
+  const key=async(target:Element,code:string)=>{
+    await act(async()=>target.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:code==='Space'?' ':code,code,bubbles:true,cancelable:true})));
+    await tick();
+  };
+  try{
+    for(const [count,shared] of [[33,false],[100,true]] as const){
+      let current:any;
+      const initial={customer:{name:'Synthetic buyer',number:'SYN',notes:'Keep notes'},...(shared?{sharedWorkflow:true,sharedDocumentId:'synthetic-document',sharedRequestId:'synthetic-request',sharedRevision:1,sharedQuoteVersion:0,sharedTaxBasis:'EXCLUSIVE',sharedTaxRate:'15',workflowCurrency:'SAR',sharedCanonicalTotals:{subtotal:'100.00',vat:'15.00',total:'115.00'}}:{}),lines:Array.from({length:count},(_,i)=>{
+        const input={type:'CUSTOM' as const,partNumber:`DUP-${i%6}`,description:`Unique row ${i} `+'long description '.repeat(5),quantity:String(i+1),unitPriceExcl:'1.005001',discount:'0',unit:'pcs'};
+        return {input,partNumber:input.partNumber,description:input.description,price:calculateCustom(input,'15'),sharedItemId:`item-${i}`,pending:false};
+      })};
+      function Harness(){const [cart,setCart]=useState(initial);current=cart;return createElement(Cart,{t:(en:string)=>en,user:{id:'synthetic',permissions:['QUOTE_CREATE']},cart,setCart,settings:{vat:'15'},online:true,onSaved:()=>{throw Error('Synthetic save must fail')}});}
+      const root=createRoot(document.getElementById('root')!);
+      try{
+        await act(async()=>root.render(createElement(Harness)));await tick();
+        const rows=()=>Array.from(document.querySelectorAll('[data-cart-row-index]'));
+        const first=rows()[0], id=first.getAttribute('data-row-id'), colour=first.className;
+        const originalTotal=document.querySelector('.editor-total')!.textContent;
+        assert.equal(new Set(rows().map(row=>row.className)).size,6);
+        assert.match(first.textContent||'',/Repeated/);
+        const itemDetails=first.querySelector('.quotation-line-options') as HTMLDetailsElement;
+        await act(async()=>itemDetails.querySelector('summary')!.click());await tick();assert.equal(itemDetails.open,true);
+        const customerDetails=document.querySelector('.quotation-customer-extras') as HTMLDetailsElement;
+        assert.equal(customerDetails.open,true);
+        await click('Focus table');await click('Exit focus');assert.equal(customerDetails.open,true);
+        await act(async()=>customerDetails.querySelector('summary')!.click());await tick();assert.equal(customerDetails.open,false);
+        const arrow=first.querySelector('button[title="Move down"]') as HTMLButtonElement;
+        await act(async()=>{arrow.focus();arrow.click();});await tick();
+        assert.equal(rows()[1],first);assert.equal(first.className,colour);assert.equal(itemDetails.open,true);assert.equal(document.activeElement,arrow);
+        assert.equal(current.lines[1],initial.lines[0]);if(shared)assert.equal(current.sharedDirty,true);
+        assert.equal(document.querySelector('.editor-total')!.textContent,originalTotal);
+        assert.equal(customerDetails.open,false);
+        // Keyboard drop moves the complete stable row; Space does not submit.
+        const handle=first.querySelector('.quotation-drag-handle') as HTMLButtonElement;
+        await act(async()=>handle.focus());
+        await key(handle,'Space');assert.ok(document.querySelector('.quotation-drag-preview'));
+        await key(handle,'ArrowDown');
+        await key(handle,'Space');
+        assert.equal(rows()[2].getAttribute('data-row-id'),id,JSON.stringify(current.lines.slice(0,6).map((l:any)=>l.sharedItemId)));assert.equal(current.lines[2],initial.lines[0]);
+        assert.equal(first.className,colour);assert.equal(itemDetails.open,true);
+        const beforeCancel=[...current.lines];
+        await click('Focus table');
+        await key(handle,'Space');await key(handle,'ArrowDown');await key(handle,'Escape');
+        assert.deepEqual(current.lines,beforeCancel);assert.equal(document.querySelector('.quotation-drag-preview'),null);
+        assert.ok(document.querySelector('.quotation-focus-table'),'Cancelling a drag keeps focus mode');
+        await click('Exit focus');
+        // Mouse dragging uses the handle, with an insertion marker before drop.
+        const mouse=async(target:EventTarget,type:string,y:number)=>{await act(async()=>target.dispatchEvent(new dom.window.MouseEvent(type,{clientX:20,clientY:y,button:0,buttons:type==='mouseup'?0:1,bubbles:true,cancelable:true})));await tick();};
+        await mouse(handle,'mousedown',120);await mouse(document,'mousemove',24);await mouse(document,'mousemove',24);
+        assert.ok(document.querySelector('.quotation-drag-preview'));assert.ok(document.querySelector('[data-drop-position]'));
+        await mouse(document,'mouseup',24);assert.equal(current.lines[0],initial.lines[0]);assert.equal(rows()[0],first);
+        // Touch hold activates only the handle; cancellation does not reorder.
+        const touch=async(type:string)=>{const point={identifier:1,target:handle,clientX:20,clientY:24,pageX:20,pageY:24};await act(async()=>handle.dispatchEvent(new dom.window.TouchEvent(type,{touches:type==='touchcancel'?[]:[point],changedTouches:[point],bubbles:true,cancelable:true})));await tick();};
+        const beforeTouch=[...current.lines];await touch('touchstart');assert.equal(document.querySelector('.quotation-drag-preview'),null);
+        await act(async()=>new Promise(resolve=>setTimeout(resolve,270)));await tick();assert.ok(document.querySelector('.quotation-drag-preview'));
+        await touch('touchcancel');assert.deepEqual(current.lines,beforeTouch);assert.equal(document.querySelector('.quotation-drag-preview'),null);
+        assert.equal(document.querySelector('.editor-total')!.textContent,originalTotal);
+        // Saving uses existing payloads in the chosen order, with no editor IDs.
+        await click(shared?'Convert to quotation':'Save quotation');await tick();
+        assert.ok(document.querySelector('[role=alert]'));assert.equal(customerDetails.open,true);
+        assert.deepEqual(submitted.lines.map((l:any)=>shared?l.itemId:l.description),current.lines.map((l:any)=>shared?l.sharedItemId:l.input.description));
+        assert.ok(submitted.lines.every((l:any)=>(shared?l.sellingPrice:l.unitPriceExcl)==='1.005001'));
+        assert.doesNotMatch(JSON.stringify(submitted),/quotation-row-/);
+      }finally{await act(async()=>root.unmount());}
+    }
+  }finally{dom.window.HTMLElement.prototype.getBoundingClientRect=previousRect;globalThis.fetch=previousFetch;}
 });
