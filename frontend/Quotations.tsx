@@ -360,7 +360,6 @@ export default function Quotations({
               <h2>{selected.number}</h2>
               <button type="button" onClick={() => closeDocument()}>{t("Back to quotations", "العودة إلى عروض الأسعار")}</button><button type="button" aria-label={t("Close quotation", "إغلاق عرض السعر")} onClick={() => closeDocument()}>{t("Close", "إغلاق")} ×</button>
             </div>
-            {onOpenWorkflow && <button type="button" onClick={() => onOpenWorkflow({ documentId: selected.id || selected.sharedDocumentId, requestId: selected.sharedRequestId, ...selected.workflowIdentity, fulfillment: true })}>{t("Open workflow", "فتح سير العمل")}</button>}
             {selected.sharedWorkflow && <SharedQuotation documentView view="quotation" showFulfillment={false} key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/>}
             {!selected.sharedWorkflow && <>
             <div className="actions wrap quotation-document-actions" role="toolbar" aria-label={t("Quotation actions", "إجراءات عرض السعر")}>

@@ -8,6 +8,12 @@ import { quotationHtml } from '../pdf/template';
 import { quotationPdfFingerprint } from '../pdf/cache';
 import { quotationPdfDisposition } from '../pdf/filename';
 
+const artifactPath = (id: string) => path.join(path.resolve(process.env.UPLOAD_DIR || '.data/uploads'), 'pdf', `${id}.pdf`);
+async function artifactExists(id: string) {
+  try { return (await fs.stat(artifactPath(id))).isFile(); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+
 /** Customer-only adapter. Monetary totals come from ERP, never local pricing settings. */
 export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
   check(q.id && Number.isInteger(q.version), 'Quotation identity missing');
@@ -25,7 +31,7 @@ export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
     const unit = new Decimal(l.sellingPrice);
     const excl = q.taxBasis === 'INCLUSIVE' ? unit.div(rate.div(100).plus(1)) : unit;
     const incl = q.taxBasis === 'INCLUSIVE' ? unit : unit.mul(rate.div(100).plus(1));
-    return { partNumber: l.partNumber || '', description: [l.name, l.specifications].filter(Boolean).join(' · '), unit: l.unit,
+    return { partNumber: l.partNumber === undefined ? 'Not recorded' : l.partNumber || '—', description: [l.name, l.specifications].filter(Boolean).join(' · '), unit: l.unit,
       price: { quantity: l.quantity, finalExcl: excl.toFixed(2), finalIncl: incl.toFixed(2), subtotal: lineSubtotal.toFixed(2), vatAmount: lineTax.toFixed(2), vatRate: rate.toFixed(), total: lineSubtotal.plus(lineTax).toFixed(2) } };
   });
   return { id: q.id, sharedVersion: q.version, number: `${number || q.id} · V${q.version}`, status: 'ISSUED', created_at: q.date, issued_at: q.date,
@@ -46,7 +52,8 @@ export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: 
     const snapshot = existing?.payload.snapshot || sharedQuotationSnapshot(q, settings.data, number);
     const fingerprint = quotationPdfFingerprint(snapshot);
     const cached = await one(tx, "SELECT id,status,error,payload FROM jobs WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 AND payload->>'fingerprint'=$2 AND status IN ('PENDING','RUNNING','DONE') ORDER BY created_at DESC,id DESC LIMIT 1", [quoteId, fingerprint]);
-    if (cached) return cached;
+    if (cached && (cached.status !== 'DONE' || await artifactExists(cached.id))) return cached;
+    if (cached) await tx.query("UPDATE jobs SET status='EXPIRED',error='PDF file unavailable; regeneration requested' WHERE id=$1", [cached.id]);
     const id = randomUUID();
     const payload = { quoteId, sharedRequestId: requestId, sharedQuotationId: q.id, sharedVersion: q.version, ownerId: actorId, fingerprint, snapshot };
     await tx.query("INSERT INTO jobs(id,kind,payload) VALUES($1,'QUOTE_PDF',$2::jsonb)", [id, JSON.stringify(payload)]);
@@ -67,8 +74,10 @@ export async function sharedQuotationPrint(db: DB, actorId: string, result: any,
 export async function sharedQuotationPdfDownload(db: DB, result: any, jobId: string, download: boolean) {
   const job = await one(db, "SELECT * FROM jobs WHERE id=$1 AND kind='QUOTE_PDF'", [jobId]);
   check(job && job.payload.sharedRequestId === result.requestId && result.quotations.some((q: any) => q.id === job.payload.sharedQuotationId && q.version === job.payload.sharedVersion), 'PDF not found', 404);
-  if (!download) return Response.json({ id: job.id, status: job.status, error: job.error });
+  const missing = job.status === 'DONE' && !await artifactExists(job.id);
+  if (!download) return Response.json({ id: job.id, status: missing ? 'EXPIRED' : job.status, error: missing ? 'PDF file unavailable. Generate PDF again.' : job.error });
+  check(!missing, 'PDF file unavailable. Generate PDF again.', 409);
   check(job.status === 'DONE', 'PDF is not ready', 409);
-  return new Response(await fs.readFile(path.join(path.resolve(process.env.UPLOAD_DIR || '.data/uploads'), 'pdf', `${job.id}.pdf`)),
+  return new Response(await fs.readFile(artifactPath(job.id)),
     { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': quotationPdfDisposition(job.payload.snapshot), 'Cache-Control': 'private, no-store' } });
 }

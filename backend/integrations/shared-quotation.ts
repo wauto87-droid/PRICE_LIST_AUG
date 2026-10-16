@@ -46,15 +46,25 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
   }
   // Send the browser's revision unchanged. Retrying uses the same event ID and payload.
   const localPdf = input.action === 'quotationPdf';
+  // Saved customer documents remain usable when ERP is unavailable. This path
+  // uses only persisted versions, after the same creator/administrator checks.
+  const documentRead = req.method === 'GET' && params.has('documentOnly');
+  const saved = documentId && (documentRead || localPdf || params.has('pdfJob') || params.has('print'))
+    ? await one(db, 'SELECT data FROM sw_job_documents WHERE id=$1', [documentId]) : undefined;
   let result;
   try {
-    result = await transport(config, req.method === 'POST' && !localPdf ? 'jobs-quotation-command' : 'jobs-quotation', { ...input, documentId: documentId || undefined, requestId: requestId || undefined, actorId: actor.id });
+    if (saved?.data.erpRequestId && saved.data.sharedQuotations?.length) {
+      check(!requestId || requestId === saved.data.erpRequestId, 'Quotation request identity mismatch', 409);
+      result = { documentId, requestId: saved.data.erpRequestId, requestRevision: saved.data.quotationRevision,
+        actorId: actor.id, ownerId: sourceQuote.owner_id, number: sourceQuote.number,
+        items: [], orders: [], quotations: saved.data.sharedQuotations, savedDocument: true };
+    } else result = await transport(config, req.method === 'POST' && !localPdf ? 'jobs-quotation-command' : 'jobs-quotation', { ...input, documentId: documentId || undefined, requestId: requestId || undefined, actorId: actor.id });
   } catch (error) {
     // Preserve explicit validation/conflict responses so the editor can refresh after a rejected save.
     if (error instanceof ConnectionError && [400, 409, 422].includes(error.remoteStatus || 0)) throw new ConnectionError(error.message, error.remoteStatus, error.remoteStatus, error.code);
     throw error;
   }
-  if (documentId && !localPdf && !params.has('pdfJob') && !params.has('print')) {
+  if (documentId && !documentRead && !localPdf && !params.has('pdfJob') && !params.has('print')) {
     await db.transaction(async tx => {
       const link = await one(tx, 'SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE', [documentId]);
       if (link && Number(link.data.quotationRevision || 0) <= result.requestRevision) {

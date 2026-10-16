@@ -69,7 +69,7 @@ const json = (value: any) =>
 globalThis.fetch = async (input: any, init: any = {}) => {
   const path = String(input).split("/api/v1/")[1];
   fetches.push(path);
-  if (sharedUnavailable && path === "shared-quotation?documentId=linked")
+  if (sharedUnavailable && path === "shared-quotation?documentId=linked&documentOnly=1")
     return new Response(
       JSON.stringify({ error: "Synthetic ERP unavailable" }),
       { status: 503, headers: { "content-type": "application/json" } },
@@ -77,7 +77,7 @@ globalThis.fetch = async (input: any, init: any = {}) => {
   if (path.startsWith("quotations?")) return json(rows);
   if (path === "quotation-templates")
     return json({ items: [], availableUsers: [] });
-  if (path === "shared-quotation?documentId=linked")
+  if (path === "shared-quotation?documentId=linked&documentOnly=1")
     return json({
       requestId: "request-linked",
       requestRevision: 1,
@@ -175,7 +175,9 @@ test("legacy quotation toolbar, Back and browser Forward retain the list; old PD
   await act(async () => {
     window.history.forward();
   });
-  await tick();
+  // History traversal dispatches popstate asynchronously; wait for its actual
+  // result rather than assuming it completes within one 15ms scheduling tick.
+  for (let i = 0; i < 100 && document.querySelector('[role=dialog]')?.getAttribute('aria-label') !== 'DR-one'; i++) await tick();
   assert.equal(
     document.querySelector("[role=dialog]")?.getAttribute("aria-label"),
     "DR-one",
@@ -223,6 +225,7 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
   assert.equal(document.querySelector("button[aria-label=\"Close quotation\"]")?.textContent, "Close ×");
   const visible = Array.from(document.querySelectorAll("button,p")).filter(e => !e.closest("[hidden]"));
   assert.equal(visible.some(e => e.textContent?.includes("Create quotation —")), false);
+  assert.equal(visible.some(e => e.textContent?.trim() === "Open workflow"), false);
   assert.equal(visible.some(e => e.textContent?.startsWith("Open this quotation from Workflow")), false);
   await act(async () => (document.querySelector("button[aria-label=\"Close quotation\"]") as HTMLButtonElement).click());
   await tick();
