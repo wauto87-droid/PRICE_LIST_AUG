@@ -5718,9 +5718,19 @@ body :is(h1, h2, h3, strong, b) {
  .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) :is(th,td):nth-child(2):not([colspan]) { position:sticky; inset-inline-start:var(--selection-width); z-index:1; background:var(--surface,#fff); }
  .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) thead th:nth-child(2) { z-index:4; }
  :is(.table-scroll,.dense-table-wrap,.pt-table-container):has(> .responsive-table-region) { overflow:visible!important; max-width:100%; min-width:0; }
- .workspace-side:has(> .quotation-editor),.workflow-editor { grid-column:1/-1; min-width:0; width:100%; max-width:none; }
+ /* Give the editor a real available height, rather than a tall empty card
+    around the global fieldset's 300px scrolling limit. */
+ body:has(.quotation-editor) { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
+ body:has(.quotation-editor)>:is(.app-header,.main-nav,.app-footer,aside) { flex-shrink:0; }
+ main:has(.quotation-editor) { flex:1 1 0%; min-height:0; width:100%; max-width:none; padding:8px; display:flex; flex-direction:column; overflow:auto; }
+ .workspace-side:has(> .quotation-editor),.workflow-editor:has(> .quotation-editor) { grid-column:1/-1; flex:1; min-height:min-content; min-width:0; width:100%; max-width:none; display:flex; flex-direction:column; gap:8px; }
+ :is(.workspace-side,.workflow-editor):has(> .quotation-editor)>:not(.quotation-editor) { flex-shrink:0; }
  main:has(.quotation-editor)>.page-heading { display:none; }
- .quotation-editor { padding:12px!important; }
+ .quotation-editor { flex:1; min-height:min-content; padding:8px!important; display:flex; flex-direction:column; }
+ .quotation-editor>:not(fieldset) { flex-shrink:0; }
+ .quotation-editor>fieldset { flex:1; min-height:min-content; max-height:none; overflow:visible; display:flex; flex-direction:column; }
+ .quotation-editor>fieldset>:not(.quotation-entry-table) { flex-shrink:0; }
+ .quotation-editor>p.muted { margin:8px 0 0; }
  .quotation-compact-header { display:flex; align-items:center; gap:12px; min-height:28px; font-size:13px; }
  .quotation-compact-header>span:first-of-type { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
  .quotation-compact-header>span:last-child { white-space:nowrap; color:var(--muted); }
@@ -5731,8 +5741,10 @@ body :is(h1, h2, h3, strong, b) {
  .quotation-customer-fields input,.quotation-customer-fields select { min-height:32px; padding:5px 8px; }
  .quotation-customer-extras { margin:4px 0; }
  .quotation-customer-extras[open] { padding:8px; border:1px solid var(--line); border-radius:6px; }
- .quotation-entry-table { overflow:visible; max-height:none; margin-top:6px; }
- .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 310px); min-height:180px; }
+ .quotation-entry-table { flex:1; min-height:160px; display:flex; flex-direction:column; overflow:visible; max-height:none; margin-top:8px; }
+ /* Size containment prevents all 100 rows contributing to the flex minimum.
+    Only this region scrolls rows; main is the short-screen escape hatch. */
+ .quotation-entry-table>.responsive-table-region { flex:1 1 0%; min-height:0; max-height:none; contain:size; }
  .quotation-entry-table .responsive-table { table-layout:fixed; min-width:720px; }
  .quotation-entry-table th:first-child { width:40%; }
  .quotation-entry-table th:nth-child(2) { width:10%; }
@@ -5767,13 +5779,10 @@ body :is(h1, h2, h3, strong, b) {
  body:has(.quotation-focus-table) :is(.app-header,.main-nav,.app-footer,.footer-actions) { display:none; }
  body:has(.quotation-focus-table) main { padding:6px; max-width:none; }
  .quotation-focus-table fieldset>.quotation-customer-fields,.quotation-focus-table :is(.previous-price-toggle,.custom-line-entry,.quotation-customer-extras) { display:none; }
- .quotation-focus-table { height:calc(100dvh - 12px); box-sizing:border-box; display:flex; flex-direction:column; }
- .quotation-focus-table>.quotation-compact-header,.quotation-focus-table>.quotation-editor-actions { flex-shrink:0; }
- .quotation-focus-table>fieldset { flex:1; min-height:0; display:flex; flex-direction:column; }
- .quotation-focus-table .quotation-entry-table { flex:1; min-height:96px; display:flex; flex-direction:column; }
- .quotation-focus-table .quotation-entry-table>.responsive-table-region { flex:1; min-height:0; max-height:none; }
  .quotation-focus-table>p.muted { display:none; }
- .quotation-focus-table .cart-totals { flex-shrink:0; }
+ /* Linked-editor Back/progress controls remain available on leaving focus. */
+ body:has(.quotation-focus-table) main>button,
+ :is(.workspace-side,.workflow-editor):has(> .quotation-focus-table)>:not(.quotation-focus-table) { display:none; }
  @media(max-width:760px) {
   .responsive-table-region .responsive-table :is(th,td) { width:auto!important; min-height:0; text-align:start; padding:6px; }
   .responsive-table-region .responsive-table tr { margin:0!important; border-radius:0!important; padding:0!important; }
@@ -5784,7 +5793,5 @@ body :is(h1, h2, h3, strong, b) {
   .quotation-entry-table .quotation-item-summary { min-height:44px; }
   .quotation-editor-actions .editor-total { flex-basis:auto; font-size:12px; }
   .quotation-editor-actions button { min-height:36px; }
-  .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 300px); }
-  .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:none; }
  }
 }
