@@ -1,4 +1,6 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
+import { compactQuotationNumber, quotationMoney } from "./quotation-display";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { api, type Translate } from "./api";
 import { totals, calculateCustom } from "@/backend/pricing/engine";
@@ -180,6 +182,22 @@ export default function Cart({
   onReloadShared?: () => void;
 }) {
   const [error, setError] = useState("");
+  const [focusTable, setFocusTable] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [editingPriceRow, setEditingPriceRow] = useState<number | null>(null);
+  const focusButton = useRef<HTMLButtonElement>(null);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (error) { setDetailsOpen(true); detailsRef.current?.scrollIntoView?.({block: 'nearest'}); }
+  }, [error]);
+  useEffect(() => {
+    if (!focusTable) return;
+    const exit = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setFocusTable(false); focusButton.current?.focus(); }
+    };
+    window.addEventListener('keydown', exit);
+    return () => window.removeEventListener('keydown', exit);
+  }, [focusTable]);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [suggestedCustomPart, setSuggestedCustomPart] = useState("");
@@ -193,6 +211,14 @@ export default function Cart({
   const cartRef = useRef(cart);
   const pendingSharedSave = useRef<PendingQuotationCommand | null>(null);
   const sharedSaving = useRef(false);
+  const refreshBaseline = useRef(JSON.stringify(cart.customer));
+  useEffect(() => { refreshBaseline.current = JSON.stringify(cart.customer); },
+    [cart.sharedDocumentId, cart.sharedRevision, cart.sharedQuoteVersion]);
+  async function refreshSharedDraft() {
+    if ((cart.sharedDirty || refreshBaseline.current !== JSON.stringify(cart.customer)) &&
+      !await showConfirm(t('Refresh prices and version? Unsaved quotation edits will be replaced.', 'تحديث الأسعار والنسخة؟ سيتم استبدال التعديلات غير المحفوظة.'))) return;
+    onReloadShared?.();
+  }
   const pricingTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const pricingSignatures = useRef<Record<number, string>>({});
   const pricingGenerations = useRef<Record<number, number>>({});
@@ -850,10 +876,12 @@ export default function Cart({
   }, [cart.lines]);
 
   return (
-    <section className="card quotation-editor">
+    <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ''}`}>
+      <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span></div>
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
-        <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {sum.total || "—"}</strong>
-        {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={onReloadShared}>Refresh prices and version</button>}
+        <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
+        <button type="button" ref={focusButton} aria-pressed={focusTable} onClick={() => setFocusTable(value => !value)}>{focusTable ? t("Exit focus", "إنهاء التركيز") : t("Focus table", "تركيز الجدول")}</button>
+        {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={() => void refreshSharedDraft()}>Refresh prices and version</button>}
         {cart.sharedPendingCommand && <p role="status">Retry the pending save before editing or refreshing. It will use the original command.</p>}
         {!cart.sharedWorkflow && user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
           <button disabled={!cart.lines.length} onClick={onTemplates}>
@@ -881,16 +909,6 @@ export default function Cart({
         </button>
       </div>
       <fieldset disabled={!!cart.sharedWorkflow && (busy || !!cart.sharedPendingCommand)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-      <div className="section-title">
-        <div>
-          <div className="eyebrow">{t("QUOTATION CART", "سلة عرض السعر")}</div>
-          <h2>{cart.number || t("Current quotation", "عرض السعر الحالي")}</h2>
-
-        </div>
-        <span className="pill">
-          {cart.lines.length} {t("items", "أصناف")}
-        </span>
-      </div>
       {!cart.sharedWorkflow && user.permissions.includes("QUOTE_PRICE_HISTORY") && (
         <label className="notice previous-price-toggle">
           <input
@@ -911,41 +929,15 @@ export default function Cart({
           setSuggestedCustomPart("");
         }}
       />}
+<div className="form-grid quotation-customer-fields">{[["name","Customer name","اسم العميل"],["number","Customer Code","رمز العميل"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>setCart({...cart,customer:{...cart.customer,[key]:e.target.value}})} onBlur={()=>{if(key==='number')void loadCustomerByCode(String(cart.customer.number||''));}}/></label>)}</div>
+      <details ref={detailsRef} className="quotation-customer-extras" open={detailsOpen} onToggle={e=>setDetailsOpen(e.currentTarget.open)}><summary>{t('Quotation details','تفاصيل عرض السعر')} · {cart.workflowCurrency || 'SAR'} · {t('VAT','الضريبة')} {cart.sharedWorkflow ? cart.sharedTaxBasis === 'EXEMPT' ? '0' : cart.sharedTaxRate : settings.vat}%</summary>
       {cart.sharedWorkflow && <div className="form-grid quotation-customer-fields">
         <label>Currency<input value={cart.workflowCurrency} readOnly/></label>
         <label>Tax<select value={cart.sharedTaxBasis} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxBasis: e.target.value, sharedTaxRate: e.target.value === 'EXEMPT' ? '0' : cart.sharedTaxRate }))}><option value="EXCLUSIVE">Tax additional</option><option value="INCLUSIVE">Tax included</option><option value="EXEMPT">Exempt</option></select></label>
         <label>Tax rate %<input type="number" min="0" max="100" value={cart.sharedTaxRate} disabled={cart.sharedTaxBasis === 'EXEMPT'} onChange={e => setCart(recalculateSharedDraft({ ...cart, sharedTaxRate: e.target.value }))}/></label>
         {user.role === 'ADMIN' && <label>Administrator reason<input value={cart.sharedOverrideReason} onChange={e => setCart({ ...cart, sharedOverrideReason: e.target.value })}/></label>}
       </div>}
-      <div className="form-grid quotation-customer-fields">
-        {[
-          ["name", "Customer name", "اسم العميل"],
-          ["number", "Customer Code", "رمز العميل"],
-          ["mobile", "Mobile", "الجوال"],
-          ["reference", "Reference", "المرجع"],
-        ].map(([key, en, ar]) => (
-          <label key={key}>
-            {t(en, ar)}
-            <input
-              value={cart.customer[key]}
-              onChange={(e) =>
-                setCart({
-                  ...cart,
-                  customer: { ...cart.customer, [key]: e.target.value },
-                })
-              }
-              onBlur={() => { if (key === "number") void loadCustomerByCode(String(cart.customer.number || "")); }}
-              placeholder={
-                key === "name"
-                  ? t("Walk-in Customer (optional)", "عميل نقدي (اختياري)")
-                  : ""
-              }
-            />
-          </label>
-        ))}
-      </div>
-      <details className="quotation-customer-extras"><summary>{t("Notes & customer options", "الملاحظات وخيارات العميل")}{cart.customer.notes ? " •" : ""}</summary>
-        <div className="notice">
+<div className="form-grid quotation-customer-fields">{[["mobile","Mobile","الجوال"],["reference","Reference","المرجع"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>setCart({...cart,customer:{...cart.customer,[key]:e.target.value}})} onBlur={()=>{if(key==='number')void loadCustomerByCode(String(cart.customer.number||''));}}/></label>)}</div>        <div className="notice">
           <span>{t("Customer Code improves same-customer price highlighting.", "رمز العميل يحسن تمييز الأسعار السابقة لنفس العميل.")}</span>
           <button type="button" onClick={() => setCart({ ...cart, customer: { ...cart.customer, name: "", number: "1" } })}>{t("Walk-in Customer", "عميل نقدي")}</button>
         </div>
@@ -978,8 +970,8 @@ export default function Cart({
           </p>
         </div>
       ) : (
-        <div className="table-scroll quotation-entry-table" tabIndex={0} role="region" aria-label={t("Quotation preparation table", "جدول إعداد عرض السعر")}>
-          <table aria-label={t("Quotation preparation items", "أصناف إعداد عرض السعر")}>
+        <div className="table-scroll quotation-entry-table">
+          <ResponsiveTable aria-label={t("Quotation preparation items", "أصناف إعداد عرض السعر")}>
             <thead>
               <tr>
                 <th>{t("Part / description", "الصنف / الوصف")}</th>
@@ -1020,7 +1012,9 @@ export default function Cart({
                 const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
                 return (
                 <tr className={isDuplicate ? `duplicate-line duplicate-color-${(dupIndex % 6) || 6}` : ""} key={i} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
-                  <td>
+                  <td className="quotation-item-cell">
+                    <div className="quotation-item-summary"><span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
                         <span className="pill custom-line-badge">
@@ -1088,7 +1082,7 @@ export default function Cart({
                         {importedDeliveryMeta(l)?.docDate || "—"}
                       </small>
                     )}
-                    <details className="quotation-line-options"><summary>{t("Item details", "تفاصيل الصنف")}</summary>
+
                     {(l.description || l.input?.description) && <p className="quotation-full-description">{l.description || l.input.description}</p>}
                     <WorkflowCostReference
                       line={l}
@@ -1151,7 +1145,7 @@ export default function Cart({
                         </select>
                       </label>
                     )}
-                    </details>
+                    </div></details>
                     {!!l.livePriceError && (
                       <small className="sales-check-error">{l.livePriceError}</small>
                     )}
@@ -1163,6 +1157,7 @@ export default function Cart({
                         )}
                       </small>
                     )}
+
                   </td>
                   <td>
                     <input
@@ -1249,10 +1244,12 @@ export default function Cart({
                         {...wheelSafeNumberInputProps}
                         data-cart-field="unitPriceExcl"
                         data-cart-row={i}
+                        onFocus={() => setEditingPriceRow(i)}
+                        onBlur={() => setEditingPriceRow(null)}
                         value={
                           unresolvedImportedCustom(l)
                             ? ""
-                            : l.input.unitPriceExcl
+                            : editingPriceRow === i ? l.input.unitPriceExcl : compactQuotationNumber(l.input.unitPriceExcl)
                         }
                         onChange={(e) =>
                           change(i, "unitPriceExcl", e.target.value)
@@ -1262,11 +1259,7 @@ export default function Cart({
                         }
                       />
                     )}
-                    {l.input?.type === "CUSTOM" ? (
-                      !unresolvedImportedCustom(l) && (
-                        <small>{l.pending ? "—" : l.price?.finalExcl}</small>
-                      )
-                    ) : (
+                    {l.input?.type === "CUSTOM" ? null : (
                       <>
                         <input
                           aria-label={
@@ -1278,10 +1271,12 @@ export default function Cart({
                           type="text"
                           inputMode="decimal"
                           maxLength={15}
+                          onFocus={() => setEditingPriceRow(i)}
+                          onBlur={() => setEditingPriceRow(null)}
                           data-cart-field="unitPriceExcl"
                           data-cart-row={i}
                           value={
-                            l.targetPriceDraft ?? l.price?.finalExcl ?? ""
+                            editingPriceRow === i ? (l.targetPriceDraft ?? l.price?.finalExcl ?? "") : compactQuotationNumber(l.targetPriceDraft ?? l.price?.finalExcl ?? "")
                           }
                           onChange={(e) =>
                             changeCatalogFinalPrice(i, e.target.value)
@@ -1309,11 +1304,11 @@ export default function Cart({
                           : "—"}
                       </small>
                     ) : (
-                      l.price?.total ?? "—"
+                      quotationMoney(l.price?.total, cart.workflowCurrency || "SAR")
                     )}
                   </td>
                   <td>
-                    <div className="actions">
+                    <div className="actions"><details className="quotation-row-actions"><summary aria-label={t("Row actions","إجراءات السطر")+" "+(i+1)}>⋯</summary><div className="quotation-secondary-actions">
                       {user.permissions.includes("QUOTE_PRICE_HISTORY") && (
                         <button title={t("Recent prices (F10)", "الأسعار السابقة (F10)")} onClick={() => setRecentPriceRow(i)}>F10</button>
                       )}
@@ -1347,6 +1342,7 @@ export default function Cart({
                       >
                         ↓
                       </button>
+                    </div></details>
                       <button
                         title={t("Remove", "حذف")}
                         onClick={() =>
@@ -1366,7 +1362,7 @@ export default function Cart({
                 </tr>
               )})}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       )}
       {hasPendingLines && (
@@ -1383,10 +1379,10 @@ export default function Cart({
       {sum && (
         <div className="cart-totals">
           <span>
-            {t("Subtotal", "المجموع")} <b>{sum.subtotal}</b>
+            {t("Subtotal", "المجموع")} <b>{quotationMoney(sum.subtotal, cart.workflowCurrency || 'SAR')}</b>
           </span>
           <span>
-            {t("VAT", "الضريبة")} <b>{sum.vat}</b>
+            {t("VAT", "الضريبة")} <b>{quotationMoney(sum.vat, cart.workflowCurrency || 'SAR')}</b>
           </span>
           {!cart.sharedWorkflow && <label className="cart-roundoff-field">
             <span>{t("Round-off total", "إجمالي التقريب")}</span>
@@ -1409,11 +1405,11 @@ export default function Cart({
           </label>}
           {sum.quoteDiscount !== "0.00" && (
             <span>
-              {t("Total discount", "خصم الإجمالي")} <b>{sum.quoteDiscount}</b>
+              {t("Total discount", "خصم الإجمالي")} <b>{quotationMoney(sum.quoteDiscount, cart.workflowCurrency || 'SAR')}</b>
             </span>
           )}
           <span className="grand-total">
-            {t("Grand total", "الإجمالي")} <b>{cart.workflowCurrency || "SAR"} {sum.total}</b>
+            {t("Grand total", "الإجمالي")} <b>{cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || 'SAR')}</b>
           </span>
         </div>
       )}

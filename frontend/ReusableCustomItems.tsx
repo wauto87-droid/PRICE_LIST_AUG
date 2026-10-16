@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import ProductEditor, { blankProduct } from "./ProductEditor";
@@ -86,7 +87,7 @@ export default function ReusableCustomItems({ t }: { t: Translate }) {
       </p>
       {error && <div className="notice error">{error}</div>}
       <div className="table-scroll">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               <th>{t("Reference", "المرجع")}</th>
@@ -170,7 +171,7 @@ export default function ReusableCustomItems({ t }: { t: Translate }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       {edit && (
         <div className="modal-backdrop">

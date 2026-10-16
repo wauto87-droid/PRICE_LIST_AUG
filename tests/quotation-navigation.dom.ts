@@ -383,3 +383,80 @@ test("quotation preparation keeps 25 editable rows, one save toolbar and keyboar
     await act(async()=>fields.at(-1)!.dispatchEvent(lastEnter));assert.equal(lastEnter.defaultPrevented,true);
   }finally{await act(async()=>root.unmount());globalThis.fetch=previousFetch;}
 });
+
+test('33-item and 100-item editors retain precision, focus mode and hidden details through failed saves', async () => {
+  const {useState}=await import('react');
+  const Cart=(await import('../frontend/Cart')).default;
+  const {calculateCustom}=await import('../backend/pricing/engine');
+  const {registerConfirmHandler,resolveConfirm}=await import('../frontend/confirm');
+  const previousFetch=globalThis.fetch;
+  let submitted:any;
+  globalThis.fetch=async(input:any,init:any={})=>{
+    if(init.method==='POST' && /\/(quotations|shared-quotation)$/.test(String(input))) {
+      submitted=JSON.parse(init.body);
+      return new Response(JSON.stringify({error:'Synthetic administrator/customer validation failed'}),{status:422,headers:{'content-type':'application/json'}});
+    }
+    return previousFetch(input,init);
+  };
+  try {
+    for(const [count,shared] of [[33,false],[100,true]] as const) {
+      let refreshed=0;
+      const initial:any={customer:{name:'Synthetic long customer',number:'SYN',mobile:'',reference:'Retained reference',notes:'Retained notes'},
+        ...(shared?{sharedWorkflow:true,sharedQuoteVersion:1,sharedRevision:1,sharedDocumentId:'synthetic-document',sharedRequestId:'synthetic-request',workflowCurrency:'SAR',sharedTaxBasis:'EXCLUSIVE',sharedTaxRate:'15',sharedOverrideReason:''}:{}),
+        lines:Array.from({length:count},(_,i)=>{const input={type:'CUSTOM' as const,partNumber:`REPEATED-${i%3}`,description:'Very long synthetic description '.repeat(8),quantity:'1',unitPriceExcl:'1.005000',discount:'0',unit:'pcs'};return {partNumber:input.partNumber,description:input.description,input,price:calculateCustom(input,'15'),pending:false,sharedItemId:`item-${i}`};})};
+      function Harness(){const [cart,setCart]=useState(initial);return createElement(Cart,{t:(en:string)=>en,user:{id:'synthetic',role:'ADMIN',permissions:['QUOTE_CREATE','QUOTE_PRICE_HISTORY']},cart,setCart,settings:{vat:'15'},online:true,onReloadShared:()=>{refreshed++;},onSaved:()=>{throw Error('Failed save cannot succeed')}});}
+      const root=createRoot(document.getElementById('root')!);
+      try {
+        await act(async()=>root.render(createElement(Harness)));await tick();
+        assert.equal(document.querySelectorAll('[data-cart-row-index]').length,count);
+        const details=document.querySelector('.quotation-customer-extras') as HTMLDetailsElement;
+        assert.equal(details.open,false);
+        const price=document.querySelector('input[data-cart-field="unitPriceExcl"]') as HTMLInputElement;
+        assert.equal(price.value,'1.005');
+        await act(async()=>price.focus());await tick();assert.equal(price.value,'1.005000');
+        await act(async()=>price.blur());await tick();assert.equal(price.value,'1.005');
+        await click('Focus table');assert.ok(document.querySelector('.quotation-focus-table'));
+        await act(async()=>window.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
+        assert.equal(document.querySelector('.quotation-focus-table'),null);
+        assert.equal(document.activeElement?.textContent,'Focus table');
+        const rowActions=document.querySelector('.quotation-row-actions') as HTMLDetailsElement;
+        assert.equal(rowActions.open,false);
+        await act(async()=>rowActions.querySelector('summary')!.click());await tick();
+        assert.equal(rowActions.open,true);assert.ok(rowActions.querySelector('button[title*="F10"]'));
+        if(shared){
+          let confirmation='';registerConfirmHandler(payload=>{confirmation=payload.message;});
+          const customer=document.querySelector('.quotation-customer-fields input') as HTMLInputElement;
+          const setValue=Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value')!.set!;
+          await act(async()=>{setValue.call(customer,'Retained changed customer');customer.dispatchEvent(new dom.window.Event('input',{bubbles:true}));});await tick();
+          await click('Refresh prices and version');assert.match(confirmation,/Unsaved quotation edits/);
+          await act(async()=>resolveConfirm(false));await tick();assert.equal(refreshed,0);assert.equal(customer.value,'Retained changed customer');
+          await click('Refresh prices and version');await act(async()=>resolveConfirm(true));await tick();assert.equal(refreshed,1);
+          registerConfirmHandler(null);
+        }
+        await click(shared?'Save quotation version':'Save quotation');await tick();
+        assert.ok(document.querySelector('[role=alert]'));assert.equal(details.open,true);
+        assert.equal(document.querySelectorAll('[data-cart-row-index]').length,count);
+        assert.equal((document.querySelector('.cart-notes textarea') as HTMLTextAreaElement).value,'Retained notes');
+        assert.equal(shared?submitted.lines[0].sellingPrice:submitted.lines[0].unitPriceExcl,'1.005000');
+      } finally { await act(async()=>root.unmount()); }
+    }
+  } finally {registerConfirmHandler(null);globalThis.fetch=previousFetch;}
+});
+
+test('responsive table preserves selection, sort actions and complete columns', async()=>{
+  const {useState}=await import('react');
+  const ResponsiveTable=(await import('../frontend/ResponsiveTable')).default;
+  function Harness(){const [selected,setSelected]=useState(false);const [ascending,setAscending]=useState(true);return createElement(ResponsiveTable,{'aria-label':'Synthetic inventory'},
+    createElement('thead',null,createElement('tr',null,createElement('th',null,'Select'),createElement('th',null,createElement('button',{onClick:()=>setAscending(x=>!x)},'Sort item')))),
+    createElement('tbody',null,(ascending?['Part A','Part B']:['Part B','Part A']).map(part=>createElement('tr',{key:part},createElement('td',null,createElement('input',{type:'checkbox','aria-label':'Select '+part,checked:selected,onChange:e=>setSelected(e.currentTarget.checked)})),createElement('td',null,part)))));
+  }
+  const root=createRoot(document.getElementById('root')!);
+  try{
+    await act(async()=>root.render(createElement(Harness)));await tick();
+    const region=document.querySelector('.responsive-table-region')!;
+    assert.equal(region.getAttribute('role'),'region');assert.equal(region.getAttribute('tabindex'),'0');assert.equal(region.getAttribute('aria-label'),'Synthetic inventory');
+    assert.equal(region.querySelectorAll('tbody tr').length,2);assert.equal(region.querySelectorAll('tbody td').length,4);
+    await act(async()=>(region.querySelector('input') as HTMLInputElement).click());await tick();assert.equal((region.querySelector('input') as HTMLInputElement).checked,true);
+    await click('Sort item');assert.equal(region.querySelector('tbody tr td:nth-child(2)')?.textContent,'Part B');
+  }finally{await act(async()=>root.unmount());}
+});

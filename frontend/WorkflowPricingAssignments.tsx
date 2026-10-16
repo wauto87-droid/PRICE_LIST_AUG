@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState, useRef } from "react";
 import { api } from "./api";
 import SharedQuotation from "./SharedQuotation";
@@ -451,7 +452,7 @@ export default function PricingCollectionJobs({
             </div>
           ) : (
             <div style={{ overflowX: "auto" }}>
-              <table>
+              <ResponsiveTable>
                 <thead>
                   <tr>
                     <th>Document</th>
@@ -535,7 +536,7 @@ export default function PricingCollectionJobs({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           )}
         </>
@@ -718,7 +719,7 @@ export default function PricingCollectionJobs({
               {doc.syncWarning && <p role="alert">{doc.syncWarning}</p>}
 
               <div style={{ overflowX: "auto", margin: "16px 0" }}>
-                <table>
+                <ResponsiveTable>
                   <thead>
                     <tr>
                       <th>Select</th>
@@ -828,7 +829,7 @@ export default function PricingCollectionJobs({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </div>
 
               {doc.status === "DRAFT" && doc.canAssign && context?.branchId && !context.error && (

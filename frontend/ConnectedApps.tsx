@@ -1,4 +1,5 @@
 'use client';
+import ResponsiveTable from "./ResponsiveTable";
 
 import React, { useCallback, useEffect, useState, useRef } from 'react';
 
@@ -446,7 +447,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                     </div>
                   ) : (
                     <div className="table-scroll">
-                      <table className="conn-table">
+                      <ResponsiveTable className="conn-table">
                         <thead>
                           <tr>
                             <th>Key Name</th>
@@ -502,7 +503,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </ResponsiveTable>
                     </div>
                   )}
                 </div>
@@ -550,7 +551,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                 </div>
               ) : (
                 <div className="table-scroll">
-                  <table className="conn-table">
+                  <ResponsiveTable className="conn-table">
                     <thead>
                       <tr>
                         <th>Time</th>
@@ -593,7 +594,7 @@ export default function ConnectedApps({ call = workflowConnectionCall }: { call?
                         );
                       })}
                     </tbody>
-                  </table>
+                  </ResponsiveTable>
                 </div>
               )}
             </div>

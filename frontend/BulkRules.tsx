@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
@@ -497,7 +498,7 @@ export default function BulkRules({
             </button>
           </div>
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   <th>Select</th>
@@ -558,7 +559,7 @@ export default function BulkRules({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           <div className="actions wrap">
             <button

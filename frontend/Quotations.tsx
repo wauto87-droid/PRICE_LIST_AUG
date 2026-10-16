@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { levelLabel } from "./levels";
 import { useEffect, useState, useRef } from "react";
 import { api, type Translate } from "./api";
@@ -291,7 +292,7 @@ export default function Quotations({
         </div>
       )}
       <div className="table-scroll">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               <th>{t("Number", "الرقم")}</th>
@@ -342,7 +343,7 @@ export default function Quotations({
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       {!rows.length && (
         <div className="empty-state">

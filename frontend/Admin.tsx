@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useRef, useState } from "react";
 import {
   sectionData,
@@ -1199,7 +1200,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       )}
                     </div>
                   )}
-                  <table>
+                  <ResponsiveTable>
                     <thead>
                       <tr>
                         <th>
@@ -1283,7 +1284,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </ResponsiveTable>
                 </div>
                 <div className="actions wrap">
                   <button
@@ -1640,7 +1641,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                     {preview && (
                       <>
                         <div className="table-scroll">
-                          <table>
+                          <ResponsiveTable>
                             <tbody>
                               {preview.preview.map((r: any) => (
                                 <tr key={r.id}>
@@ -1656,7 +1657,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                                 </tr>
                               ))}
                             </tbody>
-                          </table>
+                          </ResponsiveTable>
                         </div>
                         <button
                           className="primary"
@@ -1734,7 +1735,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 >
                   {t("Add", "إضافة")}
                 </button>
-                <table>
+                <ResponsiveTable>
                   <tbody>
                     {data.map((row: any) => (
                       <tr key={row.id}>
@@ -1762,7 +1763,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </>
             )}
             {section === "users" && (
@@ -1784,7 +1785,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 >
                   {t("Add user", "إضافة مستخدم")}
                 </button>
-                <table>
+                <ResponsiveTable>
                   <thead>
                     <tr>
                       <th>{t("Name", "الاسم")}</th>
@@ -1840,7 +1841,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </>
             )}
             {section === "roles" && (
@@ -1915,7 +1916,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   </div>
                 )}
                 <div className="table-scroll">
-                  <table>
+                  <ResponsiveTable>
                   <thead>
                     <tr>
                       <th>{t("Date", "التاريخ")}</th>
@@ -1940,7 +1941,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     ))}
                   </tbody>
-                  </table>
+                  </ResponsiveTable>
                 </div>
               </>
             )}
@@ -1978,7 +1979,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                 >
                   {t("Back up now", "نسخ احتياطي الآن")}
                 </button>
-                <table>
+                <ResponsiveTable>
                   <tbody>
                     {data.map((b: any) => (
                       <tr key={b.id}>
@@ -1991,7 +1992,7 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </>
             )}
             {section === "settings" && (

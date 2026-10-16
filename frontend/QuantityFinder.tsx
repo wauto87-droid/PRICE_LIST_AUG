@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -542,7 +543,7 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                   </button>
                 </div>
                 <div className="sales-check-table-wrap quantity-finder-table-wrap">
-                  <table className="sales-check-table quantity-finder-table">
+                  <ResponsiveTable className="sales-check-table quantity-finder-table">
                     <colgroup>
                       {view === "GROUPS" ? (
                         <>
@@ -665,7 +666,7 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                         ),
                       )}
                     </tbody>
-                  </table>
+                  </ResponsiveTable>
                 </div>
                 <div className="actions wrap">
                   <button
@@ -735,7 +736,7 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                     </div>
                   )}
                   <div className="sales-check-table-wrap quantity-finder-table-wrap">
-                    <table className="sales-check-table quantity-finder-table detail-table">
+                    <ResponsiveTable className="sales-check-table quantity-finder-table detail-table">
                       <thead>
                         <tr>
                           <th>Row</th>
@@ -800,7 +801,7 @@ export default function QuantityFinder({ t }: { t: Translate }) {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </ResponsiveTable>
                   </div>
                 </section>
               )}

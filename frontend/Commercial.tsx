@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useRef, useState } from "react";
 import { api, type Translate } from "./api";
 import CommercialLists from "./CommercialLists";
@@ -211,7 +212,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
             <button onClick={load}>{t("Refresh", "تحديث")}</button>
           </div>
           <div className="dense-table-wrap">
-            <table className="dense-table">
+            <ResponsiveTable className="dense-table">
               <thead>
                 <tr>
                   <th>{t("Quotation", "عرض السعر")}</th>
@@ -294,7 +295,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                   </tr>
                 )}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         </div>
       )}
@@ -308,7 +309,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
               </button>
             </div>
             <div className="dense-table-wrap">
-              <table className="dense-table">
+              <ResponsiveTable className="dense-table">
                 <thead>
                   <tr>
                     <th>{t("Code", "الرمز")}</th>
@@ -339,7 +340,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           </div>
           {editing && (
@@ -443,7 +444,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
             {t("Page", "صفحة")} {data?.page || 1} / {data?.totalPages || 1}
           </p>
           <div className="dense-table-wrap">
-            <table className="dense-table">
+            <ResponsiveTable className="dense-table">
               <thead>
                 <tr>
                   <th>{t("Warehouse", "المستودع")}</th>
@@ -488,7 +489,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           <div className="actions">
             <button
@@ -549,7 +550,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
               </button>
             </div>
             <div className="dense-table-wrap">
-              <table className="dense-table">
+              <ResponsiveTable className="dense-table">
                 <thead>
                   <tr>
                     <th>{t("Code", "الرمز")}</th>
@@ -578,7 +579,7 @@ export default function Commercial({ t, user }: { t: Translate; user: any }) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </ResponsiveTable>
             </div>
           </div>
           {editing && (

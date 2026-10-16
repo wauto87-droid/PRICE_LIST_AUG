@@ -5680,3 +5680,91 @@ body :is(h1, h2, h3, strong, b) {
  .quotation-editor-actions .editor-total { flex-basis: 100%; }
  .quotations-list .form-grid.three { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Screen-only tables: one scroll boundary, semantic rows at every width. */
+@media screen {
+ .responsive-table-region { max-width:100%; min-width:0; max-height:70dvh; overflow:auto; overscroll-behavior-inline:contain; position:relative; isolation:isolate; border-radius:8px; }
+ .wf-desktop:has(.responsive-table-region) { display:block!important; }
+ .responsive-table-region:focus-visible { outline:2px solid var(--red); outline-offset:2px; }
+ .card:has(.responsive-table-region) { min-width:0; box-sizing:border-box; }
+ .responsive-table { width:100%; min-width:640px; border-collapse:separate; border-spacing:0; }
+ .responsive-table-region .responsive-table { display:table!important; }
+ .responsive-table-region .responsive-table thead { display:table-header-group!important; position:static!important; width:auto!important; height:auto!important; clip:auto!important; overflow:visible!important; }
+ .responsive-table-region .responsive-table tbody { display:table-row-group!important; }
+ .responsive-table-region .responsive-table tr { display:table-row!important; width:auto!important; }
+ .responsive-table-region .responsive-table th,.responsive-table-region .responsive-table td { display:table-cell!important; vertical-align:middle; }
+ .responsive-table-region .responsive-table td::before { content:none!important; }
+ .responsive-table thead th { position:sticky; inset-block-start:0; z-index:3; background:var(--surface,#fff); }
+ .responsive-table :is(th,td):first-child:not([colspan]) { position:sticky; inset-inline-start:0; z-index:1; background:var(--surface,#fff); box-shadow:1px 0 var(--line,#ddd); }
+ .responsive-table thead th:first-child { z-index:4; }
+ [dir=rtl] .responsive-table :is(th,td):first-child:not([colspan]) { box-shadow:-1px 0 var(--line,#ddd); }
+ .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) { --selection-width:44px; }
+ .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) :is(th,td):first-child:not([colspan]) { width:var(--selection-width); min-width:var(--selection-width); max-width:var(--selection-width); box-sizing:border-box; }
+ .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) :is(th,td):nth-child(2):not([colspan]) { position:sticky; inset-inline-start:var(--selection-width); z-index:1; background:var(--surface,#fff); }
+ .responsive-table:has(> :is(thead,tbody)>tr>:first-child input[type=checkbox]) thead th:nth-child(2) { z-index:4; }
+ :is(.table-scroll,.dense-table-wrap,.pt-table-container):has(> .responsive-table-region) { overflow:visible!important; max-width:100%; min-width:0; }
+ .workspace-side:has(> .quotation-editor),.workflow-editor { grid-column:1/-1; min-width:0; width:100%; max-width:none; }
+ main:has(.quotation-editor)>.page-heading { display:none; }
+ .quotation-editor { padding:12px!important; }
+ .quotation-compact-header { display:flex; align-items:center; gap:12px; min-height:28px; font-size:13px; }
+ .quotation-compact-header>span:first-of-type { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+ .quotation-compact-header>span:last-child { white-space:nowrap; color:var(--muted); }
+ .quotation-editor-actions { position:sticky; inset-block-start:0; padding:6px 0; gap:5px; }
+ .quotation-editor-actions button { min-height:32px; padding:5px 10px; font-size:12px; }
+ .quotation-editor .quotation-customer-fields { grid-template-columns: minmax(0,2fr) minmax(100px,1fr); gap:8px; margin:6px 0; }
+ .quotation-customer-fields label { gap:3px; font-size:11px; }
+ .quotation-customer-fields input,.quotation-customer-fields select { min-height:32px; padding:5px 8px; }
+ .quotation-customer-extras { margin:4px 0; }
+ .quotation-customer-extras[open] { padding:8px; border:1px solid var(--line); border-radius:6px; }
+ .quotation-entry-table { overflow:visible; max-height:none; margin-top:6px; }
+ .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 310px); min-height:180px; }
+ .quotation-entry-table .responsive-table { table-layout:fixed; min-width:720px; }
+ .quotation-entry-table th:first-child { width:40%; }
+ .quotation-entry-table th:nth-child(2) { width:10%; }
+ .quotation-entry-table th:nth-child(3) { width:12%; }
+ .quotation-entry-table th:nth-child(4) { width:14%; }
+ .quotation-entry-table th:nth-child(5) { width:14%; }
+ .quotation-entry-table th:last-child { width:10%; }
+ .quotation-entry-table :is(th,td) { padding:4px 6px; }
+ .quotation-entry-table .quotation-line-description { display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; font-size:11px; line-height:14px; margin:0; }
+ .quotation-item-cell { position:relative; }
+ .quotation-item-summary { display:flex; gap:6px; align-items:center; padding-inline-end:48px; }
+ .quotation-item-summary>div { min-width:0; flex:1; }
+ .quotation-item-summary strong { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; line-height:16px; }
+ .quotation-row-number { font-size:10px; color:var(--muted); min-width:16px; }
+ .quotation-item-cell>.quotation-line-options { margin:0; }
+ .quotation-item-cell>.quotation-line-options>summary { position:absolute; inset-inline-end:4px; inset-block-start:9px; font-size:10px; line-height:24px; list-style:none; color:var(--red); cursor:pointer; }
+ .quotation-line-options[open] { padding:0; border:0; }
+ .quotation-expanded-item { padding:10px; margin-block-start:6px; border:1px solid var(--line); border-radius:6px; white-space:normal; }
+ .quotation-entry-table input,.quotation-entry-table select { min-height:32px; }
+ .quotation-entry-table td .actions { flex-wrap:nowrap; gap:3px; }
+ .quotation-row-actions summary { cursor:pointer; min-width:28px; min-height:30px; text-align:center; font-size:20px; list-style:none; }
+ .quotation-secondary-actions { display:flex; flex-direction:column; gap:4px; }
+ .quotation-entry-table td:nth-child(3)>small { display:none; }
+ .quotation-entry-table td:nth-child(3)>select { width:40%; display:inline-block; font-size:10px; padding-inline:2px; }
+ .quotation-entry-table td:nth-child(3):has(>select)>input { width:55%; display:inline-block; }
+ .quotation-editor .cart-totals { position:sticky; inset-block-end:0; z-index:5; max-width:none; margin:6px 0 0; padding:6px; background:var(--surface,#fff); border-block-start:1px solid var(--line); display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:6px 18px; }
+ .quotation-editor .cart-totals>span { padding:0; gap:8px; font-size:12px; }
+ .quotation-editor .cart-totals .grand-total { font-size:15px; border:0; }
+ .quotation-editor .cart-roundoff-field { max-width:180px; font-size:11px; }
+ .quotation-editor .cart-roundoff-field small { display:none; }
+ .quotation-editor .cart-roundoff-field input { min-height:30px; padding:4px; }
+ body:has(.quotation-focus-table) :is(.app-header,.main-nav,.app-footer,.footer-actions) { display:none; }
+ body:has(.quotation-focus-table) main { padding:6px; max-width:none; }
+ .quotation-focus-table fieldset>.quotation-customer-fields,.quotation-focus-table :is(.previous-price-toggle,.custom-line-entry),.quotation-focus-table .quotation-customer-extras:not([open]) { display:none; }
+ .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 155px); }
+ .quotation-focus-table>p.muted { display:none; }
+ @media(max-width:760px) {
+  .responsive-table-region .responsive-table :is(th,td) { width:auto!important; min-height:0; text-align:start; padding:6px; }
+  .responsive-table-region .responsive-table tr { margin:0!important; border-radius:0!important; padding:0!important; }
+  .responsive-table-region .responsive-table :is(th,td):first-child:not([colspan]) { max-width:180px; }
+  .responsive-table-region :is(button,input:not([type=checkbox]),select),.quotation-item-cell>.quotation-line-options>summary { min-height:44px; }
+  .responsive-table-region summary { min-height:44px; min-width:44px; }
+  .quotation-item-cell>.quotation-line-options>summary { inset-block-start:6px; line-height:44px; }
+  .quotation-entry-table .quotation-item-summary { min-height:44px; }
+  .quotation-editor-actions .editor-total { flex-basis:auto; font-size:12px; }
+  .quotation-editor-actions button { min-height:36px; }
+  .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 300px); }
+  .quotation-focus-table .quotation-entry-table>.responsive-table-region { max-height:calc(100dvh - 150px); }
+ }
+}
