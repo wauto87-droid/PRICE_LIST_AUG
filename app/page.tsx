@@ -35,6 +35,19 @@ export default function App() {
     [updateReady, setUpdateReady] = useState(false),
     [maintenance, setMaintenance] = useState<any>(null);
   const workflowOpened=useRef(false);
+  const editorBaseline=useRef('');
+  const currentCart=useRef(cart);currentCart.current=cart;
+  const returningToEditor=useRef(false);
+  const editorSignature=(value:any)=>JSON.stringify({customer:value.customer,lines:value.lines.map((l:any)=>({input:l.input,partNumber:l.partNumber,description:l.description})),adjustment:value.adjustment});
+  const editorHasChanges=()=>!!editorBaseline.current && editorBaseline.current!==editorSignature(currentCart.current);
+  useEffect(()=>{
+    const guard=(event:BeforeUnloadEvent)=>{if(editorHasChanges()){event.preventDefault();event.returnValue='';}};
+    window.addEventListener('beforeunload',guard);return()=>window.removeEventListener('beforeunload',guard);
+  },[]);
+  async function returnToQuotations(){
+    if(editorHasChanges() && !await showConfirm(t('Discard unsaved quotation edits?','تجاهل التعديلات غير المحفوظة؟')))return;
+    editorBaseline.current='';setCart(emptyCart());setWorkflowEditor(false);setTab('quotations');
+  }
   useEffect(()=>{
     if(!session||workflowOpened.current)return;
     const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');const requestId=params.get('workflowRequest');if(!id&&!requestId)return;
@@ -283,8 +296,13 @@ export default function App() {
   const [workflowEditor,setWorkflowEditor] = useState(false);
   const [workflowFromQuotations,setWorkflowFromQuotations] = useState(false);
   useEffect(() => {
-    const restore = (event: PopStateEvent) => {
+    const restore = async (event: PopStateEvent) => {
       if (!event.state?.amtQuotations) return;
+      if(returningToEditor.current){returningToEditor.current=false;return;}
+      if(editorHasChanges()){
+        if(!await showConfirm('Discard unsaved quotation edits?')){returningToEditor.current=true;window.history.forward();return;}
+        editorBaseline.current='';setCart(emptyCart());
+      }
       setWorkflowIdentity(undefined); setWorkflowEditor(false); setWorkflowFromQuotations(false); setTab('quotations');
     };
     window.addEventListener('popstate', restore);
@@ -299,8 +317,8 @@ export default function App() {
   }
   function openSharedQuotation(identity: any, destination = 'workflow-jobs') { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab(destination); }
   function openQuote(q: any) {
-    if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }, 'quotations'); return; }
-    setCart({
+    if(q.revisionPricingNotice)setMessage(q.revisionPricingNotice);
+    const next={
       id: q.id,
       version: q.version,
       number: q.number,
@@ -308,7 +326,11 @@ export default function App() {
       workflowCurrency: q.workflowCurrency || "SAR",
       customer: q.customer,
       lines: q.lines,
-    });
+      adjustment:q.adjustment || {targetTotal:q.totals?.targetTotal || ''},
+    };
+    editorBaseline.current=editorSignature(next);
+    setCart(next);
+    setWorkflowEditor(false);
     setTab("draft");
   }
   const compactWorkspace = !!session && tab === "workspace";
@@ -638,6 +660,7 @@ export default function App() {
             )}
             {(tab === "draft" || (['workflow-jobs','quotations'].includes(tab) && workflowEditor)) && (
               <div className={workflowEditor ? "workflow-editor" : "workspace-side"}>
+                {!workflowEditor && cart.id && <button type="button" onClick={()=>void returnToQuotations()}>{t('Back to quotation','العودة إلى عرض السعر')}</button>}
                 {workflowEditor && <><button onClick={() => setWorkflowEditor(false)}>{tab === 'quotations' ? 'Back to quotation' : 'Back to workflow'}</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
                 <Cart
                   t={t}
@@ -649,6 +672,8 @@ export default function App() {
                   onSaved={(q) => {
                     if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }, tab === 'quotations' ? 'quotations' : 'workflow-jobs'); setCart(emptyCart()); return; }
                     setCart(emptyCart());
+                    editorBaseline.current='';
+                    if(q.id){setWorkflowIdentity({documentId:q.id});setTab('quotations');}
                     setMessage(
                       t(
                         "Saved quotation " + q.number,
@@ -675,7 +700,7 @@ export default function App() {
                   >
                     {t("New quotation", "عرض سعر جديد")}
                   </button>
-                  <button onClick={() => { setWorkflowEditor(false); setWorkflowIdentity(undefined); setTab("quotations"); }}>
+                  <button onClick={() => void returnToQuotations()}>
                     {t("Open saved quotations", "فتح العروض المحفوظة")}
                   </button>
                 </div>
@@ -713,9 +738,9 @@ export default function App() {
                 </div>
               ))}
             {tab === "workflow-jobs" && <div hidden={workflowEditor}><PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={workflowIdentity?.requestId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined)} quotationVersion={workflowIdentity?.version || (typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined)} documentId={workflowIdentity?.documentId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined)} /></div>}
-            {tab === "quotations" &&
+            {(tab === "quotations" || (tab==='draft' && cart.id)) &&
               (online ? (
-                <div hidden={workflowEditor}><Quotations
+                <div hidden={workflowEditor || tab!=='quotations'}><Quotations
                   t={t}
                   user={session.user}
                   onOpen={openQuote}

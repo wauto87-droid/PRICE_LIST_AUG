@@ -952,6 +952,7 @@ export default function Cart({
         </button>
       </div>
       <fieldset disabled={!!cart.sharedWorkflow && (busy || !!cart.sharedPendingCommand)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      <div className="quotation-entry-options">
       {!cart.sharedWorkflow && user.permissions.includes("QUOTE_PRICE_HISTORY") && (
         <label className="notice previous-price-toggle">
           <input
@@ -972,6 +973,7 @@ export default function Cart({
           setSuggestedCustomPart("");
         }}
       />}
+      </div>
 <div className="form-grid quotation-customer-fields">{[["name","Customer name","اسم العميل"],["number","Customer Code","رمز العميل"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>setCart({...cart,customer:{...cart.customer,[key]:e.target.value}})} onBlur={()=>{if(key==='number')void loadCustomerByCode(String(cart.customer.number||''));}}/></label>)}</div>
       <details ref={detailsRef} className="quotation-customer-extras" open={detailsOpen} onToggle={e=>setDetailsOpen(e.currentTarget.open)}><summary>{t('Quotation details','تفاصيل عرض السعر')} · {cart.workflowCurrency || 'SAR'} · {t('VAT','الضريبة')} {cart.sharedWorkflow ? cart.sharedTaxBasis === 'EXEMPT' ? '0' : cart.sharedTaxRate : settings.vat}%</summary>
       {cart.sharedWorkflow && <div className="form-grid quotation-customer-fields">

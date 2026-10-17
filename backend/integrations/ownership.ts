@@ -6,7 +6,15 @@ import { audit } from '../core/audit';
 import { z } from 'zod';
 
 export async function assertWorkflowOwner(db:DB,actor:Actor,q:any){
- const link=await one(db,'SELECT data FROM sw_job_documents WHERE id=$1',[q.id]);
+ let link=await one(db,'SELECT data FROM sw_job_documents WHERE id=$1',[q.id]);
+ if(!link){
+  const source=await one(db,'SELECT root_document_id FROM quotation_revision_sources WHERE quotation_id=$1',[q.id]);
+  if(source){
+   link=await one(db,'SELECT data FROM sw_job_documents WHERE id=$1',[source.root_document_id]);
+   const root=await one(db,'SELECT owner_id FROM quotations WHERE id=$1',[source.root_document_id]);
+   if(link && root)q={...q,id:source.root_document_id,owner_id:root.owner_id};
+  }
+ }
  if(!link)return;
  check(!link.data.handover,'Ownership handover is pending synchronization',409);
  if(q.owner_id===actor.id)return;

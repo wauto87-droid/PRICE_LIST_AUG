@@ -7,6 +7,7 @@ import { check } from './core';
 import { quotationHtml } from '../pdf/template';
 import { quotationPdfFingerprint } from '../pdf/cache';
 import { quotationPdfDisposition } from '../pdf/filename';
+import { resolveSharedReferences } from '../quotations/references';
 
 const artifactPath = (id: string) => path.join(path.resolve(process.env.UPLOAD_DIR || '.data/uploads'), 'pdf', `${id}.pdf`);
 async function artifactExists(id: string) {
@@ -41,7 +42,7 @@ export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
 }
 
 /** The existing PDF jobs are presentation snapshots; no local quotation is created. */
-export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: string, q: any, number?: string) {
+export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: string, q: any, number?: string, documentId?: string) {
   const quoteId = `shared:${q.id}:v${q.version}`;
   return db.transaction(async tx => {
     // Lock the existing settings row to serialize first-time snapshot creation and retries.
@@ -49,7 +50,15 @@ export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: 
     check(settings, 'Company settings missing', 503);
     const existing = await one(tx, "SELECT * FROM jobs WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 ORDER BY created_at,id LIMIT 1", [quoteId]);
     check(!existing || existing.payload.sharedRequestId === requestId, 'Quotation request identity mismatch', 409);
-    const snapshot = existing?.payload.snapshot || sharedQuotationSnapshot(q, settings.data, number);
+    const resolved=await resolveSharedReferences(tx,documentId,q);
+    const candidate=sharedQuotationSnapshot(resolved.quote,existing?.payload.snapshot?.company_snapshot || settings.data,number);
+    const snapshot=existing?.payload.snapshot ? {...existing.payload.snapshot} : candidate;
+    if(existing){
+      const withoutReferences=(value:any)=>({customer:value.customer,totals:value.totals,lines:value.lines.map(({partNumber,...line}:any)=>line)});
+      // A reference repair cannot conceal a conflicting financial snapshot.
+      check(quotationPdfFingerprint(withoutReferences(candidate))===quotationPdfFingerprint(withoutReferences(snapshot)), 'Historical PDF and saved version differ. Review the original records before regenerating.',409);
+      snapshot.lines=candidate.lines;
+    }
     const fingerprint = quotationPdfFingerprint(snapshot);
     const cached = await one(tx, "SELECT id,status,error,payload FROM jobs WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 AND payload->>'fingerprint'=$2 AND status IN ('PENDING','RUNNING','DONE') ORDER BY created_at DESC,id DESC LIMIT 1", [quoteId, fingerprint]);
     if (cached && (cached.status !== 'DONE' || await artifactExists(cached.id))) return cached;
@@ -64,7 +73,7 @@ export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: 
 export async function sharedQuotationPrint(db: DB, actorId: string, result: any, version: number) {
   const q = result.quotations.find((q: any) => q.version === version);
   check(q, 'Quotation missing', 404);
-  const job = await sharedQuotationPdfJob(db, actorId, result.requestId, q, result.number);
+  const job = await sharedQuotationPdfJob(db, actorId, result.requestId, q, result.number,result.documentId);
   const logo = 'data:image/svg+xml;base64,' + (await fs.readFile(path.join(process.cwd(), 'public', 'logo.svg'))).toString('base64');
   const html = quotationHtml(job.payload.snapshot, job.payload.snapshot.company_snapshot, logo)
     .replace('<body>', '<body><div class="no-print"><button onclick="window.print()">Print quotation / Save PDF</button></div>');

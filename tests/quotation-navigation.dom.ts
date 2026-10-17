@@ -44,6 +44,9 @@ const quote = (id: string, shared = false) => ({
   version: 1,
   status: "DRAFT",
   sharedWorkflow: shared,
+  workflowLinked: shared,
+  selectedVersion: shared ? 1 : undefined,
+  savedVersions: shared ? [{version:1}] : [],
   sharedRequestId: shared ? "request-" + id : undefined,
   customer: { name: "Synthetic buyer" },
   created_at: "2026-10-15T00:00:00Z",
@@ -117,6 +120,7 @@ globalThis.fetch = async (input: any, init: any = {}) => {
     });
   if (path === "shared-quotation" && init.method === "POST")
     return json({ id: "shared-pdf", status: "DONE" });
+  if (path === "quotations/linked/pdf?savedVersion=1") return json({id:"shared-pdf",status:"DONE"});
   if (path.endsWith("/pdf"))
     return await new Promise((resolve) => {
       pdfDeferred = resolve;
@@ -160,7 +164,7 @@ test("legacy quotation toolbar, Back and browser Forward retain the list; old PD
   await tick();
   await click("Open");
   assert.equal(document.querySelectorAll("[role=dialog]").length, 1);
-  for (const label of ["Edit quotation", "Generate PDF", "Print view"])
+  for (const label of ["Edit draft", "Generate PDF", "Print view"])
     assert.ok(document.body.textContent?.includes(label));
   const dialog = document.querySelector("[role=dialog]")!;
   assert.ok(dialog.querySelector("[role=toolbar]"));
@@ -214,9 +218,9 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
   await click("Open");
   await tick();
   for (const text of [
-    "Edit quotation",
+    "Edit draft",
     "Generate PDF",
-    "Print quotation / Save PDF",
+    "Print view",
     "Back to quotations",
   ])
     assert.ok(document.body.textContent?.includes(text), "Missing " + text);
@@ -225,7 +229,7 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
     false,
   );
   const print = document.querySelector("a[href*=print]") as HTMLAnchorElement;
-  assert.ok(print.href.includes("version=1"));
+  assert.ok(print.href.includes("savedVersion=1"));
   await click("Generate PDF");
   assert.ok(document.querySelector("a[href*=shared-pdf]"));
   assert.equal(document.querySelector("button[aria-label=\"Close quotation\"]")?.textContent, "Close ×");
@@ -239,41 +243,16 @@ test("linked quotations stay in Quotations with edit, saved-version print and PD
   await act(async () => root.unmount());
 });
 
-test("unavailable ERP details leave visible disabled actions and Retry restores them", async () => {
-  rows = [quote("linked", true)];
-  sharedUnavailable = true;
-  window.history.replaceState({}, "");
-  const root = createRoot(document.getElementById("root")!);
-  try {
-    await act(async () => root.render(createElement(Quotations, props())));
-    await tick();
-    await click("Open");
-    await tick();
-    assert.ok(document.querySelector("[role=alert]"));
-    for (const text of [
-      "Edit quotation",
-      "Generate PDF",
-      "Print quotation / Save PDF",
-    ]) {
-      const button = Array.from(document.querySelectorAll("button")).find(
-        (b) => b.textContent === text,
-      );
-      assert.ok(button);
-      assert.equal(button.disabled, true);
-    }
-    sharedUnavailable = false;
-    await click("Refresh quotation");
-    await tick();
-    assert.equal(
-      Array.from(document.querySelectorAll("button")).find(
-        (b) => b.textContent === "Generate PDF",
-      )!.disabled,
-      false,
-    );
-  } finally {
-    sharedUnavailable = false;
-    await act(async () => root.unmount());
-  }
+test("ERP outage never disables local linked quotation actions or requests workflow details",async()=>{
+  rows=[quote('linked',true)];fetches=[];sharedUnavailable=true;window.history.replaceState({},'');
+  const root=createRoot(document.getElementById('root')!);
+  try{
+    await act(async()=>root.render(createElement(Quotations,props())));await tick();await click('Open');await tick();
+    const generate=Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Generate PDF')!;
+    assert.equal(generate.disabled,false);
+    assert.equal(fetches.some(p=>p.startsWith('shared-quotation')||p.startsWith('workflow-jobs')),false);
+    await click('Generate PDF');assert.ok(document.querySelector('a[href*=shared-pdf]'));
+  }finally{sharedUnavailable=false;await act(async()=>root.unmount());}
 });
 
 test("the actual app keeps shared editing in Quotations and returns without refresh", async () => {
@@ -332,9 +311,9 @@ test("the actual app keeps shared editing in Quotations and returns without refr
     await tick();
     await click("Open");
     await tick();
-    await click("Edit quotation");
+    await click("Edit draft");
     await tick();
-    assert.ok(document.querySelector(".workflow-editor"));
+    assert.ok(document.querySelector(".quotation-editor"));
     assert.ok(document.body.textContent?.includes("Back to quotation"));
     assert.equal(document.querySelector(".workflow-workspace"), null);
     await click("Back to quotation");

@@ -336,6 +336,7 @@ export async function getQuote(db: DB, actor: Actor, id: string, edit = false) {
     "This quotation belongs to another user",
   );
   if (edit) await assertWorkflowOwner(db,actor,q);
+  q.workflowCurrency=q.document_currency || q.company_snapshot?.currency || 'SAR';
   if (["DRAFT", "REJECTED"].includes(q.status)) {
     const productIds = [
       ...new Set(
@@ -403,6 +404,7 @@ export async function saveDraft(
   id?: string,
   version?: number,
   requestId?: string,
+  options: { preserveCustomerMaster?: boolean } = {},
 ) {
   requirePermission(actor, id ? "QUOTE_EDIT" : "QUOTE_CREATE");
   const parsed = quoteInput.parse(input);
@@ -444,7 +446,7 @@ export async function saveDraft(
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const old = await getQuote(tx, actor, id, true);
       const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
-      assert(!shared?.data.sharedQuotations?.length, 409, 'Open Pricing & Collection Jobs to edit the shared quotation in both apps');
+      assert(!shared?.data.sharedQuotations?.length, 409, 'This saved quotation is immutable. Create an editable revision in Quotations.');
       oldLines = old.lines;
       assert(["DRAFT", "REJECTED"].includes(old.status), 409, "Only draft or rejected quotations can be edited");
       assert(
@@ -453,7 +455,7 @@ export async function saveDraft(
         "Draft changed on another device. Reload before saving",
       );
     }
-    if (data.customer.number && data.customer.number !== "1" && data.customer.name.trim()) {
+    if (!options.preserveCustomerMaster && data.customer.number && data.customer.number !== "1" && data.customer.name.trim()) {
       const savedCustomer = await one(tx, "SELECT id FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customer.number]);
       if (savedCustomer)
         await tx.query("UPDATE customers SET name=$2,mobile=$3,reference=$4 WHERE id=$1", [savedCustomer.id, data.customer.name, data.customer.mobile, data.customer.reference]);
@@ -540,6 +542,14 @@ const fingerprint = (q: any, lines: any[], actor: Actor, settings: any) =>
       }),
     )
     .digest("hex");
+async function assertRevisionReferences(db:DB,q:any){
+  const source=await one(db,'SELECT reference_requirements FROM quotation_revision_sources WHERE quotation_id=$1',[q.id]);
+  for(const line of q.lines){
+    if(!source?.reference_requirements?.[line.input?.watcherEventId])continue;
+    const part=line.input?.type==='CUSTOM'?line.input.partNumber:line.partNumber;
+    assert(String(part || '').trim(),409,'Verify or enter the missing historical part number in this revision before issuing. The original remains unchanged.');
+  }
+}
 export async function reviewIssue(
   db: DB,
   actor: Actor,
@@ -553,9 +563,10 @@ export async function reviewIssue(
       "SELECT data FROM settings WHERE id=1 FOR SHARE",
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
+    if(q.document_currency)settings={...settings,currency:q.document_currency};
+    await assertRevisionReferences(tx,q);
     const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
-    assert(!shared?.data.erpRequestId && !shared?.data.sharedQuotations?.length, 409, 'Create and print the shared quotation from the creator workflow in Price List');
-    await assertWorkflowPricingReady(tx, q);
+    assert(!shared?.data.sharedQuotations?.length, 409, 'Create a local revision of this saved quotation before issuing');
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
@@ -590,9 +601,10 @@ export async function issue(
     ))!.data;
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
+    if(q.document_currency)settings={...settings,currency:q.document_currency};
+    await assertRevisionReferences(tx,q);
     const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
-    assert(!shared?.data.erpRequestId && !shared?.data.sharedQuotations?.length, 409, 'Create and print the shared quotation from the creator workflow in Price List');
-    await assertWorkflowPricingReady(tx, q);
+    assert(!shared?.data.sharedQuotations?.length, 409, 'Create a local revision of this saved quotation before issuing');
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
     const lines = await snapshot(
@@ -645,6 +657,8 @@ export async function issue(
     await audit(tx, actor.id, "QUOTATION_ISSUE", "quotations", id);
     const issued = await getQuote(tx, actor, id);
     await syncQuotationEvents(tx, issued);
+    const { freezeIssuedDocument } = await import('./documents');
+    await freezeIssuedDocument(tx, issued,actor.id);
     return publicQuote(issued, actor);
   });
 }

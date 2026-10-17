@@ -83,7 +83,7 @@ export async function sharedQuotationWorkspace(db: DB, actor: Actor, req: Reques
     const version = z.number().int().positive().parse(input.quoteVersion);
     const q = result.quotations.find((q: any) => q.version === version); check(q, 'Quotation missing', 404);
     if (!sourceQuote && result.documentId) sourceQuote = await getQuote(db, actor, result.documentId, true);
-    const job = await sharedQuotationPdfJob(db, actor.id, result.requestId, q, sourceQuote?.number || result.number);
+    const job = await sharedQuotationPdfJob(db, actor.id, result.requestId, q, sourceQuote?.number || result.number,sourceQuote?.id || result.documentId);
     return Response.json({ id: job.id, status: job.status, error: job.error });
   }
   if (params.has('print')) {

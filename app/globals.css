@@ -2603,6 +2603,22 @@ td button {
 .quotation-document .section-title { flex-wrap: wrap; gap: 12px; }
 .quotation-document-actions > button,
 .quotation-document-actions > a { min-height: 40px; }
+.modal.wide.quotation-document { width:100%; max-width:none; height:calc(100dvh - 48px); display:flex; flex-direction:column; gap:8px; padding:16px; }
+.quotation-document > * { flex-shrink:0; }
+.quotation-document > .responsive-table-region { flex:1 1 auto; min-height:160px; overflow:auto; }
+.quotation-document .section-title { margin:0; }
+.quotation-document .section-title h2 { margin:0; font-size:20px; }
+.quotation-document-actions { position:static; gap:8px; padding:8px 0; margin:0; }
+.quotation-preview-table thead th { position:sticky; top:0; z-index:2; }
+.quotation-preview-table .quotation-preview-row { display:table-row; }
+.quotation-preview-table .quotation-preview-row td { padding:8px 10px; vertical-align:middle; }
+.quotation-preview-table .quotation-preview-row td:first-child { width:60%; }
+.quotation-preview-table .quotation-preview-row small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60vw; }
+.quotation-preview-totals { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:12px; align-items:center; padding:10px 0; border-top:1px solid var(--line); }
+.quotation-customer-notes p { white-space:pre-wrap; }
+.quotation-secondary-actions > summary { padding:10px; cursor:pointer; }
+.quotation-document > .notice { margin:0; }
+@media(max-width:600px){.modal.wide.quotation-document{padding:12px;height:calc(100dvh - 24px);max-height:calc(100dvh - 24px)}.quotation-preview-table .quotation-preview-row td:first-child{min-width:240px}.quotation-preview-table .quotation-preview-row small{max-width:250px}.quotation-document-actions{flex-wrap:wrap}}
 .shared-quotation-panel .quotation-workspace { min-width: 0; padding: 20px; }
 .quotation-summary { margin: 16px 0; border: 1px solid var(--line, #e2e8f0); border-radius: 14px; background: var(--surface, #fff); overflow: hidden; }
 .quotation-summary-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; padding: 20px; background: var(--bg, #f8fafc); }
@@ -5722,6 +5738,12 @@ body :is(h1, h2, h3, strong, b) {
     around the global fieldset's 300px scrolling limit. */
  body:has(.quotation-editor) { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
  body:has(.quotation-editor)>:is(.app-header,.main-nav,.app-footer,aside) { flex-shrink:0; }
+ body:has(.quotation-editor) .main-nav { min-width:0; max-width:100%; overflow-x:auto; flex-wrap:nowrap; gap:20px; }
+ body:has(.quotation-editor) .main-nav button { flex-shrink:0; white-space:nowrap; }
+ .quotation-entry-options { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+ .quotation-editor .quotation-entry-options .previous-price-toggle { display:flex; flex-direction:row; align-items:center; gap:8px; margin:0; padding:6px; }
+ .quotation-entry-options .custom-line-entry { margin:0; }
+ .quotation-focus-table .quotation-entry-options { display:none; }
  main:has(.quotation-editor) { flex:1 1 0%; min-height:0; width:100%; max-width:none; padding:8px; display:flex; flex-direction:column; overflow:auto; }
  .workspace-side:has(> .quotation-editor),.workflow-editor:has(> .quotation-editor) { grid-column:1/-1; flex:1; min-height:min-content; min-width:0; width:100%; max-width:none; display:flex; flex-direction:column; gap:8px; }
  :is(.workspace-side,.workflow-editor):has(> .quotation-editor)>:not(.quotation-editor) { flex-shrink:0; }
@@ -5791,6 +5813,8 @@ body :is(h1, h2, h3, strong, b) {
   .responsive-table-region summary { min-height:44px; min-width:44px; }
   .quotation-item-cell>.quotation-line-options>summary { inset-block-start:6px; line-height:44px; }
   .quotation-entry-table .quotation-item-summary { min-height:44px; }
+  .quotation-entry-table .responsive-table { min-width:1040px; }
+  .quotation-entry-table .responsive-table :is(th,td):first-child:not([colspan]) { width:260px!important; min-width:260px; max-width:260px; }
   .quotation-editor-actions .editor-total { flex-basis:auto; font-size:12px; }
   .quotation-editor-actions button { min-height:36px; }
  }

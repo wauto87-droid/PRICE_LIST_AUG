@@ -17,6 +17,12 @@ function stableJson(value: unknown): string {
 export function quotationPdfFingerprint(snapshot: unknown) {
   return createHash("sha256").update(stableJson(snapshot)).digest("hex");
 }
+/** Only fields consumed by the customer renderer belong in a render artifact. */
+export function quotationRenderSnapshot(q:any){
+  return {id:q.id,number:q.number,status:q.status==='DRAFT'?'DRAFT':'ISSUED',created_at:q.created_at,issued_at:q.issued_at,sharedVersion:q.sharedVersion,customer:q.customer,totals:q.totals,company_snapshot:q.company_snapshot,
+    lines:q.lines.map((l:any)=>({source:l.source,partNumber:l.partNumber,description:l.description,unit:l.unit,importMeta:l.importMeta || l.input?.importMeta,
+      input:{type:l.input?.type,quantity:l.input?.quantity},price:l.price?{quantity:l.price.quantity,finalExcl:l.price.finalExcl,finalIncl:l.price.finalIncl,subtotal:l.price.subtotal,vatAmount:l.price.vatAmount,vatRate:l.price.vatRate,total:l.price.total}:null}))};
+}
 
 const pdfPath = (jobId: string) =>
   path.join(
@@ -24,6 +30,9 @@ const pdfPath = (jobId: string) =>
     "pdf",
     `${jobId}.pdf`,
   );
+export async function quotationPdfArtifactExists(id:string){
+  try{return (await fs.stat(pdfPath(id))).isFile();}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
+}
 
 async function removePdf(jobId: string) {
   try {
@@ -38,6 +47,10 @@ async function removePdf(jobId: string) {
 
 /** Marks the completed PDF current and retires successfully generated older versions. */
 export async function finalizeQuotationPdf(db: DB, job: any) {
+  if(job.payload?.preserveHistory || String(job.payload?.quoteId || '').startsWith('shared:')){
+    await db.query("UPDATE jobs SET status='DONE',error=NULL WHERE id=$1",[job.id]);
+    return;
+  }
   const quoteId = job.payload?.quoteId;
   if (!quoteId) {
     await db.query("UPDATE jobs SET status='DONE',error=NULL WHERE id=$1", [job.id]);

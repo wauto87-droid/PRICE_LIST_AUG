@@ -192,7 +192,7 @@ test('quotation creation shows quotation controls only; jobs origin exposes one 
   assert.match(confirmed, /max="3"/); assert.match(confirmed, /Invoice reference/); assert.match(confirmed, /Delivery reference/);
 });
 
-test('native quotation routes direct shared records to the creator workspace and cannot duplicate or issue them', async () => {
+test('native quotation routes manage historical linked versions locally without editing the original snapshot', async () => {
   const db = await embedded();
   try {
     await migrate(db);
@@ -203,18 +203,23 @@ test('native quotation routes direct shared records to the creator workspace and
     const owner = (await one(db, "SELECT id FROM users WHERE username='shared-owner'"))!;
     const id = randomUUID();
     await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-SHARED','DRAFT',$2,'{\"name\":\"Buyer\"}','[]','{\"subtotal\":\"0.00\",\"vat\":\"0.00\",\"total\":\"0.00\"}')", [id, owner.id]);
-    await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2::jsonb)', [id, JSON.stringify({ erpRequestId: randomUUID(), sharedQuotations: [{ id: randomUUID(), version: 1 }], lines: {} })]);
+    await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2::jsonb)', [id, JSON.stringify({ erpRequestId: randomUUID(), sharedQuotations: [{ id: randomUUID(), version: 1, date:'2026-10-15',customer:'Buyer',currency:'SAR',taxBasis:'EXCLUSIVE',taxRate:'15',subtotal:'10',taxTotal:'1.5',total:'11.5',lines:[{itemId:randomUUID(),partNumber:'SAVED-REFERENCE',name:'Part',unit:'pcs',quantity:'1',sellingPrice:'10'}] }], lines: {} })]);
     const request = (action: string, method: string) => new Request(`http://localhost/amt_price_list/api/v1/quotations/${id}${action ? '/' + action : ''}`, { method, headers: { Cookie: cookie, 'X-CSRF-Token': session.csrf, 'Content-Type': 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}) });
     const view = await handle(request('', 'GET'), db);
-    assert.equal(view.status, 200); assert.equal((await view.json()).sharedWorkflow, true);
-    for (const action of ['duplicate', 'revision', 'issue', 'pdf', 'customer-link', 'submit-approval', 'review']) {
+    assert.equal(view.status, 200); const document=await view.json(); assert.equal(document.legacyShared, true); assert.equal(document.sharedWorkflow,true); assert.equal(document.quotationManagedLocally,true);
+    for (const action of ['issue', 'customer-link', 'submit-approval', 'review']) {
       const result = await handle(request(action, 'POST'), db);
-      assert.equal(result.status, 409, action); assert.match((await result.json()).error, /creator workflow/);
+      assert.equal(result.status, 409, action); assert.match((await result.json()).error, /immutable/);
     }
-    assert.equal((await handle(request('print', 'GET'), db)).status, 409);
+    assert.equal((await handle(request('print', 'GET'), db)).status, 200);
+    assert.equal((await handle(request('pdf','POST'),db)).status,200);
+    assert.equal((await handle(request('revision','POST'),db)).status,200);
+    assert.equal((await handle(request('duplicate','POST'),db)).status,200);
     assert.equal((await handle(request('', 'DELETE'), db)).status, 409);
-    assert.equal((await one(db, 'SELECT count(*) n FROM quotations'))!.n, 1);
-    assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 0);
+    assert.equal((await one(db, 'SELECT count(*) n FROM quotations'))!.n, 3);
+    assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 1);
+    assert.equal((await one(db, 'SELECT count(*) n FROM sw_job_outbox'))!.n, 0);
+    assert.equal((await one(db,'SELECT status FROM quotations WHERE id=$1',[id]))!.status,'DRAFT');
   } finally { await db.close!(); }
 });
 
