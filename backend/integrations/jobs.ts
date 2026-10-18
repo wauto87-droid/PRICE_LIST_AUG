@@ -972,6 +972,14 @@ export async function runPriceJobs(db: DB) {
   try {
     await retireObsoleteCollectionAssignments(db);
     await deliver(db, "REMOTE", undefined, async (row, response) => {
+      if(row.endpoint==='jobs-quotation-publish'){
+        check(response.accepted && response.documentId===row.payload.documentId && response.revisionId===row.payload.revisionId && response.version===row.payload.version && (!row.payload.requestId || response.requestId===row.payload.requestId) && Number.isInteger(response.remoteVersion),'Quotation publication acknowledgement conflicts',409);
+        await db.transaction(async tx=>{
+          await tx.query("UPDATE quotation_workflow_publications SET state='SYNCED',remote_version=$2,request_id=$3 WHERE event_id=$1",[row.id,response.remoteVersion,response.requestId]);
+          if(response.itemMapping) await tx.query('UPDATE quotation_revision_sources SET line_mapping=line_mapping || $2::jsonb WHERE quotation_id=$1',[row.payload.revisionId,JSON.stringify(response.itemMapping)]);
+        });
+        return;
+      }
       if (row.endpoint === "jobs-pricing-decision") {
         await acknowledgePricingDecision(db, row, response);
         return;

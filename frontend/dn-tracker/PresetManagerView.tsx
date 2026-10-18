@@ -1,4 +1,5 @@
 'use client';
+import ResponsiveTable from "../ResponsiveTable";
 import React, { useState, useMemo } from 'react';
 import { Plus, Trash2, Edit3, Save, Layers, ArrowLeft, Search, CheckSquare, Square } from 'lucide-react';
 import { useTracker } from './TrackerContext';
@@ -167,7 +168,7 @@ export default function PresetManagerView() {
 
         {/* Scrollable Table View - Guaranteed Visible Height & Scroll */}
         <div style={{ flex: '1 1 auto', overflowY: 'scroll', minHeight: '300px', maxHeight: 'calc(100vh - 240px)', position: 'relative' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          <ResponsiveTable style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#f8fafc', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
               <tr>
                 <th style={{ padding: '8px 12px', fontWeight: 600, fontSize: '0.8rem', color: '#475569', borderBottom: '1px solid #e2e8f0', width: '48px', textAlign: 'center' }}>#</th>
@@ -234,7 +235,7 @@ export default function PresetManagerView() {
                 </tr>
               )}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       </div>
     );

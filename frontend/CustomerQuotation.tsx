@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 export default function CustomerQuotation({ token }: { token: string }) {
@@ -52,7 +53,7 @@ export default function CustomerQuotation({ token }: { token: string }) {
         </div>
         <h2>{quote.customer?.name || "Customer"}</h2>
         <div className="dense-table-wrap">
-          <table className="dense-table">
+          <ResponsiveTable className="dense-table">
             <thead>
               <tr>
                 <th>#</th>
@@ -77,7 +78,7 @@ export default function CustomerQuotation({ token }: { token: string }) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
         <div className="customer-quote-total">
           <span>Total / الإجمالي</span>

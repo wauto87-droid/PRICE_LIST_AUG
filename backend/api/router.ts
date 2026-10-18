@@ -15,6 +15,9 @@ import * as productImages from "../products/images";
 import * as quotes from "../quotations/service";
 import * as quoteSettings from "../quotations/settings";
 import * as quoteLifecycle from "../quotations/lifecycle";
+import { readDocument, reviseDocument,revisionInputs } from '../quotations/documents';
+import {verifyHistoricalReferences} from '../quotations/references';
+import { quotationPdfArtifactExists,quotationRenderSnapshot } from '../pdf/cache';
 import * as bulkRules from "../bulk/service";
 import * as admin from "../admin/service";
 import * as discountRequests from "../discount-requests/service";
@@ -1654,16 +1657,20 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         const workflowLink = await one(db, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
         const workflowManaged = Boolean(workflowLink && (workflowLink.data.erpRequestId || workflowLink.data.sharedQuotations?.length || Object.keys(workflowLink.data.lines || {}).length));
         if (!action && method === "GET")
-          return response({ ...quotes.publicQuote(await quotes.getQuote(db, actor, id), actor), sharedWorkflow: workflowManaged });
-        if (workflowManaged && (['duplicate', 'revision', 'print', 'pdf', 'customer-link', 'submit-approval', 'review', 'issue'].includes(action || '') || (!action && method === 'DELETE'))) {
+          return response(await readDocument(db,actor,id,url.searchParams.has('savedVersion')?z.coerce.number().int().positive().parse(url.searchParams.get('savedVersion')):undefined));
+        if (workflowLink?.data.sharedQuotations?.length && (['customer-link','submit-approval','review','issue'].includes(action || '') || (!action && method === 'DELETE'))) {
           await quotes.getQuote(db, actor, id, true);
-          assert(false, 409, 'Use the creator workflow in Price List for this shared quotation, its versions and themed PDF');
+          assert(false, 409, 'Create an editable revision in Quotations; this historical saved version is immutable');
         }
         if (!action && method === "PUT") {
           const { version, ...data } = await body(req);
           return response(
             await quotes.saveDraft(db, actor, data, settings, id, version),
           );
+        }
+        if(action==='verify-references' && method==='POST'){
+          const {savedVersion}=z.object({savedVersion:z.number().int().positive()}).parse(await body(req));
+          return response(await verifyHistoricalReferences(db,actor,id,savedVersion));
         }
         if (!action && method === "DELETE") {
           auth.requirePermission(actor, "QUOTE_DELETE");
@@ -1689,18 +1696,21 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           );
         }
         if (action === "duplicate" && method === "POST") {
-          const q = await quotes.getQuote(db, actor, id);
-          return response(
-            await quotes.saveDraft(
-              db,
+          const q = await readDocument(db,actor,id,url.searchParams.has('savedVersion')?z.coerce.number().int().positive().parse(url.searchParams.get('savedVersion')):undefined);
+          assert(q.capabilities.duplicate.allowed,403,q.capabilities.duplicate.reason);
+          return response(await db.transaction(async tx=>{
+            const draft=await quotes.saveDraft(
+              tx,
               actor,
               {
                 customer: q.customer,
-                lines: q.lines.map((l: any) => quotes.duplicateLineInput(l)),
+                lines: await revisionInputs(tx,actor,q),
               },
-              settings,
-            ),
-          );
+              settings, undefined, undefined, undefined, {preserveCustomerMaster:true},
+            );
+            await tx.query('UPDATE quotations SET document_currency=$2 WHERE id=$1',[draft.id,q.currency || q.document_currency || q.company_snapshot?.currency || settings.currency || 'SAR']);
+            return quotes.publicQuote(await quotes.getQuote(tx,actor,draft.id),actor);
+          }));
         }
         if (action === "share" && method === "PUT") {
           const { sharedWith } = z.object({ sharedWith: z.array(z.string().uuid()) }).parse(await body(req));
@@ -1716,10 +1726,10 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(
             await quoteLifecycle.submitForApproval(db, actor, id, settings),
           );
-        if (action === "revision" && method === "POST")
-          return response(
-            await quoteLifecycle.createRevision(db, actor, id, settings),
-          );
+        if (action === "revision" && method === "POST") {
+          const input=z.object({savedVersion:z.number().int().positive().optional(),eventId:z.string().uuid().optional()}).parse(await body(req));
+          return response(await reviseDocument(db,actor,id,settings,input.savedVersion,input.eventId));
+        }
         if (action === "customer-link" && method === "POST") {
           const input = z
             .object({ days: z.number().int().min(1).max(90).default(30) })
@@ -1736,14 +1746,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response(await quotes.issue(db, actor, id, token, settings));
         }
         if (action === "print" && method === "GET") {
-          const q = await quotes.getQuote(db, actor, id);
+          const q = await readDocument(db,actor,id,url.searchParams.has('savedVersion')?z.coerce.number().int().positive().parse(url.searchParams.get('savedVersion')):undefined);
           quotes.assertQuoteReadyForOutput(q);
           const logo =
             "data:image/svg+xml;base64," +
             (
               await fs.readFile(path.join(process.cwd(), "public/logo.svg"))
             ).toString("base64");
-          return new Response(quotationHtml(q, settings, logo), {
+          return new Response(quotationHtml(q, q.company_snapshot || settings, logo), {
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-store",
@@ -1757,12 +1767,12 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                 "SELECT id FROM quotations WHERE id=$1 FOR UPDATE",
                 [id],
               );
-              const q = await quotes.getQuote(tx, actor, id);
+              const q = await readDocument(tx,actor,id,url.searchParams.has('savedVersion')?z.coerce.number().int().positive().parse(url.searchParams.get('savedVersion')):undefined);
               quotes.assertQuoteReadyForOutput(q);
-              const snapshot = {
+              const snapshot = quotationRenderSnapshot({
                 ...q,
                 company_snapshot: q.company_snapshot ?? settings,
-              };
+              });
               const fingerprint = quotationPdfFingerprint(snapshot);
               const cached = await one<{ id: string; status: string }>(
                 tx,
@@ -1772,7 +1782,8 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                  ORDER BY created_at DESC,id DESC LIMIT 1`,
                 [id, fingerprint],
               );
-              if (cached) return { ...cached, reused: true };
+              if (cached && (cached.status!=='DONE' || await quotationPdfArtifactExists(cached.id))) return { ...cached, reused: true };
+              if(cached) await tx.query("UPDATE jobs SET status='EXPIRED',error='PDF file unavailable; regenerate PDF' WHERE id=$1",[cached.id]);
 
               const job = randomUUID();
               await tx.query(
@@ -1784,6 +1795,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
                     ownerId: actor.id,
                     fingerprint,
                     snapshot,
+                    preserveHistory:true,
                   }),
                 ],
               );
@@ -1839,7 +1851,9 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       );
       assert(job, 404, "Document not found");
       const quote = await quotes.getQuote(db, actor, job.payload.quoteId);
+      const missing=job.status==='DONE' && !await quotationPdfArtifactExists(job.id);
       if (action === "download") {
+        assert(!missing,410,'PDF file unavailable. Generate PDF again.');
         assert(
           job.status !== "EXPIRED",
           410,
@@ -1865,7 +1879,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           },
         );
       }
-      return response({ id: job.id, status: job.status, error: job.error });
+      return response({ id: job.id, status: missing?'EXPIRED':job.status, error: missing?'PDF file unavailable. Generate PDF again.':job.error });
     }
     if (root === "customers") {
       auth.requirePermission(actor, "QUOTE_CREATE");

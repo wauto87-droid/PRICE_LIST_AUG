@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
@@ -503,7 +504,7 @@ export default function AdminDashboard({
         </button>
       </div>
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>
@@ -593,7 +594,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
     </div>
   );
@@ -615,7 +616,7 @@ export default function AdminDashboard({
         </button>
       </div>
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>{t("File", "الملف")}</th>
@@ -650,7 +651,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
     </div>
   );
@@ -692,7 +693,7 @@ export default function AdminDashboard({
         </div>
       </div>
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>
@@ -828,7 +829,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       {!!groupedDuplicates.size && (
         <p className="muted">
@@ -965,7 +966,7 @@ export default function AdminDashboard({
         </div>
       )}
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>
@@ -1043,7 +1044,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       <div className="actions wrap">
         <button
@@ -1078,7 +1079,7 @@ export default function AdminDashboard({
         <h3>{panelTitle("updated-today", t)}</h3>
       </div>
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>{t("Product", "الصنف")}</th>
@@ -1109,7 +1110,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
     </div>
   );
@@ -1123,7 +1124,7 @@ export default function AdminDashboard({
         <h3>{panelTitle(current, t)}</h3>
       </div>
       <div className="table-scroll">
-        <table className="dashboard-table">
+        <ResponsiveTable className="dashboard-table">
           <thead>
             <tr>
               <th>{t("Quotation", "عرض السعر")}</th>
@@ -1161,7 +1162,7 @@ export default function AdminDashboard({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
     </div>
   );

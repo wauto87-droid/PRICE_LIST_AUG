@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, type Translate } from "./api";
 import { Otp, StoreDialog } from "./StorefrontCheckout";
@@ -834,7 +835,7 @@ export function StoreAccount({
                           <div className="sf-acc-order-drawer">
                             {order.lines && order.lines.length > 0 ? (
                               <div className="sf-acc-order-lines-table-wrap">
-                                <table className="sf-acc-order-lines-table">
+                                <ResponsiveTable className="sf-acc-order-lines-table">
                                   <thead>
                                     <tr>
                                       <th>{t("Item", "المنتج")}</th>
@@ -866,7 +867,7 @@ export function StoreAccount({
                                       </tr>
                                     ))}
                                   </tbody>
-                                </table>
+                                </ResponsiveTable>
                               </div>
                             ) : (
                               <p className="sf-acc-empty-lines">

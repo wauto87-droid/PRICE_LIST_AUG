@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { type Translate } from "./api";
 import { watchValue, type WatchColumn } from "../shared/price-watch";
 
@@ -23,7 +24,7 @@ export function PriceActivityTable({
 }) {
   return (
     <div className="table-scroll price-activity-table">
-      <table>
+      <ResponsiveTable>
         <thead>
           <tr>
             {columns.map((c) => (
@@ -100,7 +101,7 @@ export function PriceActivityTable({
             </tr>
           )}
         </tbody>
-      </table>
+      </ResponsiveTable>
     </div>
   );
 }

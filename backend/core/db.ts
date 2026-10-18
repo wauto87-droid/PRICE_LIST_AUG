@@ -7,11 +7,13 @@ export interface DB {
     args?: any[],
   ): Promise<{ rows: T[] }>;
   transaction<T>(fn: (db: DB) => Promise<T>): Promise<T>;
+  execute?(sql: string): Promise<void>;
   close?(): Promise<void>;
 }
 function wrap(client: any, transaction?: DB["transaction"]): DB {
   return {
     query: (sql, args = []) => client.query(sql, args),
+    execute: async (sql) => { if (typeof client.exec === 'function') await client.exec(sql); else await client.query(sql); },
     transaction: transaction ?? (async (fn) => fn(wrap(client))),
   };
 }
@@ -21,7 +23,7 @@ export function postgres(url: string): DB {
     max: 10,
     statement_timeout: 15000,
   });
-  return wrap(pool, async (fn) => {
+  const db=wrap(pool, async (fn) => {
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
@@ -35,6 +37,7 @@ export function postgres(url: string): DB {
       c.release();
     }
   });
+  return {...db,close:()=>pool.end()};
 }
 export async function embedded(directory?: string): Promise<DB> {
   const { PGlite } = await import("@electric-sql/pglite");
@@ -63,8 +66,10 @@ export async function migrate(db: DB) {
         "utf8",
       );
       await db.transaction(async (tx) => {
-        for (const statement of sql.split(";").filter((s) => s.trim()))
-          await tx.query(statement);
+        // Execute a migration as SQL, not a semicolon-split approximation: trigger
+        // bodies and quoted strings can legitimately contain semicolons.
+        if (tx.execute) await tx.execute(sql);
+        else for (const statement of sql.split(";").filter((s) => s.trim())) await tx.query(statement);
         await tx.query("INSERT INTO migrations(name) VALUES($1)", [file]);
       });
     }

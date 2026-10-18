@@ -7,6 +7,13 @@ import { check } from './core';
 import { quotationHtml } from '../pdf/template';
 import { quotationPdfFingerprint } from '../pdf/cache';
 import { quotationPdfDisposition } from '../pdf/filename';
+import { resolveSharedReferences } from '../quotations/references';
+
+const artifactPath = (id: string) => path.join(path.resolve(process.env.UPLOAD_DIR || '.data/uploads'), 'pdf', `${id}.pdf`);
+async function artifactExists(id: string) {
+  try { return (await fs.stat(artifactPath(id))).isFile(); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
 
 /** Customer-only adapter. Monetary totals come from ERP, never local pricing settings. */
 export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
@@ -25,7 +32,7 @@ export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
     const unit = new Decimal(l.sellingPrice);
     const excl = q.taxBasis === 'INCLUSIVE' ? unit.div(rate.div(100).plus(1)) : unit;
     const incl = q.taxBasis === 'INCLUSIVE' ? unit : unit.mul(rate.div(100).plus(1));
-    return { partNumber: l.partNumber || '', description: [l.name, l.specifications].filter(Boolean).join(' · '), unit: l.unit,
+    return { partNumber: l.partNumber === undefined ? 'Not recorded' : l.partNumber || '—', description: [l.name, l.specifications].filter(Boolean).join(' · '), unit: l.unit,
       price: { quantity: l.quantity, finalExcl: excl.toFixed(2), finalIncl: incl.toFixed(2), subtotal: lineSubtotal.toFixed(2), vatAmount: lineTax.toFixed(2), vatRate: rate.toFixed(), total: lineSubtotal.plus(lineTax).toFixed(2) } };
   });
   return { id: q.id, sharedVersion: q.version, number: `${number || q.id} · V${q.version}`, status: 'ISSUED', created_at: q.date, issued_at: q.date,
@@ -35,7 +42,7 @@ export function sharedQuotationSnapshot(q: any, company: any, number?: string) {
 }
 
 /** The existing PDF jobs are presentation snapshots; no local quotation is created. */
-export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: string, q: any, number?: string) {
+export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: string, q: any, number?: string, documentId?: string) {
   const quoteId = `shared:${q.id}:v${q.version}`;
   return db.transaction(async tx => {
     // Lock the existing settings row to serialize first-time snapshot creation and retries.
@@ -43,10 +50,19 @@ export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: 
     check(settings, 'Company settings missing', 503);
     const existing = await one(tx, "SELECT * FROM jobs WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 ORDER BY created_at,id LIMIT 1", [quoteId]);
     check(!existing || existing.payload.sharedRequestId === requestId, 'Quotation request identity mismatch', 409);
-    const snapshot = existing?.payload.snapshot || sharedQuotationSnapshot(q, settings.data, number);
+    const resolved=await resolveSharedReferences(tx,documentId,q);
+    const candidate=sharedQuotationSnapshot(resolved.quote,existing?.payload.snapshot?.company_snapshot || settings.data,number);
+    const snapshot=existing?.payload.snapshot ? {...existing.payload.snapshot} : candidate;
+    if(existing){
+      const withoutReferences=(value:any)=>({customer:value.customer,totals:value.totals,lines:value.lines.map(({partNumber,...line}:any)=>line)});
+      // A reference repair cannot conceal a conflicting financial snapshot.
+      check(quotationPdfFingerprint(withoutReferences(candidate))===quotationPdfFingerprint(withoutReferences(snapshot)), 'Historical PDF and saved version differ. Review the original records before regenerating.',409);
+      snapshot.lines=candidate.lines;
+    }
     const fingerprint = quotationPdfFingerprint(snapshot);
     const cached = await one(tx, "SELECT id,status,error,payload FROM jobs WHERE kind='QUOTE_PDF' AND payload->>'quoteId'=$1 AND payload->>'fingerprint'=$2 AND status IN ('PENDING','RUNNING','DONE') ORDER BY created_at DESC,id DESC LIMIT 1", [quoteId, fingerprint]);
-    if (cached) return cached;
+    if (cached && (cached.status !== 'DONE' || await artifactExists(cached.id))) return cached;
+    if (cached) await tx.query("UPDATE jobs SET status='EXPIRED',error='PDF file unavailable; regeneration requested' WHERE id=$1", [cached.id]);
     const id = randomUUID();
     const payload = { quoteId, sharedRequestId: requestId, sharedQuotationId: q.id, sharedVersion: q.version, ownerId: actorId, fingerprint, snapshot };
     await tx.query("INSERT INTO jobs(id,kind,payload) VALUES($1,'QUOTE_PDF',$2::jsonb)", [id, JSON.stringify(payload)]);
@@ -57,7 +73,7 @@ export async function sharedQuotationPdfJob(db: DB, actorId: string, requestId: 
 export async function sharedQuotationPrint(db: DB, actorId: string, result: any, version: number) {
   const q = result.quotations.find((q: any) => q.version === version);
   check(q, 'Quotation missing', 404);
-  const job = await sharedQuotationPdfJob(db, actorId, result.requestId, q, result.number);
+  const job = await sharedQuotationPdfJob(db, actorId, result.requestId, q, result.number,result.documentId);
   const logo = 'data:image/svg+xml;base64,' + (await fs.readFile(path.join(process.cwd(), 'public', 'logo.svg'))).toString('base64');
   const html = quotationHtml(job.payload.snapshot, job.payload.snapshot.company_snapshot, logo)
     .replace('<body>', '<body><div class="no-print"><button onclick="window.print()">Print quotation / Save PDF</button></div>');
@@ -67,8 +83,10 @@ export async function sharedQuotationPrint(db: DB, actorId: string, result: any,
 export async function sharedQuotationPdfDownload(db: DB, result: any, jobId: string, download: boolean) {
   const job = await one(db, "SELECT * FROM jobs WHERE id=$1 AND kind='QUOTE_PDF'", [jobId]);
   check(job && job.payload.sharedRequestId === result.requestId && result.quotations.some((q: any) => q.id === job.payload.sharedQuotationId && q.version === job.payload.sharedVersion), 'PDF not found', 404);
-  if (!download) return Response.json({ id: job.id, status: job.status, error: job.error });
+  const missing = job.status === 'DONE' && !await artifactExists(job.id);
+  if (!download) return Response.json({ id: job.id, status: missing ? 'EXPIRED' : job.status, error: missing ? 'PDF file unavailable. Generate PDF again.' : job.error });
+  check(!missing, 'PDF file unavailable. Generate PDF again.', 409);
   check(job.status === 'DONE', 'PDF is not ready', 409);
-  return new Response(await fs.readFile(path.join(path.resolve(process.env.UPLOAD_DIR || '.data/uploads'), 'pdf', `${job.id}.pdf`)),
+  return new Response(await fs.readFile(artifactPath(job.id)),
     { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': quotationPdfDisposition(job.payload.snapshot), 'Cache-Control': 'private, no-store' } });
 }

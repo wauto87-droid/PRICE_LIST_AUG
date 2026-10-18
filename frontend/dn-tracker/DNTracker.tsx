@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "../ResponsiveTable";
 import { useState, useEffect, useRef } from "react";
 import { api, downloadApi, type Translate } from "../api";
 import { showConfirm, showPrompt } from "../confirm";
@@ -600,7 +601,7 @@ export default function DNTracker({ t, user }: { t: Translate; user: any }) {
           ) : (
             visibleData && (
               <div className="table-scroll dn-table">
-                <table>
+                <ResponsiveTable>
                   <thead>
                     <tr>
                       {(filters.view === "CUSTOMERS"
@@ -746,7 +747,7 @@ export default function DNTracker({ t, user }: { t: Translate; user: any }) {
                       ),
                     )}
                   </tbody>
-                </table>
+                </ResponsiveTable>
                 {!visibleData.rows.length && (
                   <p className="dn-empty">
                     {t(
@@ -848,7 +849,7 @@ export default function DNTracker({ t, user }: { t: Translate; user: any }) {
             </div>
           )}
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   {fields
@@ -882,7 +883,7 @@ export default function DNTracker({ t, user }: { t: Translate; user: any }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           {edit && !historical && (
             <div className="dn-detail-controls">

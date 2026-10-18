@@ -1,3 +1,4 @@
+import ResponsiveTable from "../ResponsiveTable";
 import React, { useMemo, useState } from 'react';
 import { useTracker } from './TrackerContext';
 import { OrderItem } from './types';
@@ -97,7 +98,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
           </h3>
         </div>
         <div className="pt-table-container" style={{ flex: 1, overflow: 'auto', border: 'none', borderRadius: 0 }}>
-          <table className="data-table">
+          <ResponsiveTable className="data-table">
             <thead>
               <tr>
                 <th>Date</th>
@@ -137,7 +138,7 @@ export default function CustomerSheetsView({ activeItems }: CustomerSheetsViewPr
                 </tr>
               </tfoot>
             )}
-          </table>
+          </ResponsiveTable>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { api, type Translate } from "./api";
 export default function CommercialLists({
   section,
@@ -23,7 +24,7 @@ export default function CommercialLists({
           <button onClick={reload}>{t("Refresh", "تحديث")}</button>
         </div>
         <div className="dense-table-wrap">
-          <table className="dense-table">
+          <ResponsiveTable className="dense-table">
             <thead>
               <tr>
                 <th>{t("Order", "الطلب")}</th>
@@ -83,7 +84,7 @@ export default function CommercialLists({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       </div>
     );
@@ -95,7 +96,7 @@ export default function CommercialLists({
           <button onClick={reload}>{t("Refresh", "تحديث")}</button>
         </div>
         <div className="dense-table-wrap">
-          <table className="dense-table">
+          <ResponsiveTable className="dense-table">
             <thead>
               <tr>
                 <th>{t("PO", "أمر الشراء")}</th>
@@ -142,7 +143,7 @@ export default function CommercialLists({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       </div>
     );
@@ -159,7 +160,7 @@ export default function CommercialLists({
           <button onClick={reload}>{t("Refresh", "تحديث")}</button>
         </div>
         <div className="dense-table-wrap">
-          <table className="dense-table">
+          <ResponsiveTable className="dense-table">
             <thead>
               <tr>
                 <th>{t("Order", "الطلب")}</th>
@@ -231,7 +232,7 @@ export default function CommercialLists({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       </div>
     );

@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useRef, useState } from "react";
 import { api, uploadApi, type Translate } from "./api";
 import {
@@ -934,7 +935,7 @@ export default function DeliveryQuoteImport({
             );
           })()}
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   <th>
@@ -1104,7 +1105,7 @@ export default function DeliveryQuoteImport({
                   );
                 })}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           {(() => {
             const totalRows = job?.resultCount ?? job?.summary?.totalRows ?? 0;

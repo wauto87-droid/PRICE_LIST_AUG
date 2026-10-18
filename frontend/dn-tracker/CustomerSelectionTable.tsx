@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "../ResponsiveTable";
 import { useEffect, useMemo, useState } from "react";
 import type { Translate } from "../api";
 
@@ -123,7 +124,7 @@ export default function CustomerSelectionTable({
         </button>
       </div>
       <div className="table-scroll">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               <th>{t("Select", "تحديد")}</th>
@@ -161,7 +162,7 @@ export default function CustomerSelectionTable({
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
         {!shown.length && (
           <p className="dn-empty">
             {t(

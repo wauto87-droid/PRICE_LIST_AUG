@@ -39,6 +39,25 @@ test('opening an existing version preserves canonical tax, totals and selling pr
   assert.equal(recalculateSharedDraft(draft).lines[0].price.total, '115');
 });
 
+test('reopening a linked editor restores the saved item order and appends pending active items without changing history', () => {
+  const items = Array.from({length:33},(_,i)=>({...result.items[0],id:`item-${i}`,localLineId:`line-${i}`,partNumber:`REPEATED-${i%6}`,name:`Item ${i}`,sellingPrice:'2.000001',active:i!==30}));
+  const order = [32,0,5,2];
+  const saved = {id:'saved',version:1,customer:'Buyer',currency:'SAR',taxBasis:'EXCLUSIVE',taxRate:'15',lines:order.map(i=>({itemId:`item-${i}`,quantity:'1',sellingPrice:'1.005001',offer}))};
+  const canonical = {...result,items,quotations:[saved]};
+  const before = JSON.stringify(canonical);
+  for(const mode of ['edit','all','priced'] as const){
+    const draft = sharedDraft(canonical,undefined,undefined,mode);
+    assert.equal(draft.lines.length,32);
+    assert.deepEqual(draft.lines.slice(0,4).map((l:any)=>l.sharedItemId),order.map(i=>`item-${i}`));
+    assert.equal(new Set(draft.lines.map((l:any)=>l.sharedItemId)).size,32);
+    assert.equal(draft.lines.some((l:any)=>l.sharedItemId==='item-30'),false);
+    assert.deepEqual(sharedDraftCommand(draft).lines.slice(0,4).map((l:any)=>l.itemId),order.map(i=>`item-${i}`));
+    assert.ok(draft.lines.slice(0,4).every((l:any)=>l.input.unitPriceExcl==='1.005001'));
+  }
+  assert.deepEqual(sharedDraft(canonical,undefined,1,'version').lines.map((l:any)=>l.sharedItemId),order.map(i=>`item-${i}`));
+  assert.equal(JSON.stringify(canonical),before);
+});
+
 test('edited draft preview rounds once at the quotation total, retaining small fractional line values', () => {
   const lines = Array.from({ length: 199 }, () => ({ input: { quantity: '0.0001', unitPriceExcl: '0.005' } }));
   lines.push({ input: { quantity: '1', unitPriceExcl: '0.0049' } });

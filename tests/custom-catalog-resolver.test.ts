@@ -23,6 +23,8 @@ test("Enter navigation finds the next editable row for discounts and prices", ()
   assert.equal(nextEditableRow(lines, 0, "discount"), 1);
   assert.equal(nextEditableRow(lines, 0, "unitPriceExcl"), 1);
   assert.equal(nextEditableRow(lines, 2, "discount"), -1);
+  assert.equal(nextEditableRow(lines, 0, "quantity"), 1);
+  assert.equal(nextEditableRow(lines, 2, "quantity"), -1);
 });
 
 const custom = (partNumber: string, quantity = "1") => ({
