@@ -922,7 +922,7 @@ test("105-row review atomically saves edits across pages and retries the same qu
     const jobId = randomUUID();
     const ids = Array.from({length:105}, () => randomUUID());
     await db.query("INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id) VALUES($1,'1533.XLS','fixture','AWAITING_MAPPING',$2)", [jobId, actor.id]);
-    for (let index=0; index<ids.length; index++) await db.query("INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)", [ids[index],jobId,index+1,json({Date:"2026-10-01",Doc:index<17?"REMOVED-DN":"KEPT-DN",Customer:"ACME",Item:"CUSTOM-"+index,Description:"Item "+index,Qty:"1"})]);
+    for (let index=0; index<ids.length; index++) await db.query("INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)", [ids[index],jobId,index+1,json({Date:new Date(Date.UTC(2026,7,1+Math.max(0,Math.floor((index-17)/2)))).toISOString().slice(0,10),Doc:index<17?"REMOVED-DN":String(1852+Math.floor((index-17)/2)),Customer:"ACME",Item:"CUSTOM-"+index,Description:"Item "+index,Qty:"1"})]);
     await mapRows(db,actor,jobId,{version:1,date:"Date",docNo:"Doc",customerName:"Customer",partNumber:"Item",description:"Description",quantity:"Qty"});
     let opened:any = await get(db,actor,jobId);
     const result = await reviewRows(db,actor,jobId,{version:opened.version,rowIds:ids.slice(0,17),action:"REMOVE"});
@@ -931,13 +931,17 @@ test("105-row review atomically saves edits across pages and retries the same qu
     opened = await get(db,actor,jobId,2,50);
     assert.equal(opened.rows.length,5);
     assert.equal(opened.summary.includedRows,88);
-    assert.deepEqual(opened.summary.docNos,["KEPT-DN"]);
+    assert.equal(opened.summary.docNos.length,44);
+    assert.ok(("Delivery notes: "+opened.summary.docNos.join(", ")).length>200);
     const input={version:opened.version,rowUpdates:{[ids[21]]:{quantity:"3",unitPriceExcl:"12"},[ids[104]]:{quantity:"5",unitPriceExcl:"7"}}};
     const quote:any=await finalize(db,actor,jobId,input);
     assert.equal(quote.lines.length,88);
     assert.equal(quote.lines.find((l:any)=>l.input.importMeta.rowId===ids[21]).input.quantity,"3");
     assert.equal(quote.lines.find((l:any)=>l.input.importMeta.rowId===ids[104]).price.finalExcl,"7.00");
-    assert.match(quote.customer.notes,/KEPT-DN/);
+    assert.ok(quote.customer.reference.length<=200);
+    assert.match(quote.customer.reference,/more.*see notes/);
+    for (const docNo of opened.summary.docNos) assert.ok(quote.customer.notes.includes(docNo));
+    assert.ok(quote.customer.notes.length<=1000);
     assert.doesNotMatch(quote.customer.notes,/REMOVED-DN/);
     const retried:any=await finalize(db,actor,jobId,input);
     assert.equal(retried.id,quote.id);
