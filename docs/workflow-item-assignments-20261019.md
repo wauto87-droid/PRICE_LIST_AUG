@@ -1,0 +1,11 @@
+# Item-wise Workflow assignments
+
+Workflow opens the pricing table directly. Each item has one staff owner; bulk assignment fills the same column. One versioned payload carries all selected owners through the existing outbox. ERP checks every owner's branch eligibility, preserves command receipts, and creates/supersedes tasks in one transaction. Refreshes retain edited owners and require explicit review if document/workflow versions changed.
+
+Prepare quotation uses the existing shared editor and retains saved selling prices. Collection uses the same owner-table pattern. Early collection requires a saved version, explicit reason, creator/admin authorization and selected positive quantities. The canonical service records actor/time/reason, reuses EARLY_AUTHORIZED orders/allocations and keeps delivery blocked until customer confirmation. Existing confirmation reconciliation reuses allocations and pickups.
+
+Collection PDFs are available before pickup, for all staff or one collector. The existing supplier-safe copy remains filtered to one supplier. PDFs accept confirmed SO and early CO order numbers and include recorded supplier contact/location, source delivery references and permitted costs. Customer quotation PDFs retain their existing safe projection.
+
+Validation: 85 ERP regressions passed; the exact-running-base ERP candidate passed 9 targeted tests and type checking. Price List quotation/import/Workflow run passed 67 tests with one PostgreSQL-only suite skipped. Editor, multi-page import, pricing-owner and collection-owner browser fixtures passed. Three pickup-template tests passed, including confirmed SO references and contact/source details.
+
+Deployment hold: a fresh ERP backup restore failed at SystemConfig_pkey because the original app_settings keys conflict. Preserve both original records and the existing owner decision; do not deduplicate or omit the constraint to clear the release gate. ERP handler candidate 2fea793 is built from exact live base 70aacaf; no financial/accounting migration or settings repair is part of it. New Workflow client actions must not deploy before the compatible ERP handler passes the established recovery/release gates. The separate cfaaba8 import/editor release has its own successful 112-table restore drill.

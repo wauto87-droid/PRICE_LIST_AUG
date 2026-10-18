@@ -462,6 +462,12 @@ export async function jobWorkspace(
       staff: String(input.staff || ""),
       internal: input.internal === true,
     });
+    const quotation = await one(db, "SELECT lines FROM quotations WHERE id=$1", [documentId]);
+    for (const row of response.order?.lines || []) {
+      const source = quotation?.lines?.find((line: any) => idFor(line) === row.sourceLineId);
+      const meta = source?.input?.importMeta;
+      if (meta?.source === "DELIVERY_NOTE") row.sourceReference = `DN ${meta.docNo || "—"} · ${meta.docDate || "—"}`;
+    }
     const { pickupPdf } = await import("../pdf/pickup");
     return pickupPdf(db, response);
   }
@@ -736,7 +742,7 @@ export async function jobWorkspace(
           409,
         );
         check(
-          context.staff.some((s: any) => s.id === input.assignee),
+          (input.selected || []).every((id: string) => context.staff.some((s: any) => s.id === (input.owners?.[id] || input.assignee))),
           "Choose eligible staff from this branch",
           403,
         );
@@ -806,9 +812,9 @@ export async function jobWorkspace(
             entry[kind] = {
               token: payload.eventId,
               status: "PENDING_ERP_SYNC",
-              owner: payload.assignee,
+              owner: payload.owners?.[lineId] || payload.assignee,
               ownerName: context.staff.find(
-                (s: any) => s.id === payload.assignee,
+                (s: any) => s.id === (payload.owners?.[lineId] || payload.assignee),
               )?.name,
               currency: payload.lines.find((l) => l.id === lineId)!.currency,
               notes: payload.notes,

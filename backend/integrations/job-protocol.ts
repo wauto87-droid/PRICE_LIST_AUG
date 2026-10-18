@@ -42,7 +42,7 @@ export const assignmentInput = z
     documentVersion: z.number().int().positive(),
     lines: z.array(jobLine).min(1).max(200),
     selected: z.array(z.string().uuid()).min(1).max(200),
-    assignee: text,
+    assignee: text, owners: z.record(z.string().uuid(), text).optional(),
     kind: z.enum(["PRICING", "COLLECTION"]),
     mode: z.enum(["ORDER_CONFIRMED", "EARLY_AUTHORIZED"]).optional(),
     order: z

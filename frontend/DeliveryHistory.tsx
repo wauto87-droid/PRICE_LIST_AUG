@@ -3,7 +3,7 @@ import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from 'react';
 import Decimal from 'decimal.js';
 type Row=Record<string,any>;
-export default function DeliveryHistory({row,admin,busy,submit,onPickup}:{row:Row;admin:boolean;busy:boolean;submit:(body:Row)=>Promise<unknown>;onPickup?:(orderId:string)=>void}) {
+export default function DeliveryHistory({row,admin,busy,submit,onPickup}:{row:Row;admin:boolean;busy:boolean;submit:(body:Row)=>Promise<unknown>;onPickup?:(orderId:string, staff?:string, internal?:boolean, supplier?:string)=>void}) {
   const balances:Row[]=[...(row.legacyCollections||[]),...(row.orders||[]).flatMap((o:Row)=>o.lines)];
   const candidates:Row[]=row.items.map((item:Row)=>{
     const related=balances.filter(l=>l.itemId===item.id&&l.customerConfirmed);
@@ -52,6 +52,12 @@ export default function DeliveryHistory({row,admin,busy,submit,onPickup}:{row:Ro
       const supplier= l.supplierName||supplierIds.map(id=>row.suppliers?.find((s:Row)=>s.id===id)?.name||id).join(', ')||'—';
       return <tr key={`${l.orderId||index}:${l.itemId}`}><td>{l.partNumber||item?.partNumber||'—'}<div>{l.name||item?.name}</div></td><td>{supplier}</td><td>{row.customer||'Customer'}</td><td>{l.confirmedQuantity||'0'} {l.unit}</td><td>{l.collected} {l.unit}</td><td>{l.delivered} {l.unit}</td><td>{l.poNumber||(l.poReferences||[]).join(', ')}{deliveries.map((m:Row)=><div key={m.id}>{m.type==='COLLECT'?'Collected':'Delivered'} · {Number.isFinite(Date.parse(m.date))?new Date(m.date).toLocaleString():'Date not recorded'} · {m.quantity} {l.unit} · {m.deliveryNumber||m.invoiceNumber||m.evidence||'—'}</div>)}</td></tr>;
     })}</tbody></ResponsiveTable></div>
-    {onPickup&&(row.orders||[]).filter((o:Row)=>o.lines.some((l:Row)=>new Decimal(l.collected||0).gt(0))).map((o:Row)=><button key={o.id} type="button" disabled={busy} onClick={()=>onPickup(o.id)}>Download internal collection slip · {o.number}</button>)}
+    {onPickup && (row.orders || []).filter((order:Row) => order.lines.some((line:Row) => line.staff?.length)).map((order:Row) => <div key={order.id} className="card">
+      <h4>{order.number} {order.mode === 'EARLY_AUTHORIZED' && '· Unconfirmed early collection'}</h4>
+      <div className="table-scroll"><ResponsiveTable><thead><tr><th>Product / supplier</th><th>Assigned staff</th><th>Authorized</th><th>Collected</th><th>Outstanding</th><th>Instructions / references</th></tr></thead><tbody>{order.lines.map((line:Row) => <tr key={line.itemId}><td>{line.partNumber} · {line.name}<small>{line.supplier}</small></td><td>{line.staff?.map((person:Row) => person.name).join(', ')}</td><td>{line.quantity} {line.unit}</td><td>{line.collected}</td><td>{line.outstanding}</td><td>{line.staff?.map((person:Row) => <small key={person.id}>{person.nextAction} · {person.due || 'No deadline'}</small>)}{line.poReferences?.join(', ')}</td></tr>)}</tbody></ResponsiveTable></div>
+      <button type="button" disabled={busy} onClick={() => onPickup(order.id)}>Download collection PDF · all staff</button>
+      {[...new Map<string,Row>(order.lines.flatMap((line:Row) => line.staff || []).map((person:Row) => [person.id,person])).values()].map(person => <button key={person.id} type="button" disabled={busy} onClick={() => onPickup(order.id, person.id)}>Collection PDF · {person.name}</button>)}
+      {[...new Set<string>(order.lines.map((line:Row) => line.supplier).filter(Boolean))].map(supplier => <button key={supplier} type="button" disabled={busy} onClick={() => onPickup(order.id, '', false, supplier)}>Supplier-safe PDF · {supplier}</button>)}
+    </div>)}
   </section>;
 }

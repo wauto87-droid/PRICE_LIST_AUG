@@ -25,8 +25,8 @@ function OverviewCards({progress}:{progress?:Row}) {
 export default function PricingCollectionJobs({documentId,requestId,quotationVersion,onOpenDraft,onOpenQuotation}:{documentId?:string;requestId?:string;quotationVersion?:number;onOpenDraft?:(v:any)=>void;onOpenQuotation?:(v:any)=>void}) {
   const [current,setCurrent]=useState(documentId||'');
   const [requestContext,setRequestContext]=useState(requestId||'');
-  const [pricingVisited,setPricingVisited]=useState(false);
-  const [tab,setTab]=useState<Tab>(quotationVersion?'quotation':'overview');
+  const [pricingVisited,setPricingVisited]=useState(true);
+  const [tab,setTab]=useState<Tab>(quotationVersion?'quotation':'pricing');
   const [owner,setOwner]=useState('me');const [filter,setFilter]=useState('all');
   const [search,setSearch]=useState('');const [debounced,setDebounced]=useState('');
   const [page,setPage]=useState(1);const [refresh,setRefresh]=useState(0);
@@ -35,7 +35,7 @@ export default function PricingCollectionJobs({documentId,requestId,quotationVer
   const [error,setError]=useState('');const [loading,setLoading]=useState(false);
   const [lastRefresh,setLastRefresh]=useState('');const generation=useRef(0);
   useEffect(()=>{const timer=setTimeout(()=>{setDebounced(search);setPage(1);},300);return()=>clearTimeout(timer);},[search]);
-  useEffect(()=>{if(documentId&&documentId!==current){setCurrent(documentId);setDoc(undefined);setCanonical(undefined);setPricingVisited(false);setTab(quotationVersion?'quotation':'overview');}if(quotationVersion)setTab('quotation');setRequestContext(requestId||'');},[documentId,requestId,quotationVersion]);
+  useEffect(()=>{if(documentId&&documentId!==current){setCurrent(documentId);setDoc(undefined);setCanonical(undefined);setPricingVisited(true);setTab(quotationVersion?'quotation':'pricing');}if(quotationVersion)setTab('quotation');setRequestContext(requestId||'');},[documentId,requestId,quotationVersion]);
   useEffect(()=>{
     if(current||requestContext)return;
     const controller=new AbortController();const currentGeneration=++generation.current;
@@ -53,7 +53,7 @@ export default function PricingCollectionJobs({documentId,requestId,quotationVer
     api(`workflow-jobs?documentId=${encodeURIComponent(current)}`,'GET',undefined,{signal:controller.signal}).then(v=>{if(alive){setDoc(v);setLastRefresh(new Date().toISOString());setError('');}}).catch(e=>{if(alive&&!requestWasCancelled(e))setError(e.message);});
     return()=>{alive=false;controller.abort();};
   },[current,refresh]);
-  const open=(id:string)=>{setDoc(undefined);setCanonical(undefined);setRequestContext('');setPricingVisited(false);setCurrent(id);setTab('overview');setError('');};
+  const open=(id:string)=>{setDoc(undefined);setCanonical(undefined);setRequestContext('');setPricingVisited(true);setCurrent(id);setTab('pricing');setError('');};
   const changeTab=(value:Tab)=>{setTab(value);if(value==='pricing')setPricingVisited(true);};
   const selected=result?.rows?.find((r:Row)=>r.id===current);
   const detailProgress=canonical?.summary||selected?.progress;
@@ -76,9 +76,9 @@ export default function PricingCollectionJobs({documentId,requestId,quotationVer
       <header className="wf-header card wf-document"><div><h2>{doc?.number||selected?.number||canonical?.number||'Loading document…'}</h2><h3>{doc?customerName(doc):selected?customerName(selected):canonical?.customer||''}</h3><p className="wf-muted">{doc?.creator?.name||selected?.creator||'—'} · {doc?.workflow||selected?.workflow||canonical?.number||'Not linked to ERP'}{(doc?.internalReference||selected?.internalReference)&&<> · Draft reference: {doc?.internalReference||selected?.internalReference}</>}{selected?.quotationNumber&&<> · Quotation: {selected.quotationNumber}</>}</p></div><div><span className="wf-pill">{doc?.status||selected?.status||(canonical?.quotations?.length?'ISSUED':'Loading')}</span><p className={doc?.syncWarning?'wf-warning':'wf-muted'}>{doc?.syncWarning||((doc?.failures||[]).length?'ERP synchronization pending':(canReadShared?'No pending synchronization reported':'Not linked to ERP'))}</p><small>Last successful refresh: {lastRefresh?new Date(lastRefresh).toLocaleString():'—'}</small></div></header>
       <nav className="wf-tabs" aria-label="Workflow sections">{tabs.map(([id,label])=><button type="button" key={id} aria-current={tab===id?'page':undefined} className={tab===id?'is-selected':''} onClick={()=>changeTab(id)}>{label}</button>)}</nav>
       <div hidden={tab!=='overview'} className="card wf-document"><h3>Document overview</h3><OverviewCards progress={detailProgress}/>{canonical?.summary?<ProgressBadge row={{tracking:'tracked',progress:{...canonical.summary,freshness:canonical.stale?'stale':'fresh'}}}/>:selected?<ProgressBadge row={selected}/>:<p>ERP progress is not available yet.</p>}<div className="wf-actions">{tabs.slice(1).map(([id,label])=><button key={id} onClick={()=>changeTab(id)}>Open {label}</button>)}</div>{doc?.failures?.map((f:Row)=><p role="status" className="wf-warning" key={f.id}>{f.state}: {f.error||'Waiting for ERP acknowledgement'}</p>)}{doc?.lines?.flatMap((l:Row)=>Object.values<Row>(l.jobs||{}).filter(j=>j.blocker).map((j:Row,index:number)=><p key={`${l.id}:${index}`} className="wf-warning">{l.partNumber||l.description}: {j.blocker}</p>))}</div>
-      {pricingVisited&&!!current&&<div hidden={tab!=='pricing'}><details><summary>Assign pricing staff / branch setup</summary><WorkflowPricingAssignments key={current} documentId={current} requestId={requestContext||undefined} quotationVersion={quotationVersion} onOpenDraft={onOpenDraft} onOpenQuotation={onOpenQuotation}/></details></div>}
+      {pricingVisited&&!!current&&<div hidden={tab!=='pricing'}><h3>Assign pricing</h3><WorkflowPricingAssignments key={current} documentId={current} requestId={requestContext||undefined} quotationVersion={quotationVersion} onOpenDraft={onOpenDraft} onOpenQuotation={onOpenQuotation}/></div>}
       {!canReadShared&&doc&&<p className="wf-muted">Not started / Not linked to ERP. Open Pricing to assign work, then refresh progress after ERP synchronization.</p>}
-      {canReadShared&&<SharedQuotation documentId={current||undefined} initialRequestId={requestContext||undefined} initialVersion={quotationVersion} showFulfillment refreshKey={refresh} view={tab} onUnavailable={message=>{setError(message);setCanonical(value=>value?{...value,stale:true}:value);}} onOpenDraft={onOpenDraft} onData={value=>{setError('');setCanonical(value);setLastRefresh(value.refreshedAt||new Date().toISOString());}}/>}
+      {canReadShared&&<SharedQuotation documentId={current||undefined} initialRequestId={requestContext||undefined} initialVersion={quotationVersion} showFulfillment refreshKey={refresh} view={tab === "pricing" && current ? "overview" : tab} onUnavailable={message=>{setError(message);setCanonical(value=>value?{...value,stale:true}:value);}} onOpenDraft={onOpenDraft} onData={value=>{setError('');setCanonical(value);setLastRefresh(value.refreshedAt||new Date().toISOString());}}/>}
     </>}
   </section>;
 }

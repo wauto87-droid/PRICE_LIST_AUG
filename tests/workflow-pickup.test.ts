@@ -80,3 +80,13 @@ test("supplier template excludes internal prices, customer information and quota
   assert.match(html, /5 pcs/);
   assert.match(html, /not proof of collection/);
 });
+
+
+test("confirmed SO orders and source/contact details use the same pickup template", () => {
+ const value=fixture(true);
+ value.order.number="SO-000042";
+ value.order.lines[0]={...value.order.lines[0],supplierContact:"Counter · 123",supplierLocation:"Industrial area",sourceReference:"DN 1906 · 2026-09-26"};
+ const parsed=pickupInput.parse(value);
+ const html=pickupHtml(parsed,{companyName:"AMT",quotation:{}},"");
+ assert.match(html,/SO-000042/);assert.match(html,/Counter · 123/);assert.match(html,/Industrial area/);assert.match(html,/DN 1906/);
+});
