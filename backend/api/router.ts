@@ -82,8 +82,8 @@ async function readLimited(req: Request, limit: number): Promise<Buffer> {
     reader.releaseLock();
   }
 }
-async function body(req: Request) {
-  const text = (await readLimited(req, 20 * 1024 * 1024)).toString("utf8");
+async function body(req: Request, limit = 2 * 1024 * 1024) {
+  const text = (await readLimited(req, limit)).toString("utf8");
   try {
     return JSON.parse(text);
   } catch {
@@ -186,7 +186,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
       }
       if(id==='media'&&action&&method==='GET'){const media=await one(db,'SELECT content FROM commerce_media WHERE id=$1',[uuid(action)]);assert(media,404,'Image not found');return new Response(new Uint8Array(media.content),{headers:{'Content-Type':'image/webp','Cache-Control':'public, max-age=86400','X-Content-Type-Options':'nosniff'}});}
       if(id==='business'&&method==='GET')return response(await requirements.portal(db,account));
-      if(id==='suggestions'&&method==='GET'){const q=z.string().trim().max(100).parse(url.searchParams.get('q')||'');if(q.length<2)return response({items:[]});return response({items:(await db.query("SELECT p.id,p.part_number,p.description FROM products p WHERE p.active AND p.storefront_published AND (p.part_number ILIKE '%'||$1||'%' OR p.description ILIKE '%'||$1||'%' OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND a.label ILIKE '%'||$1||'%')) ORDER BY CASE WHEN lower(p.part_number)=lower($1) THEN 0 WHEN p.part_number ILIKE $1||'%' THEN 1 ELSE 2 END,p.part_number LIMIT 8",[q])).rows});}
+      if(id==='suggestions'&&method==='GET'){const q=z.string().trim().max(100).parse(url.searchParams.get('q')||'');if(q.length<2)return response({items:[]});const cleanQ=q.toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]+/g,'');return response({items:(await db.query("SELECT p.id,p.part_number,p.description FROM products p WHERE p.active AND p.storefront_published AND (p.part_number ILIKE '%'||$1||'%' OR p.description ILIKE '%'||$1||'%' OR (length($2)>2 AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g') LIKE '%'||$2||'%') OR EXISTS(SELECT 1 FROM product_aliases a WHERE a.product_id=p.id AND (a.label ILIKE '%'||$1||'%' OR (length($2)>2 AND regexp_replace(a.normalized,'[^[:alnum:]]+','','g') LIKE '%'||$2||'%')))) ORDER BY CASE WHEN lower(p.part_number)=lower($1) THEN 0 WHEN length($2)>0 AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g')=$2 THEN 1 WHEN p.part_number ILIKE $1||'%' THEN 2 WHEN length($2)>0 AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g') LIKE $2||'%' THEN 3 ELSE 4 END,length(p.part_number) ASC,p.part_number LIMIT 16",[q,cleanQ])).rows});}
       if(id==='quote-cart'&&action&&method==='GET'){const q=await requirements.checkoutQuote(db,account,uuid(action));const items=[];for(const l of q.lines){const p=await storefront.productDetail(db,l.productId,account);items.push({...p,quantity:String(l.price.quantity)})}return response({items});}
       if(id==='invitations'&&method==='POST')return response(await commerce.invite(db,account,await body(req)));
       if(id==='members'&&action&&method==='DELETE')return response(await commerce.removeMember(db,account,uuid(action)));
@@ -714,7 +714,13 @@ export async function handle(req: Request, db: DB): Promise<Response> {
           return response({ ads: await storefront.getAds(db) });
         }
         if (method === "PUT") {
-          return response(await storefront.saveAds(db, actor, await body(req)));
+          return response(
+            await storefront.saveAds(
+              db,
+              actor,
+              await body(req, 20 * 1024 * 1024),
+            ),
+          );
         }
       }
       if(id==='catalog-options'&&method==='POST'){auth.requirePermission(actor,'STOREFRONT_MANAGE');const d=z.object({ids:z.array(z.string().uuid()).max(200)}).parse(await body(req));return response({products:(await db.query('SELECT id,part_number,description FROM products WHERE id=ANY($1::uuid[]) ORDER BY part_number',[d.ids])).rows});}
@@ -2512,7 +2518,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(
           method === "GET"
             ? settings
-            : await admin.saveSettings(db, actor, await body(req)),
+            : await admin.saveSettings(db, actor, await body(req, 20 * 1024 * 1024)),
         );
       }
       if (id === "users") {

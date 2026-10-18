@@ -28,6 +28,6 @@ export function activeSuggestionIndex(index: number, length: number) {
   return 0;
 }
 
-export function topSuggestions<T>(items: T[], limit = 8) {
+export function topSuggestions<T>(items: T[], limit = 16) {
   return items.slice(0, limit);
 }
