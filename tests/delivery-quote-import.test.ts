@@ -909,3 +909,38 @@ test("Delivery-note history searches, filters, sorts and paginates on Riyadh dat
 });
 
 
+
+
+test("105-row review atomically saves edits across pages and retries the same quotation", async () => {
+  const db = await embedded();
+  try {
+    await migrate(db);
+    process.env.SETUP_TOKEN = "delivery-multipage-token-long-enough";
+    await setup(db, { token: process.env.SETUP_TOKEN, username: "admin", password: "abcd", name: "Admin", companyName: "AMT" });
+    const signed = await login(db, { username: "admin", password: "abcd" });
+    const actor = await authenticate(db, new Request("http://localhost", { headers: { Cookie: sessionCookie(signed.token).split(";")[0] } }));
+    const jobId = randomUUID();
+    const ids = Array.from({length:105}, () => randomUUID());
+    await db.query("INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id) VALUES($1,'1533.XLS','fixture','AWAITING_MAPPING',$2)", [jobId, actor.id]);
+    for (let index=0; index<ids.length; index++) await db.query("INSERT INTO delivery_quote_rows(id,job_id,row_number,raw) VALUES($1,$2,$3,$4)", [ids[index],jobId,index+1,json({Date:"2026-10-01",Doc:index<17?"REMOVED-DN":"KEPT-DN",Customer:"ACME",Item:"CUSTOM-"+index,Description:"Item "+index,Qty:"1"})]);
+    await mapRows(db,actor,jobId,{version:1,date:"Date",docNo:"Doc",customerName:"Customer",partNumber:"Item",description:"Description",quantity:"Qty"});
+    let opened:any = await get(db,actor,jobId);
+    const result = await reviewRows(db,actor,jobId,{version:opened.version,rowIds:ids.slice(0,17),action:"REMOVE"});
+    assert.equal(result.version,opened.version+1);
+    await assert.rejects(reviewRows(db,actor,jobId,{version:opened.version,rowIds:[ids[20]],action:"REMOVE"}), (e:any)=>e.status===409);
+    opened = await get(db,actor,jobId,2,50);
+    assert.equal(opened.rows.length,5);
+    assert.equal(opened.summary.includedRows,88);
+    assert.deepEqual(opened.summary.docNos,["KEPT-DN"]);
+    const input={version:opened.version,rowUpdates:{[ids[21]]:{quantity:"3",unitPriceExcl:"12"},[ids[104]]:{quantity:"5",unitPriceExcl:"7"}}};
+    const quote:any=await finalize(db,actor,jobId,input);
+    assert.equal(quote.lines.length,88);
+    assert.equal(quote.lines.find((l:any)=>l.input.importMeta.rowId===ids[21]).input.quantity,"3");
+    assert.equal(quote.lines.find((l:any)=>l.input.importMeta.rowId===ids[104]).price.finalExcl,"7.00");
+    assert.match(quote.customer.notes,/KEPT-DN/);
+    assert.doesNotMatch(quote.customer.notes,/REMOVED-DN/);
+    const retried:any=await finalize(db,actor,jobId,input);
+    assert.equal(retried.id,quote.id);
+    assert.equal(((await get(db,actor,jobId)) as any).summary.removedRows,17);
+  } finally { await db.close?.(); }
+});

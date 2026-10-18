@@ -111,13 +111,24 @@ try {
   await page.screenshot({path:'test-results/quotation-normal-entry/normal-mobile.png',fullPage:true});
   // Focus keeps the original six-column editor, controls and sortable rows.
   await page.setViewportSize({width:1280,height:768});await page.getByRole('button',{name:'Focus table',exact:true}).click();
-  assert.equal(await page.locator('thead th').count(),6);assert.equal(await page.getByRole('combobox',{name:/Item search/}).count(),0);
+  assert.equal(await page.locator('thead th').count(),6);assert.equal(await page.getByRole('combobox',{name:/Item search/}).count(),5);
   assert.equal(await page.locator('.quotation-drag-handle').count(),4);await page.screenshot({path:'test-results/quotation-normal-entry/focused-1280.png',fullPage:true});
+  // Focus uses the same unified search and keyboard grid behavior.
+  const field=(name,row)=>page.locator(`[data-cart-field="${name}"][data-cart-row="${row}"]`);
+  await field('quantity',0).focus(); const originalQty=await field('quantity',0).inputValue();
+  await field('quantity',0).press('ArrowDown'); assert.equal(await field('quantity',1).evaluate(el=>el===document.activeElement),true);
+  assert.equal(await field('quantity',0).inputValue(),originalQty);
+  await field('quantity',1).press('Shift+Enter');assert.equal(await field('quantity',0).evaluate(el=>el===document.activeElement),true);
+  await field('quantity',0).press('Tab');assert.equal(await field('discount',0).evaluate(el=>el===document.activeElement),true);
+  await field('discount',0).press('Shift+Tab');assert.equal(await field('quantity',0).evaluate(el=>el===document.activeElement),true);
+  await field('quantity',3).press('Enter');assert.equal(await rowSearch(5).evaluate(el=>el===document.activeElement),true);
+  await rowSearch(5).fill('brkt');await page.getByRole('option').filter({hasText:'Saved custom'}).waitFor();await chooseFirst(rowSearch(5));
+  await page.getByLabel('New item quantity',{exact:true}).fill('1');await waitCount(5);assert.equal(await draft().count(),1);
   await page.getByRole('button',{name:'Exit focus',exact:true}).click();
   // Linked quotations retain their existing identity restrictions.
   await page.evaluate(()=>window.setTestCart({...window.testCart,sharedWorkflow:true,sharedDocumentId:'linked',sharedTaxBasis:'EXCLUSIVE',sharedTaxRate:'15',workflowCurrency:'SAR',lines:window.testCart.lines.map((line,index)=>({...line,sharedItemId:'shared-'+index}))}));
   await page.waitForFunction(()=>!document.querySelector('[data-entry-draft]'));
-  assert.equal(await page.getByRole('combobox',{name:/Item search/}).count(),0);assert.equal(await page.locator('.quotation-drag-handle').count(),4);
+  assert.equal(await page.getByRole('combobox',{name:/Item search/}).count(),0);assert.equal(await page.locator('.quotation-drag-handle').count(),5);
   assert.deepEqual(errors,[]);
   console.log('PASS: unified search, quantity/focus, replacement, stale results, inline custom/dedup/reuse, save failure, keyboard dragging, responsive layouts, focused and linked modes');
 } catch (error) {

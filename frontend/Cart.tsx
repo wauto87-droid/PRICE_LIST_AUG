@@ -1,4 +1,6 @@
 "use client";
+import { deliveryCustomerReferences } from "../shared/delivery-references";
+import { navigateQuotationGrid } from "./quotation-grid-navigation";
 import ResponsiveTable from "./ResponsiveTable";
 import { compactQuotationNumber, quotationMoney } from "./quotation-display";
 import { Fragment, useCallback, useEffect, useRef, useState, useMemo } from "react";
@@ -17,9 +19,7 @@ import {
   discountSafeNumberInputProps,
   wheelSafeNumberInputProps,
 } from "./number-input";
-import CustomLineForm from "./CustomLineForm";
 import WorkflowCostReference from "./WorkflowCostReference";
-import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
 import CustomLineCatalogResolver from "./CustomLineCatalogResolver";
 import { buildLookupLineRequest } from "./lookup-pricing";
 import { humanizeCustomLineError } from "./custom-line-errors";
@@ -182,7 +182,7 @@ export default function Cart({
   t,
   user,
   cart,
-  setCart,
+  setCart: updateCart,
   settings,
   online,
   onSaved,
@@ -199,6 +199,7 @@ export default function Cart({
   onTemplates?: () => void;
   onReloadShared?: () => void;
 }) {
+  const setCart = (next: any) => updateCart({ ...next, customer: deliveryCustomerReferences(next.customer, next.lines, cart.lines) });
   cart = useMemo(() => normalizeEditableQuotationCart(cart), [cart]);
   const [error, setError] = useState("");
   const [focusTable, setFocusTable] = useState(false);
@@ -426,22 +427,6 @@ export default function Cart({
         setNotice(t("Previous customer price applied. You can still edit it.", "تم تطبيق سعر العميل السابق ويمكنك تعديله."));
     }).catch((e) => setError(e.message)).finally(() => setReuseBusy(false));
   }, [reusePreviousPrices, reuseBusy, online, cart.lines.length, uncheckedPriceItems]);
-
-  const moveToNextEntry = (
-    event: React.KeyboardEvent<HTMLInputElement>,
-    index: number,
-    field: "discount" | "unitPriceExcl" | "quantity",
-  ) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    const nextIndex = nextEditableRow(cartRef.current.lines, index, field);
-    if (nextIndex < 0) return;
-    const next = document.querySelector<HTMLInputElement>(
-      `[data-cart-field="${field}"][data-cart-row="${nextIndex}"]`,
-    );
-    next?.focus();
-    next?.select();
-  };
 
   async function loadCustomerByCode(rawCode: string) {
     const code = rawCode.trim();
@@ -976,7 +961,7 @@ export default function Cart({
   }
 
   return (
-    <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ' quotation-normal-entry'}`}>
+    <section onKeyDown={navigateQuotationGrid} className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ' quotation-normal-entry'}`}>
       <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span>{normalEntry && notice && <small className="quotation-entry-status" role="status" title={notice}>{notice}</small>}</div>
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
         <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
@@ -1022,15 +1007,7 @@ export default function Cart({
           <span><b>{t("Use this customer's previous prices", "استخدام أسعار العميل السابقة")}</b><small>{t("Issued prices are preferred, then Draft prices. Applied prices remain editable.", "تُفضّل الأسعار المصدرة ثم أسعار المسودات. تبقى الأسعار قابلة للتعديل.")}</small></span>
         </label>
       )}
-      {!normalEntry && !cart.sharedWorkflow && <CustomLineForm
-        t={t}
-        vat={String(settings.vat)}
-        suggestedPart={suggestedCustomPart}
-        onAdd={(line) => {
-          setCart({ ...cart, lines: [...cart.lines, line] });
-          setSuggestedCustomPart("");
-        }}
-      />}
+
       </div>
 <div className="form-grid quotation-customer-fields">{[["name","Customer name","اسم العميل"],["number","Customer Code","رمز العميل"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>setCart({...cart,customer:{...cart.customer,[key]:e.target.value}})} onBlur={()=>{if(key==='number')void loadCustomerByCode(String(cart.customer.number||''));}}/></label>)}</div>
       <details ref={detailsRef} className="quotation-customer-extras" open={detailsOpen} onToggle={e=>setDetailsOpen(e.currentTarget.open)}><summary>{t('Quotation details','تفاصيل عرض السعر')} · {cart.workflowCurrency || 'SAR'} · {t('VAT','الضريبة')} {cart.sharedWorkflow ? cart.sharedTaxBasis === 'EXEMPT' ? '0' : cart.sharedTaxRate : settings.vat}%</summary>
@@ -1063,7 +1040,7 @@ export default function Cart({
         </label>}
       </details>
       </div>
-      {!cart.lines.length && (!normalEntry || cart.sharedWorkflow) ? (
+      {!cart.lines.length && cart.sharedWorkflow ? (
         <div className="empty-state">
           <h2>{t("Your cart is ready", "سلتك جاهزة")}</h2>
           <p>
@@ -1103,29 +1080,6 @@ export default function Cart({
               </tr>
             </thead>
             <tbody>
-              {!normalEntry && !cart.sharedWorkflow && <QuotationLineQuickAdd
-                t={t}
-                user={user}
-                online={online}
-                onAdd={(line) => {
-                  setCart({ ...cart, lines: [...cart.lines, line] });
-                  setNotice(
-                    t(
-                      "Added product to the quotation.",
-                      "تمت إضافة الصنف إلى عرض السعر.",
-                    ),
-                  );
-                }}
-                onAddCustom={(partNumber) => {
-                  setSuggestedCustomPart(partNumber);
-                  setNotice(
-                    t(
-                      `No catalog match for ${partNumber}. Complete it as a custom item.`,
-                      `لا يوجد صنف مطابق لـ ${partNumber}. أكمله كعنصر مخصص.`,
-                    ),
-                  );
-                }}
-              />}
               {cart.lines.map((l: any, i: number) => {
                 const pn = l.input?.partNumber || l.partNumber;
                 const isDuplicate = pn && partCounts[pn] > 1;
@@ -1141,7 +1095,12 @@ export default function Cart({
                       {l.input?.type === 'CUSTOM' && <small className="custom-line-badge">{t('Custom', 'مخصص')}</small>}
                     </td></>}
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}{!normalEntry && <span className="quotation-row-number">{i+1}</span>}<div>{!normalEntry && <strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong>}<small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}{!normalEntry && <span className="quotation-row-number">{i+1}</span>}<div>{!normalEntry && !cart.sharedWorkflow && <QuotationItemSearch t={t} label={pn || ''} row={i+1}
+                      disabled={!online || busy || entryBusy || reuseBusy || hasPendingLines || Object.values(repricingRows).some(Boolean)}
+                      onSelect={match => replaceEntry(rowIds[i], match)} onCustom={query => setCustomEntry({ id: rowIds[i], query })}/>}
+                      {!normalEntry && cart.sharedWorkflow && <strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong>}<small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    {importedDeliveryMeta(l) && <small className="quotation-source-reference">{t("DN", "إذن تسليم")} {importedDeliveryMeta(l)?.docNo || "—"} · {importedDeliveryMeta(l)?.docDate || "—"}</small>}
+                    <WorkflowCostReference line={l} visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)} currency={cart.workflowCurrency || "SAR"} t={t}/>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
@@ -1212,12 +1171,6 @@ export default function Cart({
                     )}
 
                     {(l.description || l.input?.description) && <p className="quotation-full-description">{l.description || l.input.description}</p>}
-                    <WorkflowCostReference
-                      line={l}
-                      visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
-                      currency={cart.workflowCurrency || "SAR"}
-                      t={t}
-                    />
                     {l.previousPriceSource && (
                       <span className="badge success" title={`${l.previousPriceSource.status} ${l.previousPriceSource.quotation_number}`}>
                         {t("Previous customer price", "سعر العميل السابق")}
@@ -1287,7 +1240,6 @@ export default function Cart({
                     <input
                       data-cart-field="quantity"
                       data-cart-row={i}
-                      onKeyDown={(e) => moveToNextEntry(e, i, "quantity")}
                       aria-label={t("Quantity", "الكمية") + " " + l.partNumber}
                       className="compact"
                       type="number"
@@ -1352,7 +1304,6 @@ export default function Cart({
                           e.target.value,
                         )
                       }
-                      onKeyDown={(e) => moveToNextEntry(e, i, "discount")}
                     />
                   </td>
                   <td>
@@ -1378,9 +1329,6 @@ export default function Cart({
                         onChange={(e) =>
                           change(i, "unitPriceExcl", e.target.value)
                         }
-                        onKeyDown={(e) =>
-                          moveToNextEntry(e, i, "unitPriceExcl")
-                        }
                       />
                     )}
                     {l.input?.type === "CUSTOM" ? null : (
@@ -1404,9 +1352,6 @@ export default function Cart({
                           }
                           onChange={(e) =>
                             changeCatalogFinalPrice(i, e.target.value)
-                          }
-                          onKeyDown={(e) =>
-                            moveToNextEntry(e, i, "unitPriceExcl")
                           }
                         />
                         {repricingRows[i] && (
@@ -1477,14 +1422,14 @@ export default function Cart({
                   </td>
                   </>}
                 </SortableQuotationRow>
-                {normalEntry && !cart.sharedWorkflow && customEntry?.id === rowIds[i] && <tr className="quotation-custom-row"><td colSpan={9}>
+                {!cart.sharedWorkflow && customEntry?.id === rowIds[i] && <tr className="quotation-custom-row"><td colSpan={normalEntry ? 9 : 6}>
                   <QuotationInlineCustom key={customEntry.id + customEntry.query} t={t} query={customEntry.query}
                     quantity={validEntryQuantity(l.input?.quantity) ? String(l.input.quantity) : '1'} vat={String(settings.vat)}
                     disabled={!online || busy || entryBusy} onBusy={entryBusyChanged} onCancel={() => setCustomEntry(null)} onAdd={line => putEntryLine(line, customEntry.id)}/>
                 </td></tr>}
                 </Fragment>
               )})}
-              {normalEntry && !cart.sharedWorkflow && canAppendEntry(cart.lines) && <QuotationEntryDraft
+              {!cart.sharedWorkflow && canAppendEntry(cart.lines) && <QuotationEntryDraft compact={!normalEntry}
                 key={documentKey + ':' + entrySequence} t={t} row={cart.lines.length + 1} vat={String(settings.vat)}
                 disabled={!online || busy || reuseBusy || (entryBusy && !draftBusyRef.current)} onBusy={draftBusyChanged}
                 onAdd={(line, restoreQuantity) => putEntryLine(line, undefined, restoreQuantity)}/>}

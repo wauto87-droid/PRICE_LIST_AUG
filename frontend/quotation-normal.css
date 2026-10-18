@@ -79,3 +79,9 @@
  .quotation-normal-entry .quotation-custom-fields { grid-template-columns:repeat(3,minmax(100px,1fr)); }
  .quotation-normal-entry .quotation-row-position .quotation-drag-handle { min-width:24px; padding:0; }
 }
+
+.quotation-editor .quotation-source-reference { display:block; color:var(--muted); font-size:11px; margin-top:3px; }
+.quotation-focus-table .quotation-item-search { min-width:130px; max-width:240px; }
+.quotation-focus-table .quotation-draft-row { background:#c9001605; }
+.quotation-focus-table .quotation-custom-row>td { position:static; white-space:normal; }
+@media(max-width:760px) { .quotation-focus-table .quotation-custom-fields { grid-template-columns:repeat(2,minmax(100px,1fr)); } }
