@@ -79,6 +79,7 @@ import { getProduct, toInput } from "../products/service";
 import { allocateNumber } from "./settings";
 import { attachToSavedQuote } from "../reusable-custom/service";
 import { syncQuotationEvents } from "../price-watcher/service";
+import { normalizeEditableQuotationLine } from "../../shared/quotation-line-compat";
 export const quoteInput = z
   .object({
     customer: z
@@ -95,15 +96,15 @@ export const quoteInput = z
   })
   .strict();
 // Pre-migration snapshots used the one original price, migrated to End Customer.
-export const savedLineInput = (line: any) =>
-  line.source === "CUSTOM" || line.input?.type === "CUSTOM"
-    ? { ...line.input, type: "CUSTOM" }
-    : {
-        ...line.input,
-        type: line.input?.type ?? "CATALOG",
-        sellingLevel:
-          line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
-      };
+export const savedLineInput = (line: any) => {
+  const normalized = normalizeEditableQuotationLine(line);
+  assert(
+    !normalized.compatibilityIssue,
+    409,
+    normalized.compatibilityIssue || "Saved quotation line is incomplete",
+  );
+  return normalized.input;
+};
 export const duplicateLineInput = (line: any) =>
   line.source === "CUSTOM" || line.input?.type === "CUSTOM"
     ? savedLineInput(line)

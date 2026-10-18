@@ -1,3 +1,5 @@
+import { quotationSellingLevel } from "@/shared/quotation-line-compat";
+
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const moneyInputPattern = /^\d{1,12}(?:\.\d{0,2})?$/;
 
@@ -58,8 +60,7 @@ export function catalogLivePricingInput(line: any) {
   if (line.targetPriceRequested)
     return {
       productId: line.productId,
-      sellingLevel:
-        line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
+      sellingLevel: quotationSellingLevel(line),
       quantity,
       targetFinalExcl: line.targetPriceRequested,
       override: false,
@@ -67,8 +68,7 @@ export function catalogLivePricingInput(line: any) {
     };
   return {
     productId: line.productId,
-    sellingLevel:
-      line.input.sellingLevel ?? line.sellingLevel ?? "END_CUSTOMER",
+    sellingLevel: quotationSellingLevel(line),
     quantity,
     discount,
     ...(markup === undefined ? {} : { markup }),
@@ -98,6 +98,7 @@ export function normalizeTargetPrice(targetValue: unknown) {
 }
 
 export function cartLineHasBlockingError(line: any) {
+  if (line?.compatibilityIssue) return true;
   if (!line?.input) return true;
   if (line.targetPriceError) return true;
   if (line.input?.type === "CUSTOM") {

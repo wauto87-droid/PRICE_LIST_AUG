@@ -17,6 +17,7 @@ import AdDisplay from "@/frontend/AdDisplay";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 import { healthTransition } from "@/frontend/connectivity";
+import { normalizeEditableQuotationCart } from "@/shared/quotation-line-compat";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
   lines: [] as any[],
@@ -102,7 +103,7 @@ export default function App() {
           }),
         );
         const saved = localStorage.getItem("amt-draft-" + s.user.id);
-        if (saved) setCart(JSON.parse(saved));
+        if (saved) setCart(normalizeEditableQuotationCart(JSON.parse(saved)));
       } else {
         localStorage.removeItem("amt-offline-session");
         for (const k of Object.keys(localStorage))
@@ -121,7 +122,7 @@ export default function App() {
           const s = JSON.parse(saved);
           setSession(s);
           const draft = localStorage.getItem("amt-draft-" + s.user.id);
-          if (draft) setCart(JSON.parse(draft));
+          if (draft) setCart(normalizeEditableQuotationCart(JSON.parse(draft)));
         }
       } else {
         try {
@@ -312,13 +313,13 @@ export default function App() {
     try {
       const query = identity.documentId ? 'documentId=' + encodeURIComponent(identity.documentId) : 'requestId=' + encodeURIComponent(identity.requestId);
       const draft = await api('shared-quotation?' + query + '&draft=1&mode=' + encodeURIComponent(identity.mode || 'edit'));
-      setCart(draft); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab(destination);
+      setCart(normalizeEditableQuotationCart(draft)); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab(destination);
     } catch (e) { setMessage((e as Error).message); }
   }
   function openSharedQuotation(identity: any, destination = 'workflow-jobs') { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab(destination); }
   function openQuote(q: any) {
     if(q.revisionPricingNotice)setMessage(q.revisionPricingNotice);
-    const next={
+    const next=normalizeEditableQuotationCart({
       id: q.id,
       version: q.version,
       number: q.number,
@@ -327,7 +328,7 @@ export default function App() {
       customer: q.customer,
       lines: q.lines,
       adjustment:q.adjustment || {targetTotal:q.totals?.targetTotal || ''},
-    };
+    });
     editorBaseline.current=editorSignature(next);
     setCart(next);
     setWorkflowEditor(false);
@@ -713,13 +714,13 @@ export default function App() {
                   user={session.user}
                   online={online}
                   onImported={(q) => {
-                    setCart({
+                    setCart(normalizeEditableQuotationCart({
                       id: q.id,
                       version: q.version,
                       number: q.number,
                       customer: q.customer,
                       lines: q.lines,
-                    });
+                    }));
                     setTab("draft");
                     setMessage(
                       t(
@@ -750,7 +751,7 @@ export default function App() {
                   onOpenSharedDraft={identity => void openSharedDraft(identity, 'quotations')}
                   cart={cart}
                   onUseTemplate={(next, warning) => {
-                    setCart(next);
+                    setCart(normalizeEditableQuotationCart(next));
                     setTab("draft");
                     setMessage(
                       warning ||

@@ -32,6 +32,10 @@ import {
 } from "./cart-live-pricing";
 import RecentQuotationPrices, { priceHistoryItemKey } from "./RecentQuotationPrices";
 import { showConfirm } from "./confirm";
+import {
+  normalizeEditableQuotationCart,
+  quotationSellingLevel,
+} from "@/shared/quotation-line-compat";
 
 import { recalculateSharedDraft, sharedDraftCommand } from '../shared/shared-draft';
 import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
@@ -91,8 +95,14 @@ export function nextEditableRow(
 }
 
 function computeCartTotals(lines: any[], targetTotalValue: string) {
-  const base = totals(lines.flatMap((line: any) => (line.price ? [line.price] : [])));
-  const unresolvedLines = lines.filter((line: any) => !line.price).length;
+  const base = totals(
+    lines.flatMap((line: any) =>
+      line.price && !line.compatibilityIssue ? [line.price] : [],
+    ),
+  );
+  const unresolvedLines = lines.filter(
+    (line: any) => !line.price || line.compatibilityIssue,
+  ).length;
   const rawTarget = String(targetTotalValue ?? "").trim();
   if (!rawTarget)
     return {
@@ -185,6 +195,7 @@ export default function Cart({
   onTemplates?: () => void;
   onReloadShared?: () => void;
 }) {
+  cart = useMemo(() => normalizeEditableQuotationCart(cart), [cart]);
   const [error, setError] = useState("");
   const [focusTable, setFocusTable] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true);
@@ -863,8 +874,7 @@ export default function Cart({
               : {
                   ...l.input,
                   type: l.input?.type ?? "CATALOG",
-                  sellingLevel:
-                    l.input.sellingLevel ?? l.sellingLevel ?? "END_CUSTOMER",
+                  sellingLevel: quotationSellingLevel(l),
                   override: false,
                   reason: "",
                 },
@@ -1168,24 +1178,16 @@ export default function Cart({
                           onFocus={() => {
                             if (online) void loadLevels(l.productId);
                           }}
-                          value={
-                            l.input.sellingLevel ??
-                            l.sellingLevel ??
-                            "END_CUSTOMER"
-                          }
+                          value={quotationSellingLevel(l)}
                           onChange={(e) =>
                             change(i, "sellingLevel", e.target.value)
                           }
                         >
                           <option
-                            value={
-                              l.input.sellingLevel ??
-                              l.sellingLevel ??
-                              "END_CUSTOMER"
-                            }
+                            value={quotationSellingLevel(l)}
                           >
                             {levelLabel(
-                              l.input.sellingLevel ?? l.sellingLevel,
+                              quotationSellingLevel(l),
                               t,
                             )}
                           </option>
@@ -1193,9 +1195,7 @@ export default function Cart({
                             .filter(
                               (v) =>
                                 v.code !==
-                                (l.input.sellingLevel ??
-                                  l.sellingLevel ??
-                                  "END_CUSTOMER"),
+                                quotationSellingLevel(l),
                             )
                             .map((v) => (
                               <option key={v.code} value={v.code}>
@@ -1208,6 +1208,11 @@ export default function Cart({
                     </div></details>
                     {!!l.livePriceError && (
                       <small className="sales-check-error">{l.livePriceError}</small>
+                    )}
+                    {!!l.compatibilityIssue && (
+                      <small className="sales-check-error" role="alert">
+                        {t(l.compatibilityIssue, l.compatibilityIssue)}
+                      </small>
                     )}
                     {unresolvedImportedCustom(l) && !l.livePriceError && (
                       <small className="sales-check-error">
