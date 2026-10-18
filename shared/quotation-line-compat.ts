@@ -50,10 +50,9 @@ export function normalizeEditableQuotationLine(line: any) {
           text(existing?.productId ?? source.productId)
         ? "CATALOG"
         : "";
-  const quantity = text(
-    existing?.quantity ?? source.price?.quantity ?? source.quantity,
-    "1",
-  );
+  const quantity = existing?.quantity !== undefined && existing.quantity !== null
+    ? String(existing.quantity).trim()
+    : text(source.price?.quantity ?? source.quantity, "1");
   let input: any;
 
   if (explicitKind === "CATALOG") {
@@ -85,9 +84,9 @@ export function normalizeEditableQuotationLine(line: any) {
     input = {
       ...(existing ?? {}),
       type: "CUSTOM",
-      partNumber: text(existing?.partNumber ?? source.partNumber),
-      description: text(existing?.description ?? source.description),
-      unit: text(existing?.unit ?? source.unit, "pcs"),
+      partNumber: typeof existing?.partNumber === 'string' ? existing.partNumber : text(source.partNumber),
+      description: typeof existing?.description === 'string' ? existing.description : text(source.description),
+      unit: typeof existing?.unit === 'string' ? existing.unit : text(source.unit, "pcs"),
       quantity,
       unitPriceExcl: text(
         existing?.unitPriceExcl ??
@@ -110,6 +109,12 @@ export function normalizeEditableQuotationLine(line: any) {
   }
 
   const issue = compatibilityIssue(input, explicitKind);
+  // Keep already-normalized row objects intact: sortable IDs, open details and
+  // keyboard focus follow these references when the quotation order changes.
+  if (existing && Object.keys(input).length === Object.keys(existing).length &&
+      Object.keys(input).every(key => input[key] === existing[key]) &&
+      (source.compatibilityIssue || '') === issue &&
+      (explicitKind || source.compatibilityKind === 'AMBIGUOUS')) return source;
   const { compatibilityIssue: _oldIssue, ...preserved } = source;
   return {
     ...preserved,

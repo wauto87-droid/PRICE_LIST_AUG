@@ -1,7 +1,11 @@
 "use client";
 import ResponsiveTable from "./ResponsiveTable";
 import { compactQuotationNumber, quotationMoney } from "./quotation-display";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import QuotationItemSearch from './QuotationItemSearch';
+import QuotationInlineCustom from './QuotationInlineCustom';
+import QuotationEntryDraft from './QuotationEntryDraft';
+import { canAppendEntry, entryMatchLine, validEntryQuantity, type EntryMatch } from './quotation-entry';
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import SortableQuotationRow from './SortableQuotationRow';
@@ -226,6 +230,14 @@ export default function Cart({
   }, [focusTable]);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [entryBusy, setEntryBusy] = useState(false);
+  const entryBusyRef = useRef(false);
+  const entryBusyChanged = useCallback((value: boolean) => { entryBusyRef.current = value; setEntryBusy(value); }, []);
+  const draftBusyRef = useRef(false);
+  const draftBusyChanged = useCallback((value: boolean) => { draftBusyRef.current = value; entryBusyChanged(value); }, [entryBusyChanged]);
+  const [entrySequence, setEntrySequence] = useState(0);
+  const [customEntry, setCustomEntry] = useState<{ id: string; query: string } | null>(null);
+  const rowIdsRef = useRef(rowIds); rowIdsRef.current = rowIds;
   const [suggestedCustomPart, setSuggestedCustomPart] = useState("");
   const [options, setOptions] = useState<Record<string, any[]>>({});
   const [repricingRows, setRepricingRows] = useState<Record<number, boolean>>({});
@@ -249,7 +261,7 @@ export default function Cart({
   const pricingSignatures = useRef<Record<number, string>>({});
   const pricingGenerations = useRef<Record<number, number>>({});
   const hasPendingLines = cart.lines.some((l: any) => l.pending);
-  const reorderDisabled = busy || reuseBusy || !!cart.sharedPendingCommand || hasPendingLines || Object.values(repricingRows).some(Boolean);
+  const reorderDisabled = busy || entryBusy || reuseBusy || !!cart.sharedPendingCommand || hasPendingLines || Object.values(repricingRows).some(Boolean);
   function reorderRows(from: number, to: number) {
     if (reorderDisabled) return;
     const current = cartRef.current;
@@ -402,6 +414,7 @@ export default function Cart({
     finally { setReuseBusy(false); }
   }
 
+  const uncheckedPriceItems = cart.lines.map((line: any) => line.previousPriceChecked ? '' : priceHistoryItemKey(line)).join('|');
   useEffect(() => {
     if (!reusePreviousPrices || reuseBusy || !online) return;
     const indexes = cart.lines.flatMap((line: any, index: number) => line.previousPriceChecked ? [] : [index]);
@@ -412,7 +425,7 @@ export default function Cart({
       if (result.summary.matched || result.summary.adjusted)
         setNotice(t("Previous customer price applied. You can still edit it.", "تم تطبيق سعر العميل السابق ويمكنك تعديله."));
     }).catch((e) => setError(e.message)).finally(() => setReuseBusy(false));
-  }, [reusePreviousPrices, reuseBusy, online, cart.lines.length]);
+  }, [reusePreviousPrices, reuseBusy, online, cart.lines.length, uncheckedPriceItems]);
 
   const moveToNextEntry = (
     event: React.KeyboardEvent<HTMLInputElement>,
@@ -928,9 +941,43 @@ export default function Cart({
     return { partCounts: counts, duplicateIndices: indices };
   }, [cart.lines]);
 
+  const normalEntry = !focusTable;
+  const documentKey = String(cart.sharedDocumentId || cart.id || 'NEW');
+  function putEntryLine(line: any, targetId?: string, restoreQuantity = false) {
+    const current = cartRef.current;
+    if (current.sharedWorkflow || String(current.id || 'NEW') !== documentKey) throw new Error(t('The quotation changed. Search again.', 'تغير عرض السعر. ابحث مجدداً.'));
+    const index = targetId ? rowIdsRef.current.indexOf(targetId) : current.lines.length;
+    if (index < 0) throw new Error(t('This row was removed. Search again.', 'تم حذف السطر. ابحث مجدداً.'));
+    if (!targetId && !canAppendEntry(current.lines)) throw new Error(t('Complete the previous item quantity first.', 'أكمل كمية الصنف السابق أولاً.'));
+    const lines = [...current.lines];
+    if (targetId && lines[index].input?.importMeta) line = { ...line, input: { ...line.input, importMeta: { ...lines[index].input.importMeta, unresolved: false } } };
+    lines[index] = line;
+    const next = { ...current, lines };
+    cartRef.current = next;
+    setCart(next);
+    if (!targetId) setEntrySequence(value => value + 1);
+    setCustomEntry(null);
+    setNotice(t('Item added. Save the quotation to keep your changes.', 'تمت إضافة الصنف. احفظ عرض السعر للاحتفاظ بالتغييرات.'));
+    if (restoreQuantity) requestAnimationFrame(() => document.querySelector<HTMLInputElement>(`[data-cart-field="quantity"][data-cart-row="${index}"]`)?.focus({ preventScroll: true }));
+  }
+  async function replaceEntry(targetId: string, match: EntryMatch) {
+    if (busy || entryBusyRef.current || !online) return;
+    const index = rowIdsRef.current.indexOf(targetId);
+    const original = cartRef.current.lines[index];
+    if (!original) return;
+    entryBusyChanged(true);
+    try {
+      const quantity = validEntryQuantity(original.input?.quantity) ? String(original.input.quantity) : '1';
+      const line = await entryMatchLine(match, quantity, String(settings.vat));
+      const latestIndex = rowIdsRef.current.indexOf(targetId);
+      if (cartRef.current.lines[latestIndex] !== original) throw new Error(t('This row changed while loading. Search again.', 'تغير السطر أثناء التحميل. ابحث مجدداً.'));
+      putEntryLine(line, targetId);
+    } finally { entryBusyChanged(false); }
+  }
+
   return (
-    <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ''}`}>
-      <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span></div>
+    <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ' quotation-normal-entry'}`}>
+      <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span>{normalEntry && notice && <small className="quotation-entry-status" role="status" title={notice}>{notice}</small>}</div>
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
         <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
         <button type="button" ref={focusButton} aria-pressed={focusTable} onClick={() => setFocusTable(value => !value)}>{focusTable ? t("Exit focus", "إنهاء التركيز") : t("Focus table", "تركيز الجدول")}</button>
@@ -942,14 +989,14 @@ export default function Cart({
           </button>
         )}
         <button
-          disabled={!online || busy || !cart.lines.length}
+          disabled={!online || busy || entryBusy || !cart.lines.length}
           onClick={reprice}
         >
           {t("Recalculate", "إعادة الحساب")}
         </button>
         <button
           className="primary"
-          disabled={!online || busy || !cart.lines.length || hasBlockingErrors}
+          disabled={!online || busy || entryBusy || !cart.lines.length || hasBlockingErrors}
           onClick={save}
         >
           {busy
@@ -962,6 +1009,7 @@ export default function Cart({
         </button>
       </div>
       <fieldset disabled={!!cart.sharedWorkflow && (busy || !!cart.sharedPendingCommand)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      <div className="quotation-header-grid">
       <div className="quotation-entry-options">
       {!cart.sharedWorkflow && user.permissions.includes("QUOTE_PRICE_HISTORY") && (
         <label className="notice previous-price-toggle">
@@ -974,7 +1022,7 @@ export default function Cart({
           <span><b>{t("Use this customer's previous prices", "استخدام أسعار العميل السابقة")}</b><small>{t("Issued prices are preferred, then Draft prices. Applied prices remain editable.", "تُفضّل الأسعار المصدرة ثم أسعار المسودات. تبقى الأسعار قابلة للتعديل.")}</small></span>
         </label>
       )}
-      {!cart.sharedWorkflow && <CustomLineForm
+      {!normalEntry && !cart.sharedWorkflow && <CustomLineForm
         t={t}
         vat={String(settings.vat)}
         suggestedPart={suggestedCustomPart}
@@ -996,7 +1044,7 @@ export default function Cart({
           <span>{t("Customer Code improves same-customer price highlighting.", "رمز العميل يحسن تمييز الأسعار السابقة لنفس العميل.")}</span>
           <button type="button" onClick={() => setCart({ ...cart, customer: { ...cart.customer, name: "", number: "1" } })}>{t("Walk-in Customer", "عميل نقدي")}</button>
         </div>
-        <label className="cart-notes">
+        {!normalEntry && <label className="cart-notes">
           {t("Notes", "ملاحظات")}
           <textarea
             rows={2}
@@ -1012,9 +1060,10 @@ export default function Cart({
               "ملاحظات الموظف أو طلبات العميل أو تفاصيل التسليم أو أي تفاصيل إضافية لعرض السعر.",
             )}
           />
-        </label>
+        </label>}
       </details>
-      {!cart.lines.length ? (
+      </div>
+      {!cart.lines.length && (!normalEntry || cart.sharedWorkflow) ? (
         <div className="empty-state">
           <h2>{t("Your cart is ready", "سلتك جاهزة")}</h2>
           <p>
@@ -1043,16 +1092,18 @@ export default function Cart({
           <ResponsiveTable aria-label={t("Quotation preparation items", "أصناف إعداد عرض السعر")}>
             <thead>
               <tr>
-                <th>{t("Part / description", "الصنف / الوصف")}</th>
+                {normalEntry && <><th>#</th><th>{t('Item code / search', 'رمز الصنف / البحث')}</th></>}
+                <th>{normalEntry ? t('Item name / description', 'اسم الصنف / الوصف') : t("Part / description", "الصنف / الوصف")}</th>
+                {normalEntry && <th>{t('Unit', 'الوحدة')}</th>}
                 <th>{t("Qty", "الكمية")}</th>
                 <th>{t("Discount / Markup %", "الخصم / هامش الربح %")}</th>
-                <th>{cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE" ? t("Selling price incl. VAT", "السعر شامل الضريبة") : t("Final excl. VAT", "النهائي قبل الضريبة")}</th>
-                <th>{t("Total incl. VAT", "الإجمالي شامل الضريبة")}</th>
+                <th>{cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE" ? t("Selling price incl. VAT", "السعر شامل الضريبة") : normalEntry ? t('Unit price excl. VAT', 'سعر الوحدة قبل الضريبة') : t("Final excl. VAT", "النهائي قبل الضريبة")}</th>
+                <th>{normalEntry ? t('Amount incl. VAT', 'المبلغ شامل الضريبة') : t("Total incl. VAT", "الإجمالي شامل الضريبة")}</th>
                 <th>{t("Actions", "إجراءات")}</th>
               </tr>
             </thead>
             <tbody>
-              {!cart.sharedWorkflow && <QuotationLineQuickAdd
+              {!normalEntry && !cart.sharedWorkflow && <QuotationLineQuickAdd
                 t={t}
                 user={user}
                 online={online}
@@ -1080,10 +1131,17 @@ export default function Cart({
                 const isDuplicate = pn && partCounts[pn] > 1;
                 const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
                 return (
-                <SortableQuotationRow id={rowIds[i]} disabled={reorderDisabled} handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)} className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""} key={rowIds[i]} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                <Fragment key={rowIds[i]}><SortableQuotationRow id={rowIds[i]} disabled={reorderDisabled} handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)} className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
                   {handle => <>
+                  {normalEntry && <><td><div className="quotation-row-position"><span>{i+1}</span></div></td>
+                    <td>{cart.sharedWorkflow ? <strong>{pn || '—'}</strong> : <QuotationItemSearch t={t} label={pn || ''} row={i+1}
+                      disabled={!online || busy || entryBusy || reuseBusy || hasPendingLines || Object.values(repricingRows).some(Boolean)}
+                      onSelect={match => replaceEntry(rowIds[i], match)} onCustom={query => setCustomEntry({ id: rowIds[i], query })}/>}
+                      {isDuplicate && <small className="quotation-duplicate-label">{t('Repeated', 'مكرر')} ×{partCounts[pn]}</small>}
+                      {l.input?.type === 'CUSTOM' && <small className="custom-line-badge">{t('Custom', 'مخصص')}</small>}
+                    </td></>}
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}{!normalEntry && <span className="quotation-row-number">{i+1}</span>}<div>{!normalEntry && <strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong>}<small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
@@ -1224,6 +1282,7 @@ export default function Cart({
                     )}
 
                   </td>
+                  {normalEntry && <td>{l.input?.unit || l.unit || '—'}</td>}
                   <td>
                     <input
                       data-cart-field="quantity"
@@ -1418,7 +1477,17 @@ export default function Cart({
                   </td>
                   </>}
                 </SortableQuotationRow>
+                {normalEntry && !cart.sharedWorkflow && customEntry?.id === rowIds[i] && <tr className="quotation-custom-row"><td colSpan={9}>
+                  <QuotationInlineCustom key={customEntry.id + customEntry.query} t={t} query={customEntry.query}
+                    quantity={validEntryQuantity(l.input?.quantity) ? String(l.input.quantity) : '1'} vat={String(settings.vat)}
+                    disabled={!online || busy || entryBusy} onBusy={entryBusyChanged} onCancel={() => setCustomEntry(null)} onAdd={line => putEntryLine(line, customEntry.id)}/>
+                </td></tr>}
+                </Fragment>
               )})}
+              {normalEntry && !cart.sharedWorkflow && canAppendEntry(cart.lines) && <QuotationEntryDraft
+                key={documentKey + ':' + entrySequence} t={t} row={cart.lines.length + 1} vat={String(settings.vat)}
+                disabled={!online || busy || reuseBusy || (entryBusy && !draftBusyRef.current)} onBusy={draftBusyChanged}
+                onAdd={(line, restoreQuantity) => putEntryLine(line, undefined, restoreQuantity)}/>}
             </tbody>
           </ResponsiveTable>
         </div>
@@ -1437,6 +1506,12 @@ export default function Cart({
       {recentPriceRow !== null && cart.lines[recentPriceRow] && (
         <RecentQuotationPrices t={t} line={cart.lines[recentPriceRow]} customer={cart.customer} quotationId={cart.id} onClose={() => setRecentPriceRow(null)} />
       )}
+      <div className="quotation-footer">
+      {normalEntry && <label className="cart-notes quotation-bottom-notes">{t('Notes', 'ملاحظات')}
+        <textarea rows={2} value={cart.customer.notes || ''} onChange={event => setCart({ ...cart, customer: { ...cart.customer, notes: event.target.value } })}
+          placeholder={t('Notes for this quotation…', 'ملاحظات عرض السعر…')}/>
+        <small>{t('↑ ↓ select · Enter confirm · Tab next field · Drag the handle to reorder items', '↑ ↓ للاختيار · Enter للتأكيد · Tab للحقل التالي · اسحب المقبض لترتيب الأصناف')}</small>
+      </label>}
       {sum && (
         <div className="cart-totals">
           <span>
@@ -1455,7 +1530,7 @@ export default function Cart({
                   adjustment: { targetTotal: e.target.value },
                 })
               }
-              placeholder={t("Leave blank for no total discount", "اتركه فارغاً بدون خصم إجمالي")}
+              placeholder={normalEntry ? t('Optional', 'اختياري') : t("Leave blank for no total discount", "اتركه فارغاً بدون خصم إجمالي")}
             />
             <small>
               {t(
@@ -1474,6 +1549,7 @@ export default function Cart({
           </span>
         </div>
       )}
+      </div>
       {!!sum.error && (
         <div className="notice">
           {t(sum.error, sum.error)}
@@ -1484,7 +1560,7 @@ export default function Cart({
           {error}
         </div>
       )}
-      {notice && (
+      {!normalEntry && notice && (
         <div className="notice success" role="status">
           {notice}
         </div>
