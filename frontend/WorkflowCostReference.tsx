@@ -1,12 +1,13 @@
 import type { Translate } from "./api";
 
-type Props = { line: any; visible: boolean; currency?: string; t: Translate };
+type Props = { line: any; visible: boolean; currency?: string; compact?: boolean; t: Translate };
 
 export default function WorkflowCostReference({
   line,
   visible,
   currency = "SAR",
   t,
+  compact = false,
 }: Props) {
   if (!visible) return null;
   const cost = line.workflowCost;
@@ -41,8 +42,15 @@ export default function WorkflowCostReference({
         : tax === "No VAT"
           ? t("No VAT", "بدون ضريبة")
           : t("Tax basis not confirmed", "أساس الضريبة غير مؤكد");
+  if (compact) {
+    const summary = `${cost.currency} ${String(cost.cost)}/${cost.unit} · ${cost.actorName || t("Staff", "الموظف")} · ${dateText}`;
+    const warnings = [cost.stale ? t("Product changed — reconfirm cost", "تغير المنتج — أعد تأكيد التكلفة") : "", cost.currency !== currency ? t("Different currency", "عملة مختلفة") : "", unit && cost.unit !== unit ? t("Different unit", "وحدة مختلفة") : ""].filter(Boolean).join(" · ");
+    return <details className="quotation-workflow-cost quotation-workflow-cost-compact"><summary title={`${summary} · ${cost.supplier || ''} · ${taxText}${warnings ? ' · '+warnings : ''}`}>{summary}{warnings && <span className="sales-check-error"> · {warnings}</span>}</summary>
+      <div className="quotation-cost-expanded"><WorkflowCostReference line={line} visible={visible} currency={currency} t={t}/></div>
+    </details>;
+  }
   return (
-    <div style={style}>
+    <div className="quotation-workflow-cost" style={style}>
       <strong style={{ color: "#b91c1c" }}>
         {t("Cost price", "سعر التكلفة")}: {cost.currency} {String(cost.cost)}/
         {cost.unit} · {taxText}

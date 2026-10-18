@@ -1099,8 +1099,10 @@ export default function Cart({
                       disabled={!online || busy || entryBusy || reuseBusy || hasPendingLines || Object.values(repricingRows).some(Boolean)}
                       onSelect={match => replaceEntry(rowIds[i], match)} onCustom={query => setCustomEntry({ id: rowIds[i], query })}/>}
                       {!normalEntry && cart.sharedWorkflow && <strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong>}<small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-row-references">
                     {importedDeliveryMeta(l) && <small className="quotation-source-reference">{t("DN", "إذن تسليم")} {importedDeliveryMeta(l)?.docNo || "—"} · {importedDeliveryMeta(l)?.docDate || "—"}</small>}
-                    <WorkflowCostReference line={l} visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)} currency={cart.workflowCurrency || "SAR"} t={t}/>
+                    <WorkflowCostReference line={l} compact={!normalEntry} visible={!!(normalEntry || cart.sharedWorkflow || l.workflowCost || l.workflowPricing) && (!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id))} currency={cart.workflowCurrency || "SAR"} t={t}/>
+                    </div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
