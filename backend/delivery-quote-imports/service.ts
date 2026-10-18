@@ -1,3 +1,4 @@
+import { deliveryReference } from "../../shared/delivery-references";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
@@ -572,9 +573,7 @@ function summarizeReview(rows: any[], header: any) {
 
 function toQuoteCustomer(header: any) {
   const normalized = normalizeDeliveryHeader(header);
-  const reference = normalized.docNos.length
-    ? `Delivery notes: ${normalized.docNos.join(", ")}`
-    : "";
+  const reference = deliveryReference(normalized.docNos);
   const notesParts = [];
   if (normalized.dates.length)
     notesParts.push(`Delivery dates: ${normalized.dates.join(", ")}`);
