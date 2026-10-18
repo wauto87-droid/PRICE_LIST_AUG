@@ -85,3 +85,24 @@
 .quotation-focus-table .quotation-draft-row { background:#c9001605; }
 .quotation-focus-table .quotation-custom-row>td { position:static; white-space:normal; }
 @media(max-width:760px) { .quotation-focus-table .quotation-custom-fields { grid-template-columns:repeat(2,minmax(100px,1fr)); } }
+
+/* Focus prioritizes row density; expanded details still reveal complete text. */
+.quotation-normal-entry .quotation-row-references { display:contents; }
+.quotation-focus-table .quotation-item-summary>div { display:flex; align-items:center; gap:7px; }
+.quotation-focus-table .quotation-item-summary .quotation-item-search { flex:0 1 160px; min-width:110px; }
+.quotation-focus-table .quotation-item-summary .quotation-line-description { flex:1; min-width:0; }
+.quotation-focus-table .quotation-row-references { display:flex; align-items:baseline; gap:8px; min-width:0; margin-inline-start:40px; line-height:14px; }
+.quotation-focus-table .quotation-row-references .quotation-source-reference { flex-shrink:0; margin:0; font-size:10px; line-height:14px; }
+.quotation-focus-table .quotation-workflow-cost-compact { flex:1; min-width:0; margin:0; padding:0; border:0; font-size:10px; line-height:14px; }
+.quotation-focus-table .quotation-workflow-cost-compact>summary { display:block; min-height:0; margin:0; padding:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--red); cursor:pointer; list-style:none; font-size:10px!important; line-height:14px!important; font-weight:500; }
+.quotation-focus-table .quotation-workflow-cost-compact[open] { white-space:normal; }
+.quotation-focus-table .quotation-cost-expanded { padding:6px; border:1px solid var(--line); background:var(--surface,#fff); }
+@media(min-width:761px) {
+ .quotation-focus-table .quotation-entry-table :is(th,td) { padding:3px 5px; }
+ .quotation-focus-table .quotation-entry-table input,.quotation-focus-table .quotation-entry-table select { min-height:26px; height:26px; padding:2px 5px; font-size:12px; line-height:20px; }
+ .quotation-focus-table .quotation-entry-table td:nth-child(3)>select { font-size:10px; padding-inline:1px; }
+ .quotation-focus-table .quotation-item-summary { gap:4px; min-height:26px; padding-inline-end:38px; }
+ .quotation-focus-table .quotation-item-summary .quotation-line-description { font-size:11px; line-height:14px; }
+ .quotation-focus-table .quotation-item-cell>.quotation-line-options>summary { inset-block-start:4px; line-height:26px; }
+ .quotation-focus-table .quotation-drag-handle,.quotation-focus-table .quotation-entry-table td>.actions>button,.quotation-focus-table .quotation-row-actions>summary { min-height:26px; height:26px; padding:1px 5px; line-height:24px; }
+}
