@@ -7,14 +7,18 @@ export function normalizeLookupQuery(value: string | null | undefined) {
     .toUpperCase();
 }
 
+export function normalizeLookupCleanPart(value: string | null | undefined) {
+  return normalizeLookupQuery(value).replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+}
+
 export function isSelectedLookupQuery(
   query: string,
   selectedPartNumber: string | null | undefined,
 ) {
-  return (
-    !!selectedPartNumber &&
-    normalizeLookupQuery(query) === normalizeLookupQuery(selectedPartNumber)
-  );
+  if (!selectedPartNumber) return false;
+  const qClean = normalizeLookupCleanPart(query);
+  const pClean = normalizeLookupCleanPart(selectedPartNumber);
+  return qClean === pClean && qClean.length > 0;
 }
 
 export function relatedLookupResults<T extends { id: string }>(

@@ -189,11 +189,34 @@ export default function Lookup({
           const cache = JSON.parse(
             localStorage.getItem("amt-products-" + user.id) || "{}",
           );
-          rows = (cache.rows || []).filter((p: any) =>
-            (p.partNumber + " " + p.description)
-              .toLowerCase()
-              .includes(trimmedQuery.toLowerCase()),
-          );
+          const cleanQuery = trimmedQuery
+            .toUpperCase()
+            .replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+          const queryTokens = trimmedQuery
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean);
+          rows = (cache.rows || []).filter((p: any) => {
+            const raw = (
+              (p.partNumber || "") +
+              " " +
+              (p.description || "") +
+              " " +
+              (p.brand || "") +
+              " " +
+              (p.category || "")
+            ).toLowerCase();
+            const cleanPart = String(p.partNumber || "")
+              .toUpperCase()
+              .replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+            if (
+              cleanQuery &&
+              (cleanPart.includes(cleanQuery) || cleanQuery.includes(cleanPart))
+            ) {
+              return true;
+            }
+            return queryTokens.length > 0 && queryTokens.every((t) => raw.includes(t));
+          });
           setStamp(cache.at || "");
         }
         if (current === searchGeneration.current) {
@@ -482,7 +505,7 @@ export default function Lookup({
       )
     : results;
   const visibleResults = relatedLookupResults(filteredResults, selected);
-  const filteredSuggestions = topSuggestions(filteredResults, 8);
+  const filteredSuggestions = topSuggestions(filteredResults, 16);
   const hasRelatedMatches = !!selected && visibleResults.length > 0;
   const resolvedHighlightedIndex = activeSuggestionIndex(
     highlightedIndex,

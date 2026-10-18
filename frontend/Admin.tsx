@@ -38,6 +38,7 @@ import MaintenanceAdmin from "./MaintenanceAdmin";
 import { levelCodes, levelLabel } from "./levels";
 import HistoryDetails from "./HistoryDetails";
 import { describeHistory } from "./history-details";
+import { getPermissionMeta } from "./permission-labels";
 import { showConfirm } from "./confirm";
 type ProductMinimumFilter = "ALL" | "PROTECTED" | "UNPROTECTED";
 type ProductStatusFilter = "ALL" | "ACTIVE" | "ARCHIVED";
@@ -1856,7 +1857,11 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                   <div className="quote-line" key={r.id}>
                     <span>
                       <strong>{r.id}</strong>
-                      <small>{r.permissions.join(", ")}</small>
+                      <small style={{ display: "block", marginTop: "4px", opacity: 0.85, lineHeight: "1.4" }}>
+                        {r.permissions
+                          .map((p: string) => t(getPermissionMeta(p).nameEn, getPermissionMeta(p).nameAr))
+                          .join(" · ")}
+                      </small>
                     </span>
                     <span>{r.max_discount}%</span>
                     <button
@@ -2163,30 +2168,59 @@ export default function Admin({ t, user }: { t: Translate; user: any }) {
                         }
                       />
                     </label>
-                    <fieldset>
+                    <fieldset className="permissions-fieldset" style={{ display: "grid", gap: "8px" }}>
                       <legend>
                         {t("Explicit permissions", "صلاحيات صريحة")}
                       </legend>
                       {(roles?.permissions || data?.permissions || []).map(
-                        (p: string) => (
-                          <label className="check" key={p}>
-                            <input
-                              type="checkbox"
-                              checked={edit.permissions.includes(p)}
-                              onChange={(e) =>
-                                setEdit({
-                                  ...edit,
-                                  permissions: e.target.checked
-                                    ? [...edit.permissions, p]
-                                    : edit.permissions.filter(
-                                        (v: string) => v !== p,
-                                      ),
-                                })
-                              }
-                            />
-                            {p}
-                          </label>
-                        ),
+                        (p: string) => {
+                          const meta = getPermissionMeta(p);
+                          return (
+                            <label
+                              className={`check permission-item${meta.highlight ? " permission-highlight" : ""}`}
+                              key={p}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: "10px",
+                                padding: "8px 10px",
+                                borderRadius: "8px",
+                                background: meta.highlight
+                                  ? "rgba(220, 38, 38, 0.08)"
+                                  : "rgba(0, 0, 0, 0.02)",
+                                border: meta.highlight
+                                  ? "1px solid rgba(220, 38, 38, 0.3)"
+                                  : "1px solid rgba(0, 0, 0, 0.06)",
+                                margin: 0,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                style={{ marginTop: "3px" }}
+                                checked={edit.permissions.includes(p)}
+                                onChange={(e) =>
+                                  setEdit({
+                                    ...edit,
+                                    permissions: e.target.checked
+                                      ? [...edit.permissions, p]
+                                      : edit.permissions.filter(
+                                          (v: string) => v !== p,
+                                        ),
+                                  })
+                                }
+                              />
+                              <span style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                                <span style={{ fontWeight: meta.highlight ? "700" : "600", fontSize: "13px" }}>
+                                  {t(meta.nameEn, meta.nameAr)}{" "}
+                                  <code style={{ fontSize: "10.5px", opacity: 0.7, fontWeight: "normal" }}>({p})</code>
+                                </span>
+                                <small style={{ color: "#666", fontSize: "12px", lineHeight: "1.35" }}>
+                                  {t(meta.descEn, meta.descAr)}
+                                </small>
+                              </span>
+                            </label>
+                          );
+                        },
                       )}
                     </fieldset>
                   </>

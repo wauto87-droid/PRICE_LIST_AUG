@@ -150,10 +150,17 @@ export async function setup(db: DB, input: unknown) {
           "QUOTE_EDIT",
           "QUOTE_ISSUE",
           "QUOTE_VIEW_ALL",
+          "QUOTE_PRICE_HISTORY",
         ],
         "20",
         "STAFF",
-        ["PRODUCT_VIEW", "QUOTE_CREATE", "QUOTE_EDIT", "QUOTE_ISSUE"],
+        [
+          "PRODUCT_VIEW",
+          "QUOTE_CREATE",
+          "QUOTE_EDIT",
+          "QUOTE_ISSUE",
+          "QUOTE_PRICE_HISTORY",
+        ],
         "5",
       ],
     );
