@@ -1,3 +1,4 @@
+import { deliveryCustomerReferences } from "../../shared/delivery-references";
 import { assertWorkflowOwner } from '../integrations/ownership';
 import { preserveWorkflowCosts, assertWorkflowPricingReady, recordRemovedDraftLines } from "../integrations/jobs";
 import { randomUUID, createHash } from "node:crypto";
@@ -456,6 +457,7 @@ export async function saveDraft(
         "Draft changed on another device. Reload before saving",
       );
     }
+    data.customer = deliveryCustomerReferences(data.customer, data.lines, oldLines);
     if (!options.preserveCustomerMaster && data.customer.number && data.customer.number !== "1" && data.customer.name.trim()) {
       const savedCustomer = await one(tx, "SELECT id FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customer.number]);
       if (savedCustomer)

@@ -2,6 +2,7 @@
 import ResponsiveTable from "./ResponsiveTable";
 import { useState } from 'react';
 import Decimal from 'decimal.js';
+import CollectionAssignmentTable from './CollectionAssignmentTable';
 import DeliveryHistory from './DeliveryHistory';
 function Button({ asChild, ...props }: any) { return asChild ? props.children : <button className="primary" {...props}/>; }
 function Input(props: any) { return <input {...props}/>; }
@@ -9,7 +10,7 @@ function Input(props: any) { return <input {...props}/>; }
 type Row = Record<string, any>;
 const control = 'w-full rounded-md border border-input bg-background p-2 text-sm';
 
-export default function QuotationActions({ row, data, busy, submit, onPdf, initialVersion, onOpenDraft, showFulfillment = false, documentView = false, view = 'all', onPickup }: { row: Row; data: Row; busy: boolean; submit: (body: Row) => Promise<unknown>; onPdf?: (version: number) => void; initialVersion?: number; onOpenDraft?: (mode: 'edit' | 'all' | 'priced') => void; showFulfillment?: boolean; documentView?: boolean; view?: string; onPickup?: (orderId:string)=>void }) {
+export default function QuotationActions({ row, data, busy, submit, onPdf, initialVersion, onOpenDraft, showFulfillment = false, documentView = false, view = 'all', onPickup }: { row: Row; data: Row; busy: boolean; submit: (body: Row) => Promise<unknown>; onPdf?: (version: number) => void; initialVersion?: number; onOpenDraft?: (mode: 'edit' | 'all' | 'priced') => void; showFulfillment?: boolean; documentView?: boolean; view?: string; onPickup?: (orderId:string, staff?:string, internal?:boolean, supplier?:string)=>void }) {
   const quotes: Row[] = row.quotations || [];
   const latest = quotes.at(-1);
   const [version, setVersion] = useState<number | undefined>(initialVersion);
@@ -42,12 +43,14 @@ export default function QuotationActions({ row, data, busy, submit, onPdf, initi
     {showFulfillment && (row.orders || []).filter((o: Row) => o.lines.some((l: Row) => l.customerConfirmed)).map((order: Row) => {
       const available = order.lines.filter((l: Row) => Number(l.remainingToAssign) > 0 && row.items.some((i: Row) => i.id === l.itemId && i.offers.length));
       if (!available.length) return null;
-      return <form key={order.id} className="space-y-3 border-t pt-3" onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); void submit({ action: 'approveCollection', orderId: order.id, poReference: f.get('poReference') || '', overrideReason: f.get('overrideReason') || '', lines: available.filter((l: Row) => f.get(`include:${l.itemId}`)).map((l: Row) => ({ itemId: l.itemId, offerId: quotes.find(q => q.version === order.quoteVersion)?.lines.find((q: Row) => q.itemId === l.itemId)?.offer?.id || row.items.find((i: Row) => i.id === l.itemId)?.offers.find((o: Row) => o.supplier === l.supplier || data.suppliers.find((s: Row) => s.id === o.supplier)?.name === l.supplier)?.id || row.items.find((i: Row) => i.id === l.itemId)?.selectedOffer || row.items.find((i: Row) => i.id === l.itemId)?.offers[0]?.id, quantity: l.remainingToAssign, owner: f.get('owner'), due: f.get('due') || '' })) }); }}>
-        <h4 className="font-semibold">Assign collection</h4><label className="block text-sm">Default collector<select className={control} name="owner" required><option value="">Choose staff</option>{data.collectionStaff.filter((s: Row) => s.teams.includes('*') || s.teams.includes(row.branch)).map((s: Row) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-        {available.map((l: Row) => <label key={l.itemId} className="block text-sm"><input name={`include:${l.itemId}`} type="checkbox" defaultChecked/> {l.name} · {l.remainingToAssign} {l.unit}</label>)}
-        <label>PO reference (optional)<Input name="poReference" maxLength={500}/></label><label>Deadline (optional)<Input type="date" name="due"/></label>{reason}<Button disabled={busy}>Assign collection</Button>
-      </form>;
+      return <CollectionAssignmentTable key={order.id} lines={available.map((line: Row) => {
+        const item = row.items.find((i:Row) => i.id === line.itemId);
+        const quoted = quotes.find(q => q.version === order.quoteVersion)?.lines.find((q:Row) => q.itemId === line.itemId);
+        return { ...line, offerId: quoted?.offer?.id || item?.offers.find((offer:Row) => offer.supplier === line.supplier || data.suppliers.find((shop:Row) => shop.id === offer.supplier)?.name === line.supplier)?.id || item?.selectedOffer, supplier: quoted?.offer?.supplier || line.supplier };
+      })} staff={data.collectionStaff} suppliers={data.suppliers} revision={row.requestRevision} orderId={order.id} busy={busy} admin={admin} submit={submit}/>;
     })}
+    {showFulfillment && selected && <details><summary>Authorize early collection from saved version {selected.version}</summary><CollectionAssignmentTable key={`early:${selected.version}`} early quoteVersion={selected.version} revision={row.requestRevision} busy={busy} admin={admin} submit={submit} staff={data.collectionStaff} suppliers={data.suppliers}
+      lines={selected.lines.flatMap((line:Row) => { const item = row.items.find((value:Row) => value.id === line.itemId); const remaining = Math.min(Number(line.quantity), Number(item?.unallocatedQuantity || 0), Number(item?.confirmableQuantity || 0)); return line.offer?.id && remaining > 0 ? [{ ...line, name:line.name || item?.name, partNumber:line.partNumber || item?.partNumber, offerId:line.offer.id, supplier:line.offer.supplier, remainingToAssign:String(remaining) }] : []; })}/></details>}
     {showFulfillment && <DeliveryHistory row={row} busy={busy} admin={admin} submit={submit} onPickup={onPickup}/>}
     </div>
   </section>;

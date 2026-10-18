@@ -6,8 +6,8 @@ import QuotationInlineCustom from './QuotationInlineCustom';
 import { entryMatchLine, validEntryQuantity, type EntryMatch } from './quotation-entry';
 import { wheelSafeNumberInputProps } from './number-input';
 
-export default function QuotationEntryDraft({ t, row, vat, disabled, onAdd, onBusy }: {
-  t: Translate; row: number; vat: string; disabled: boolean;
+export default function QuotationEntryDraft({ t, row, vat, disabled, onAdd, onBusy, compact = false }: {
+  compact?: boolean; t: Translate; row: number; vat: string; disabled: boolean;
   onAdd: (line: any, restoreQuantity: boolean) => void; onBusy: (value: boolean) => void;
 }) {
   const [match, setMatch] = useState<EntryMatch | null>(null);
@@ -37,20 +37,21 @@ export default function QuotationEntryDraft({ t, row, vat, disabled, onAdd, onBu
   const label = match ? (match.source === 'CATALOG' ? match.item.partNumber : match.item.reference || t('Custom', 'مخصص')) : '';
   return <>
     <tr className="quotation-draft-row" data-entry-draft>
-      <td>{row}</td>
+      {!compact && <td>{row}</td>}
       <td><QuotationItemSearch t={t} label={label} row={row} disabled={disabled || busy}
         onSelect={async result => { setMatch(result); setCustomQuery(null); setError(''); }}
-        onCustom={query => { setMatch(null); setCustomQuery(query); }}/></td>
-      <td>{match?.item.description || <span className="muted">{t('Next item', 'الصنف التالي')}</span>}
+        onCustom={query => { setMatch(null); setCustomQuery(query); }}/>
+        {compact && <><small>{match?.item.description || t('Next item', 'الصنف التالي')} · {match?.item.unit || '—'}</small>{error && <small role="alert" className="sales-check-error">{error}</small>}{busy && <small role="status">{t('Loading price…','جارٍ تحميل السعر…')}</small>}</>}</td>
+      {!compact && <><td>{match?.item.description || <span className="muted">{t('Next item', 'الصنف التالي')}</span>}
         {error && <small className="sales-check-error" role="alert">{error}</small>}
         {busy && <small role="status">{t('Loading price…', 'جارٍ تحميل السعر…')}</small>}</td>
-      <td>{match?.item.unit || '—'}</td>
-      <td><input ref={quantityInput} aria-label={t('New item quantity', 'كمية الصنف الجديد')} type="number"
+      <td>{match?.item.unit || '—'}</td></>}
+      <td><input ref={quantityInput} data-cart-field="quantity" aria-label={t('New item quantity', 'كمية الصنف الجديد')} type="number"
         min="0.000001" step="any" {...wheelSafeNumberInputProps} value={quantity} disabled={disabled}
         onChange={event => setQuantity(event.target.value)}/></td>
       <td>—</td><td>—</td><td>—</td><td></td>
     </tr>
-    {customQuery !== null && <tr className="quotation-custom-row"><td colSpan={9}>
+    {customQuery !== null && <tr className="quotation-custom-row"><td colSpan={compact ? 6 : 9}>
       <QuotationInlineCustom key={customQuery} t={t} query={customQuery} quantity={validEntryQuantity(quantity) ? quantity : '1'}
         vat={vat} disabled={disabled} onBusy={onBusy} onCancel={() => setCustomQuery(null)}
         onAdd={line => { if (!finished.current) { finished.current = true; onAdd(line, false); } }}/>

@@ -20,6 +20,10 @@ const line = z.object({
   outstanding: z.string(),
   accountingCode: z.string(),
   supplier: z.string().max(500),
+  supplierContact: z.string().max(3000).optional(),
+  supplierLocation: z.string().max(3000).optional(),
+  sourceReference: z.string().max(1000).optional(),
+  customerConfirmed: z.boolean().optional(),
   staff: z.array(
     z.object({
       id: z.string(),
@@ -45,7 +49,7 @@ export const pickupInput = z.object({
   internal: z.boolean(),
   order: z.object({
     id: z.string().uuid(),
-    number: z.string().regex(/^CO-\d+$/),
+    number: z.string().regex(/^(?:CO|SO)-\d+$/),
     mode: z.enum(["ORDER_CONFIRMED", "EARLY_AUTHORIZED"]),
     poNumber: z.string(),
     revision: z.number().int().positive(),
@@ -74,11 +78,11 @@ export function pickupHtml(
   const kind = input.internal
     ? "Internal staff copy / نسخة داخلية"
     : "Supplier copy / نسخة المورد";
-  const details = `<section><div><strong>${e(kind)}</strong><br>Workflow / المتابعة: ${e(input.workflow)}<br>Quotation / عرض السعر: ${e(input.number)}<br>PO / أمر العميل: ${e(input.order.poNumber || "Not supplied")}<br>${input.internal ? `Customer / العميل: ${e(input.customer)}` : ""}</div><div>${input.order.mode === "EARLY_AUTHORIZED" ? "EARLY COLLECTION AUTHORIZED — CUSTOMER ORDER NOT CONFIRMED / استلام مبكر مصرح — طلب العميل غير مؤكد" : "Customer order confirmed / طلب العميل مؤكد"}</div></section>`;
+  const details = `<section><div><strong>${e(kind)}</strong><br>Workflow / المتابعة: ${e(input.workflow)}<br>Quotation / عرض السعر: ${e(input.number)}<br>PO / أمر العميل: ${e(input.order.poNumber || "Not supplied")}<br>${input.internal ? `Customer / العميل: ${e(input.customer)}` : ""}</div><div>${input.order.mode === "EARLY_AUTHORIZED" ? (input.order.lines.every(line => line.customerConfirmed) ? "EARLY COLLECTION AUTHORIZED — CUSTOMER CONFIRMED LATER / استلام مبكر مصرح — تم تأكيد العميل لاحقاً" : "EARLY COLLECTION AUTHORIZED — CUSTOMER ORDER NOT CONFIRMED / استلام مبكر مصرح — طلب العميل غير مؤكد") : "Customer order confirmed / طلب العميل مؤكد"}</div></section>`;
   const rows = input.order.lines
     .map(
       (l, i) =>
-        `<tr><td>${i + 1}</td><td>${e(l.supplier || "Supplier pending")}<small>${e(l.staff.map((s) => s.name).join(", "))}</small></td><td>${e(l.partNumber)}<small>${e(l.accountingCode)}</small></td><td>${e(l.name)}<small>${e(l.specifications)}</small></td><td>${e(l.quantity)} ${e(l.unit)}<small>Remaining: ${e(l.outstanding)}</small></td>${input.internal ? `<td>${l.cost ? `${e(l.currency)} ${e(l.cost)}/${e(l.unit)}<small>${e(l.taxBasis)}</small>` : "Cost pending"}</td>` : ""}<td>${e(l.staff.map((s) => s.nextAction).join("; "))}<small>${e(l.staff.map((s) => (s.due ? new Date(s.due).toLocaleString("en-GB", { timeZone: settings.workflowTimezone || "Asia/Riyadh" }) : "Date not confirmed")).join("; "))}</small></td></tr>`,
+        `<tr><td>${i + 1}</td><td>${e(l.supplier || "Supplier pending")}<small>${e(l.staff.map((s) => s.name).join(", "))}</small><small>${e(l.supplierContact || "")}</small><small>${e(l.supplierLocation || "")}</small></td><td>${e(l.partNumber)}<small>${e(l.accountingCode)}</small></td><td>${e(l.name)}<small>${e(l.specifications)}</small><small>${e(l.sourceReference || "")}</small></td><td>${e(l.quantity)} ${e(l.unit)}<small>Remaining: ${e(l.outstanding)}</small></td>${input.internal ? `<td>${l.cost ? `${e(l.currency)} ${e(l.cost)}/${e(l.unit)}<small>${e(l.taxBasis)}</small>` : "Cost pending"}</td>` : ""}<td>${e(l.staff.map((s) => s.nextAction).join("; "))}<small>${e(l.staff.map((s) => (s.due ? new Date(s.due).toLocaleString("en-GB", { timeZone: settings.workflowTimezone || "Asia/Riyadh" }) : "Date not confirmed")).join("; "))}</small></td></tr>`,
     )
     .join("");
   return (

@@ -61,14 +61,15 @@ const reviewSchema = z
   })
   .strict();
 
-const finalizeSchema = z
+const versionSchema = z
   .object({
     version: z.coerce.number().int(),
   })
   .strict();
 
-const reopenSchema = finalizeSchema;
-const retrySchema = finalizeSchema;
+const finalizeSchema = versionSchema.extend({ rowUpdates: z.record(z.string().uuid(), rowUpdateItemSchema).optional() });
+const reopenSchema = versionSchema;
+const retrySchema = versionSchema;
 const headerSchema = z.object({ version: z.coerce.number().int(), customerCode: z.string().trim().max(80).default("") }).strict();
 
 const historyDateSchema = z
@@ -762,8 +763,12 @@ export async function get(
      WHERE job_id=$1 AND ${where}`,
     [id],
   );
+  const included = job.mapping && job.status === "AWAITING_REVIEW"
+    ? (await db.query("SELECT raw,line_input FROM delivery_quote_rows WHERE job_id=$1 AND action='ADD' ORDER BY row_number", [id])).rows : null;
+  const includedHeader = included ? headerFromRows(included, job.mapping, job.header) : null;
   return {
     ...job,
+    ...(includedHeader ? { summary: { ...job.summary, docNos: includedHeader.docNos, dates: includedHeader.dates, blockedReason: includedHeader.blockedReason } } : {}),
     capabilities: {
       canEdit: job.status !== "COMPLETED",
       canCreateCorrection: job.status === "COMPLETED" && (count?.total ?? 0) > 0,
@@ -1013,23 +1018,8 @@ export async function retryProcessing(
   });
 }
 
-export async function reviewRows(
-  db: DB,
-  actor: Actor,
-  id: string,
-  input: unknown,
-) {
-  permission(actor);
-  const data = reviewSchema.parse(input);
-  return db.transaction(async (tx) => {
-    const job = await loadJob(tx, actor, id, true);
-    assert(
-      job.status === "AWAITING_REVIEW",
-      409,
-      "Delivery-note import is not awaiting review",
-    );
-    assert(job.version === data.version, 409, "Import changed. Reload");
-    const mapping = mappingSchema.parse(job.mapping);
+// Called only while the import job is locked by the enclosing transaction.
+async function applyReviewRows(tx: DB, id: string, job: any, data: z.infer<typeof reviewSchema>) {
     const rows = (
       await tx.query(
         "SELECT * FROM delivery_quote_rows WHERE job_id=$1 AND id=ANY($2::uuid[]) ORDER BY row_number",
@@ -1164,14 +1154,15 @@ export async function reviewRows(
         count(*) FILTER (WHERE action = 'ADD')::int AS "includedRows",
         count(*) FILTER (WHERE action = 'REMOVE')::int AS "removedRows",
         count(*) FILTER (WHERE action = 'ADD' AND completed)::int AS "completedRows",
-        count(*) FILTER (WHERE jsonb_array_length(issues) > 0)::int AS "blockedRows",
+        count(*) FILTER (WHERE action = 'ADD' AND jsonb_array_length(issues) > 0)::int AS "blockedRows",
         count(*) FILTER (WHERE resolution = 'MATCHED_CATALOG')::int AS "matchedRows",
         count(*) FILTER (WHERE resolution = 'UNMATCHED_CUSTOM')::int AS "customRows"
        FROM delivery_quote_rows
        WHERE job_id = $1`,
       [id],
     );
-    const header = job.header ?? {};
+    const included = (await tx.query("SELECT * FROM delivery_quote_rows WHERE job_id=$1 AND action='ADD' ORDER BY row_number", [id])).rows;
+    const header = job.mapping ? headerFromRows(included, job.mapping, job.header) : normalizeDeliveryHeader(job.header);
     const summary = {
       ...(countRow || {
         totalRows: 0,
@@ -1192,7 +1183,26 @@ export async function reviewRows(
       "UPDATE delivery_quote_jobs SET summary=$2,version=version+1,updated_at=now() WHERE id=$1",
       [id, json(summary)],
     );
-    return { ok: true };
+}
+
+export async function reviewRows(
+  db: DB,
+  actor: Actor,
+  id: string,
+  input: unknown,
+) {
+  permission(actor);
+  const data = reviewSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const job = await loadJob(tx, actor, id, true);
+    assert(
+      job.status === "AWAITING_REVIEW",
+      409,
+      "Delivery-note import is not awaiting review",
+    );
+    assert(job.version === data.version, 409, "Import changed. Reload");
+    await applyReviewRows(tx, id, job, data);
+    return { ok: true, version: job.version + 1 };
   });
 }
 
@@ -1269,6 +1279,11 @@ export async function finalize(
       return publicQuote(await getQuote(tx, actor, job.quote_id), actor);
     }
     assert(job.version === data.version, 409, "Import changed. Reload");
+    const rowIds = Object.keys(data.rowUpdates ?? {});
+    assert(rowIds.length <= 500, 400, "Too many pending row edits");
+    if (rowIds.length) {
+      await applyReviewRows(tx, id, job, { version: data.version, rowIds, rowUpdates: data.rowUpdates });
+    }
     const included = (
       await tx.query(
         "SELECT * FROM delivery_quote_rows WHERE job_id=$1 AND action='ADD' ORDER BY row_number",

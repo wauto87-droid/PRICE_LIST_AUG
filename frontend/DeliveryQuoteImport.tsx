@@ -45,6 +45,19 @@ export default function DeliveryQuoteImport({
   const [jobs, setJobs] = useState<any[]>([]);
   const [job, setJob] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const mutationLock = useRef(false);
+  const pageGeneration = useRef(0);
+  const activeJob = useRef<any>(null);
+  activeJob.current = job;
+  const pendingEdits = useRef<Record<string, Record<string, { quantity?: string; unitPriceExcl?: string }>>>({});
+  const editsFor = (id: string) => pendingEdits.current[id] ??= {};
+  const editRow = (id: string, field: "quantity" | "unitPriceExcl", value: string) => {
+    if (!job || mutationLock.current) return;
+    const edits = editsFor(job.id);
+    edits[id] = { ...edits[id], [field]: value };
+    setJob((current: any) => ({ ...current, rows: current.rows.map((row: any) => row.id === id
+      ? { ...row, line_input: { ...row.line_input, [field]: value } } : row) }));
+  };
   const [error, setError] = useState("");
   const [uploadProgress, setUploadProgress] = useState<{
     loaded: number;
@@ -105,9 +118,14 @@ export default function DeliveryQuoteImport({
   const [rowPage, setRowPage] = useState(0);
   const [rowPageSize, setRowPageSize] = useState(50);
   const open = async (id: string, nextFilter = filter, page = rowPage, size = rowPageSize) => {
+    const generation = ++pageGeneration.current;
     const next: any = await api(
       `delivery-quote-imports/${id}?page=${page}&pageSize=${size}&filter=${encodeURIComponent(nextFilter)}`,
     );
+    if (generation !== pageGeneration.current) return;
+    next.rows = (next.rows ?? []).map((row: any) => ({ ...row,
+      line_input: { ...row.line_input, ...editsFor(id)[row.id] } }));
+    activeJob.current = next;
     setJob(next);
     setFilter(nextFilter);
     setRowPage(page);
@@ -192,14 +210,21 @@ export default function DeliveryQuoteImport({
   }, [tab, adminFilters, user.permissions]);
 
   async function run(fn: () => Promise<void>) {
+    if (mutationLock.current) return;
+    mutationLock.current = true;
+    ++pageGeneration.current;
     setBusy(true);
     setError("");
     try {
       await fn();
       await loadJobs();
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as any).status === 409 && activeJob.current?.id) {
+        await open(activeJob.current.id).catch(() => {});
+        setError(t("This import changed in another session. Latest rows loaded; your unsaved values are retained. Review them before saving again.", "تغير الاستيراد في جلسة أخرى. تم تحميل أحدث الصفوف مع الاحتفاظ بالقيم غير المحفوظة. راجعها قبل الحفظ."));
+      } else setError((e as Error).message);
     } finally {
+      mutationLock.current = false;
       setBusy(false);
     }
   }
@@ -269,7 +294,7 @@ export default function DeliveryQuoteImport({
     .map(([id]) => id);
   const isAdmin = user.permissions.includes("QUOTE_VIEW_ALL");
   const activeJobs = jobs.filter((item) => item.status !== "COMPLETED");
-  const headerSummary = job?.header || job?.summary || {};
+  const headerSummary = { ...(job?.header || {}), ...(job?.summary || {}) };
   const conflictingCustomers = Array.isArray(headerSummary.customers)
     ? headerSummary.customers
     : [];
@@ -285,18 +310,16 @@ export default function DeliveryQuoteImport({
       for (const id of visibleRowIds) next[id] = checked;
       return next;
     });
-  const getRowUpdates = (ids?: string[]) => {
-    const targetIds = ids && ids.length ? ids : (job?.rows || []).map((r: any) => r.id);
-    const rowUpdates: Record<string, { quantity?: string; unitPriceExcl?: string }> = {};
-    for (const r of job?.rows || []) {
-      if (targetIds.includes(r.id)) {
-        rowUpdates[r.id] = {
-          quantity: r.line_input?.quantity !== undefined ? String(r.line_input.quantity) : undefined,
-          unitPriceExcl: r.line_input?.unitPriceExcl !== undefined ? String(r.line_input.unitPriceExcl) : undefined,
-        };
-      }
+  const getRowUpdates = (ids?: string[]) => Object.fromEntries(
+    Object.entries(editsFor(job.id)).filter(([id]) => !ids || ids.includes(id)));
+  const saveReview = async (path: string, method: string, payload: any) => {
+    const snapshot = getRowUpdates(payload.rowIds);
+    const result: any = await api(path, method, { ...payload, rowUpdates: snapshot });
+    const edits = editsFor(job.id);
+    for (const [id, value] of Object.entries(snapshot)) {
+      if (JSON.stringify(edits[id]) === JSON.stringify(value)) delete edits[id];
     }
-    return rowUpdates;
+    return result;
   };
   const resolutionLabel = (resolution: string) =>
     resolution === "MATCHED_CATALOG"
@@ -809,6 +832,7 @@ export default function DeliveryQuoteImport({
             ].map(([key, en, ar]) => (
               <button
                 key={key}
+                disabled={busy}
                 className={filter === key ? "primary" : ""}
                 onClick={() => void open(job.id, key, 0, rowPageSize)}
               >
@@ -819,7 +843,7 @@ export default function DeliveryQuoteImport({
               disabled={busy || !selectedIds.length}
               onClick={() =>
                 void run(async () => {
-                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                  await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                     version: job.version,
                     rowIds: selectedIds,
                     action: "REMOVE",
@@ -835,7 +859,7 @@ export default function DeliveryQuoteImport({
               disabled={busy || !selectedIds.length}
               onClick={() =>
                 void run(async () => {
-                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                  await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                     version: job.version,
                     rowIds: selectedIds,
                     action: "RESTORE",
@@ -851,7 +875,7 @@ export default function DeliveryQuoteImport({
               disabled={busy || !selectedIds.length}
               onClick={() =>
                 void run(async () => {
-                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                  await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                     version: job.version,
                     rowIds: selectedIds,
                     completed: true,
@@ -867,8 +891,8 @@ export default function DeliveryQuoteImport({
               disabled={busy || !job?.rows?.length}
               onClick={() =>
                 void run(async () => {
-                  const allIds = (job?.rows || []).map((r: any) => r.id);
-                  await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                  const allIds = Object.keys(editsFor(job.id));
+                  if (allIds.length) await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                     version: job.version,
                     rowIds: allIds,
                     rowUpdates: getRowUpdates(),
@@ -884,22 +908,11 @@ export default function DeliveryQuoteImport({
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  const allIds = (job?.rows || []).map((r: any) => r.id);
-                  if (allIds.length) {
-                    await api(`delivery-quote-imports/${job.id}/review`, "POST", {
-                      version: job.version,
-                      rowIds: allIds,
-                      rowUpdates: getRowUpdates(),
-                    });
-                  }
-                  const refreshed: any = await api(
-                    `delivery-quote-imports/${job.id}?page=${rowPage}&pageSize=${rowPageSize}&filter=${encodeURIComponent(filter)}`,
-                  );
                   const quote = await api(
-                    `delivery-quote-imports/${job.id}/finalize`,
-                    "POST",
-                    { version: refreshed.version },
+                    `delivery-quote-imports/${job.id}/finalize`, "POST",
+                    { version: job.version, rowUpdates: getRowUpdates() },
                   );
+                  delete pendingEdits.current[job.id];
                   onImported(quote);
                   await open(job.id, filter, rowPage, rowPageSize);
                 })
@@ -998,21 +1011,9 @@ export default function DeliveryQuoteImport({
                       </td>
                       <td>
                         <input
+                          disabled={busy}
                           value={input.quantity || ""}
-                          onChange={(e) => {
-                            const rows = job.rows.map((item: any) =>
-                              item.id === row.id
-                                ? {
-                                    ...item,
-                                    line_input: {
-                                      ...item.line_input,
-                                      quantity: e.target.value,
-                                    },
-                                  }
-                                : item,
-                            );
-                            setJob({ ...job, rows });
-                          }}
+                          onChange={(e) => editRow(row.id, "quantity", e.target.value)}
                         />
                       </td>
                       <td>
@@ -1028,21 +1029,8 @@ export default function DeliveryQuoteImport({
                         <div className="delivery-price-stack">
                           <input
                             value={input.unitPriceExcl || ""}
-                            disabled={row.resolution !== "UNMATCHED_CUSTOM"}
-                            onChange={(e) => {
-                              const rows = job.rows.map((item: any) =>
-                                item.id === row.id
-                                  ? {
-                                      ...item,
-                                      line_input: {
-                                        ...item.line_input,
-                                        unitPriceExcl: e.target.value,
-                                      },
-                                    }
-                                  : item,
-                              );
-                              setJob({ ...job, rows });
-                            }}
+                            disabled={busy || row.resolution !== "UNMATCHED_CUSTOM"}
+                            onChange={(e) => editRow(row.id, "unitPriceExcl", e.target.value)}
                             placeholder={
                               row.resolution === "UNMATCHED_CUSTOM"
                                 ? t("Enter price (or 0)", "أدخل السعر (أو 0)")
@@ -1068,9 +1056,10 @@ export default function DeliveryQuoteImport({
                       <td>
                         <div className="actions wrap">
                           <button
+                            disabled={busy}
                             onClick={() =>
                               void run(async () => {
-                                await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                                await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                                   version: job.version,
                                   rowIds: [row.id],
                                   completed: true,
@@ -1083,9 +1072,10 @@ export default function DeliveryQuoteImport({
                             {t("Complete", "إكمال")}
                           </button>
                           <button
+                            disabled={busy}
                             onClick={() =>
                               void run(async () => {
-                                await api(`delivery-quote-imports/${job.id}/review`, "POST", {
+                                await saveReview(`delivery-quote-imports/${job.id}/review`, "POST", {
                                   version: job.version,
                                   rowIds: [row.id],
                                   action: row.action === "REMOVE" ? "RESTORE" : "REMOVE",

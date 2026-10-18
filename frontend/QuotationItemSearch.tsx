@@ -79,7 +79,7 @@ export default function QuotationItemSearch({ t, label, row, disabled, onSelect,
     finally { selecting.current = false; setBusy(false); }
   }
   return <div className="quotation-item-search">
-    <input ref={input} role="combobox" aria-label={t('Item search', 'بحث الصنف') + ' ' + row}
+    <input ref={input} data-cart-field="search" role="combobox" aria-label={t('Item search', 'بحث الصنف') + ' ' + row}
       aria-autocomplete="list" aria-expanded={open && !!query.trim()} aria-controls={id}
       aria-activedescendant={open && active >= 0 ? `${id}-${active}` : undefined}
       autoComplete="off" value={query} disabled={disabled || busy} maxLength={100}
@@ -89,6 +89,9 @@ export default function QuotationItemSearch({ t, label, row, disabled, onSelect,
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); setQuery(label); }
         if (event.key === 'Tab') { setOpen(false); setQuery(label); }
+        if (open && ["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+          event.preventDefault(); event.stopPropagation();
+        }
         if (!open || loading) return;
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault(); setActive(value => count ? (value + (event.key === 'ArrowDown' ? 1 : -1) + count) % count : -1);

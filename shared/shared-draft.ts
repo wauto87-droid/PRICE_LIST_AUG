@@ -20,7 +20,7 @@ export function sharedDraft(result: any, source?: any, version?: number, mode: '
     const unitPrice = saved?.sellingPrice ?? (item.sellingPrice || localPrice);
     return { id: local?.id || item.localLineId || item.id, sharedItemId: item.id, sharedOfferId: offer?.id, partNumber: item.partNumber || local?.partNumber || '', description: item.name, unit: item.unit,
       workflowCost: offer ? { cost: offer.cost, currency: offer.currency, unit: offer.unit, supplier: result.suppliers.find((s: any) => s.id === offer.supplier)?.name || offer.supplier, actorName: result.people?.[offer.actor] || offer.actorName || 'Staff', updatedAt: offer.date, taxBasis: offer.taxBasis } : undefined,
-      input: { type: 'CUSTOM', partNumber: item.partNumber || local?.partNumber || '', description: item.name, unit: item.unit, quantity: saved?.quantity || item.quantity, unitPriceExcl: unitPrice, discount: '0' } };
+      input: { ...(local?.input?.importMeta ? { importMeta: local.input.importMeta } : {}), type: 'CUSTOM', partNumber: item.partNumber || local?.partNumber || '', description: item.name, unit: item.unit, quantity: saved?.quantity || item.quantity, unitPriceExcl: unitPrice, discount: '0' } };
   });
   const cart = { id: source?.id, number: source?.number || result.number, ownerId: source?.owner_id, sharedRequestId: result.requestId, sharedDocumentId: result.documentId,
     sharedRevision: result.requestRevision, sharedQuoteVersion: latest?.version || 0, sharedViewVersion: quote?.version, workflowCurrency: currency,

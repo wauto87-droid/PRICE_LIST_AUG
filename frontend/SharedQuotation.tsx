@@ -49,11 +49,11 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
     try { const result = await api('shared-quotation', 'POST', { action: 'quotationPdf', requestId: data.requestId, documentId, quoteVersion: version, eventId: crypto.randomUUID() }); if (current === pdfGeneration.current) setPdf({ ...result, requestId: data.requestId, quoteVersion: version }); }
     catch (e) { if (current === pdfGeneration.current) {setError((e as Error).message);setNotice('');} } finally { if (current === pdfGeneration.current) setBusy(false); }
   }
-  async function collectionSlip(orderId:string) {
+  async function collectionSlip(orderId:string, staff = "", internal = true, supplier = "") {
     if(!documentId)return;
     setBusy(true);setError('');
     try {
-      const result=await api('workflow-jobs','POST',{action:'pickup',documentId,orderId,supplier:'',staff:'',internal:true});
+      const result=await api('workflow-jobs','POST',{action:'pickup',documentId,orderId,supplier,staff,internal});
       const bytes=Uint8Array.from(atob(result.pdf),(c)=>c.charCodeAt(0));
       const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
       const link=document.createElement('a');link.href=url;link.download=result.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -84,7 +84,7 @@ export default function SharedQuotation({ documentId, initialRequestId, initialV
     </>}
     {pdf && <p role="status">{pdf.status === 'DONE' ? <a href={`/amt_price_list/api/v1/shared-quotation?requestId=${encodeURIComponent(pdf.requestId)}${documentId ? `&documentId=${encodeURIComponent(documentId)}` : ''}&pdfJob=${encodeURIComponent(pdf.id)}&download=1`}>Download PDF — version {pdf.quoteVersion}</a> : ['FAILED','EXPIRED'].includes(pdf.status) ? 'PDF unavailable. Retry Generate PDF, or use Print quotation / Save PDF.' : `Preparing quotation PDF — version ${pdf.quoteVersion}…`}</p>}
     {notice && <div className="toast" role="status">{notice}</div>}
-    {data && <QuotationActions documentView={documentView} view={view} onPickup={documentId ? id=>void collectionSlip(id) : undefined} showFulfillment={showFulfillment && !summaryOnly} key={`${data.requestId}:${initialVersion ?? 'latest'}`} row={row} data={data} busy={busy} submit={submit} onPdf={summaryOnly ? undefined : version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? mode => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId, mode }) : undefined}/>}
+    {data && <QuotationActions documentView={documentView} view={view} onPickup={documentId ? (id, staff, internal, supplier)=>void collectionSlip(id, staff, internal, supplier) : undefined} showFulfillment={showFulfillment && !summaryOnly} key={`${data.requestId}:${initialVersion ?? 'latest'}`} row={row} data={data} busy={busy} submit={submit} onPdf={summaryOnly ? undefined : version => void createPdf(version)} initialVersion={initialVersion} onOpenDraft={onOpenDraft ? mode => onOpenDraft({ documentId: documentId || data.documentId, requestId: data.requestId, mode }) : undefined}/>}
     {data && summaryOnly && data.quotations.length > 0 && <button className="primary" onClick={() => onOpenQuotation?.({documentId: documentId || data.documentId,requestId:data.requestId,version:initialVersion})}>Open quotation and confirm order</button>}
 
   </section>;

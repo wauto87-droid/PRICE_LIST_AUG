@@ -26,10 +26,10 @@ export default function WorkflowCostReference({
   const date = new Date(cost.updatedAt);
   const dateText = Number.isNaN(date.getTime())
     ? t("Date not recorded", "التاريخ غير مسجل")
-    : date.toLocaleDateString(undefined, {
+    : date.toLocaleString(undefined, {
         day: "numeric",
         month: "short",
-        year: "numeric",
+        year: "numeric", hour: "2-digit", minute: "2-digit",
       });
   const unit = line.unit || line.input?.unit;
   const tax = String(cost.taxBasis || "");
@@ -47,6 +47,7 @@ export default function WorkflowCostReference({
         {t("Cost price", "سعر التكلفة")}: {cost.currency} {String(cost.cost)}/
         {cost.unit} · {taxText}
       </strong>
+      <small style={{ display: "block" }}>{t("Supplier", "المورد")}: {cost.supplier || t("Not recorded", "غير مسجل")}</small>
       <span style={{ display: "block" }}>
         {t("Updated by", "تم التحديث بواسطة")}{" "}
         {cost.actorName || t("Staff", "الموظف")} · {dateText}

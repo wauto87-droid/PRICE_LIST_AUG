@@ -35,6 +35,7 @@ export default function PricingCollectionJobs({
   const [statusFilter, setStatusFilter] = useState<string>("DRAFT");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [owners, setOwners] = useState<Record<string, string>>({});
   const [version, setVersion] = useState<number>();
   const retry = useRef<{ hash: string; id: string } | null>(null);
   const [workflowVersion, setWorkflowVersion] = useState<number>();
@@ -79,6 +80,7 @@ export default function PricingCollectionJobs({
   }, [current, ownerFilter, statusFilter]);
 
   useEffect(() => {
+    setOwners({});
     setContext(undefined);
     setStaff([]);
   }, [current]);
@@ -141,6 +143,7 @@ export default function PricingCollectionJobs({
             ? "Working branch saved."
             : "Saved. Pending jobs will synchronize with ERP.",
       );
+      if (body.action === "assign") setOwners({});
       setSelected([]);
       setVersion(undefined);
       setWorkflowVersion(undefined);
@@ -153,6 +156,8 @@ export default function PricingCollectionJobs({
       setBusy(false);
     }
   };
+
+  const assignmentStale = !!doc && ((version !== undefined && version !== doc.version) || (workflowVersion !== undefined && workflowVersion !== doc.workflowVersion));
 
   const filteredRows = rows.filter((q) => {
     if (!searchQuery.trim()) return true;
@@ -589,6 +594,7 @@ export default function PricingCollectionJobs({
                   {doc.status}
                 </span>
               </h3>
+              {onOpenDraft && <button className="primary" type="button" disabled={busy || !doc.erpRequestId || doc.handoverPending} onClick={() => onOpenDraft({ documentId: current, requestId: doc.erpRequestId, mode: "edit" })}>Prepare quotation</button>}
               <div
                 style={{
                   padding: 12,
@@ -703,7 +709,7 @@ export default function PricingCollectionJobs({
                 {doc.status !== "DRAFT"
                   ? "Open quotation to confirm the customer order, assign collectors with a PO reference, and mark delivery."
                   : doc.ready
-                    ? "Prices collected. Create quotation opens your existing Edit draft menu."
+                    ? "Prices collected. Prepare quotation opens the existing editor; selling prices remain editable."
                     : "Pricing or review remains pending."}
               </p>
               {doc.failures.map((f: any) => (
@@ -725,7 +731,7 @@ export default function PricingCollectionJobs({
                       <th>Select</th>
                       <th>Product</th>
                       <th>Quantity</th>
-                      <th>Pricing / collection</th>
+                      <th>Assigned staff</th><th>Pricing / collection</th>
                       <th>Supplier cost</th>
                     </tr>
                   </thead>
@@ -758,6 +764,12 @@ export default function PricingCollectionJobs({
                         <td>
                           {l.quantity}
                         </td>
+                        <td><select aria-label={`Assigned staff ${l.partNumber || l.description}`} disabled={busy || doc.status !== "DRAFT" || !doc.canAssign || !context?.branchId}
+                          value={owners[l.id] ?? l.jobs.PRICING?.owner ?? ""} onChange={e => {
+                            if (!Object.keys(owners).length && !selected.length) { setVersion(doc.version); setWorkflowVersion(doc.workflowVersion); }
+                            setOwners(value => ({ ...value, [l.id]: e.target.value }));
+                          }}><option value="">Choose staff</option>{staff.filter(s => ["sales","pricing","manager"].includes(s.role)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+                          {owners[l.id] !== undefined && <small>Unsaved assignment</small>}</td>
                         <td>
                           {["PRICING", "COLLECTION"].map(
                             (kind) =>
@@ -842,8 +854,9 @@ export default function PricingCollectionJobs({
                         action: "assign",
                         eventId: crypto.randomUUID(),
                         kind: "PRICING",
-                        selected,
-                        assignee: f.get("assignee"),
+                        selected: Object.keys(owners).length ? Object.keys(owners) : selected,
+                        owners: Object.keys(owners).length ? owners : Object.fromEntries(selected.map(id => [id, doc.lines.find((l:any) => l.id === id)?.jobs.PRICING?.owner || ""])),
+                        assignee: Object.values(owners)[0] || doc.lines.find((l:any) => l.id === selected[0])?.jobs.PRICING?.owner || "",
                         shops: f.get("shops"),
                         notes: f.get("notes"),
                         due: f.get("due")
@@ -865,8 +878,9 @@ export default function PricingCollectionJobs({
                       marginTop: 16,
                     }}
                   >
+                    {assignmentStale && <p role="alert">Workflow changed. Your staff selections are retained. Review the item table, then <button type="button" onClick={() => { setVersion(doc.version); setWorkflowVersion(doc.workflowVersion); }}>Use updated version</button>.</p>}
                     <h3 style={{ margin: "0 0 12px 0" }}>
-                      Assign / edit {selected.length} selected products
+                      Assign pricing · {Object.keys(owners).length || selected.length} items
                     </h3>
                     <div
                       style={{
@@ -885,10 +899,11 @@ export default function PricingCollectionJobs({
                           fontSize: 14,
                         }}
                       >
-                        Staff:
+                        Bulk assign selected:
                         <select
-                          required
                           name="assignee"
+                          disabled={busy || !selected.length}
+                          onChange={e => { const owner = e.target.value; if (!owner) return; setOwners(current => ({ ...current, ...Object.fromEntries(selected.map(id => [id, owner])) })); }}
                           style={{
                             padding: "6px 10px",
                             borderRadius: 6,
@@ -935,6 +950,7 @@ export default function PricingCollectionJobs({
                       </label>
                     </div>
 
+                    <details><summary>Details and supplier instructions</summary>
                     <div
                       style={{
                         display: "grid",
@@ -987,6 +1003,7 @@ export default function PricingCollectionJobs({
                         />
                       </label>
                     </div>
+                    </details>
 
                     <label
                       style={{
@@ -1013,9 +1030,8 @@ export default function PricingCollectionJobs({
                     <div style={{ marginTop: 16 }}>
                       <button
                         disabled={
-                          busy ||
-                          !selected.length ||
-                          false
+                          busy || assignmentStale ||
+                          (!selected.length && !Object.keys(owners).length)
                         }
                         style={{
                           padding: "8px 20px",
@@ -1023,7 +1039,7 @@ export default function PricingCollectionJobs({
                           fontWeight: 600,
                         }}
                       >
-                        Assign selected products
+                        Save assignments
                       </button>
                     </div>
                   </form>
