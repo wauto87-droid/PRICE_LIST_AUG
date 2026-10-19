@@ -85,6 +85,20 @@ test("Universal Part Number Search Normalization & Delimiter Matching", async (t
       category: "BREAKER",
       cost: "15",
     },
+    {
+      partNumber: "S3-63",
+      description: "S301P-K63NA BKJ63 20A equivalent miniature circuit breaker",
+      brand: "ABB",
+      category: "BREAKER",
+      cost: "200",
+    },
+    {
+      partNumber: "EASY9-16",
+      description: "MINIATURE CIRCUIT BREAKER 16A",
+      brand: "Schneider",
+      category: "BREAKER",
+      cost: "15",
+    },
   ];
 
   for (const item of catalog) {
@@ -263,6 +277,18 @@ test("Universal Part Number Search Normalization & Delimiter Matching", async (t
     // Query BKJ 1P C32
     const r10: any = await search(db, actor, "BKJ 1P C32", {}, false);
     assert.equal(r10[0]?.partNumber, "BKJ63 1P 32A");
+  });
+
+  await t.test("Part number matches strictly prioritize ahead of description matches", async () => {
+    // Both BKJ63 1P 20A (part number match) and S3-63 (description match) match "BKJ63 20"
+    // BKJ63 1P 20A must rank #1 even though S3-63 has a shorter part number!
+    const r1: any = await search(db, actor, "BKJ63 20", {}, false);
+    assert.equal(r1[0]?.partNumber, "BKJ63 1P 20A");
+
+    // Both EASY9-16 (part number match) and EZ9F56116 (description match) match "EASY9"
+    // EASY9-16 must rank #1!
+    const r2: any = await search(db, actor, "EASY9", {}, false);
+    assert.equal(r2[0]?.partNumber, "EASY9-16");
   });
 
   await t.test("Admin catalog search supports normalized clean parts and pagination", async () => {

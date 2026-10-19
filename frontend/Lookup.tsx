@@ -258,7 +258,55 @@ export default function Lookup({
               })
             );
           });
+          const getPartScore = (p: any) => {
+            const partStr = String(p.partNumber || "").toLowerCase();
+            const cleanP = partStr.replace(/[^a-z0-9]/g, "").toUpperCase();
+            let score = 0;
+            if (cleanQuery && (cleanP === cleanQuery || cleanP.startsWith(cleanQuery))) {
+              score += 10;
+            }
+            for (const token of queryTokens) {
+              const cleanT = token.toUpperCase().replace(/[^A-Z0-9]/g, "");
+              const ratingWithUnit = token.match(/^(\d+)[aA]$/i);
+              const curveWithRating = token.match(/^([cdbkz])(\d+)[aA]?$/i);
+              const pureNumber = token.match(/^(\d+)$/);
+              const modelStem = token.match(/^([a-z]*\d+)([a-z]+)$/i);
+
+              if (ratingWithUnit) {
+                const num = ratingWithUnit[1];
+                const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*[a]([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr)) score += 2;
+                continue;
+              }
+              if (curveWithRating) {
+                const curve = curveWithRating[1].toLowerCase();
+                const num = curveWithRating[2];
+                const regex = new RegExp(`(^|[^0-9])${curve}?${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr)) score += 2;
+                continue;
+              }
+              if (pureNumber) {
+                const num = pureNumber[1];
+                const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*([ap])?([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr) || (num.length >= 2 && (partStr.includes(num) || cleanP.includes(num)))) score += 2;
+                continue;
+              }
+              if (modelStem && modelStem[1].length >= 2 && (partStr.includes(modelStem[1]) || cleanP.includes(modelStem[1].toUpperCase()))) {
+                score += 2;
+              }
+              if (partStr.includes(token) || (cleanT.length > 0 && cleanP.includes(cleanT))) {
+                score += 2;
+              }
+            }
+            return score;
+          };
+
           rows.sort((a: any, b: any) => {
+            const scoreA = getPartScore(a);
+            const scoreB = getPartScore(b);
+            if (scoreA !== scoreB) {
+              return scoreB - scoreA;
+            }
             const aPart = String(a.partNumber || "");
             const bPart = String(b.partNumber || "");
             if (aPart.length !== bPart.length) {
