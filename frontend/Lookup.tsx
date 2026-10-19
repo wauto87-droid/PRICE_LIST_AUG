@@ -194,7 +194,7 @@ export default function Lookup({
             .replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
           const queryTokens = trimmedQuery
             .toLowerCase()
-            .split(/\s+/)
+            .split(/[\s\-/_.,]+/)
             .filter(Boolean);
           rows = (cache.rows || []).filter((p: any) => {
             const raw = (
@@ -215,7 +215,13 @@ export default function Lookup({
             ) {
               return true;
             }
-            return queryTokens.length > 0 && queryTokens.every((t) => raw.includes(t));
+            return (
+              queryTokens.length > 0 &&
+              queryTokens.every((t) => {
+                const cleanT = t.toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+                return raw.includes(t) || (cleanT.length > 0 && cleanPart.includes(cleanT));
+              })
+            );
           });
           setStamp(cache.at || "");
         }

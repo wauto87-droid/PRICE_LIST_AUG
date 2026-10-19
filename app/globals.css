@@ -1466,16 +1466,52 @@ strong + small {
 }
 .inline-lookup-results {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
 }
 .inline-lookup-results button {
   display: grid;
   gap: 4px;
   text-align: start;
-  padding: 12px 14px;
+  padding: 8px 12px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
+  cursor: pointer;
+  transition: all 0.12s ease-in-out;
+}
+.inline-lookup-results button:hover,
+.inline-lookup-results button.is-highlighted {
+  border-color: var(--primary, #0052cc);
+  background: #f0f7ff;
+  box-shadow: 0 0 0 1px var(--primary, #0052cc);
+}
+.inline-lookup-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inline-lookup-brand {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef2f6;
+  color: #334155;
+}
+.inline-lookup-desc {
+  font-size: 0.8rem;
+  color: var(--muted, #64748b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-lookup-empty {
+  padding: 8px 12px;
+  font-size: 0.85rem;
 }
 .custom-catalog-find {
   display: block;

@@ -422,21 +422,30 @@ function partRankedCte(activeClause: string) {
       UNION ALL
       SELECT p.id, 1 AS rank
       FROM products p
-      WHERE ${activeClause} AND p.normalized_part LIKE $2 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g')=$2
       UNION ALL
       SELECT p.id, 1 AS rank
       FROM product_aliases a
       JOIN products p ON p.id=a.product_id
-      WHERE ${activeClause} AND a.normalized LIKE $2 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[^[:alnum:]]+','','g')=$2
       UNION ALL
       SELECT p.id, 2 AS rank
       FROM products p
-      WHERE ${activeClause} AND p.normalized_part LIKE $3 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g') LIKE $3 ESCAPE '\\'
       UNION ALL
       SELECT p.id, 2 AS rank
       FROM product_aliases a
       JOIN products p ON p.id=a.product_id
-      WHERE ${activeClause} AND a.normalized LIKE $3 ESCAPE '\\'
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[^[:alnum:]]+','','g') LIKE $3 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 3 AS rank
+      FROM products p
+      WHERE ${activeClause} AND regexp_replace(p.normalized_part,'[^[:alnum:]]+','','g') LIKE $4 ESCAPE '\\'
+      UNION ALL
+      SELECT p.id, 3 AS rank
+      FROM product_aliases a
+      JOIN products p ON p.id=a.product_id
+      WHERE ${activeClause} AND regexp_replace(a.normalized,'[^[:alnum:]]+','','g') LIKE $4 ESCAPE '\\'
     ) AS match
     GROUP BY match.id
   )`;
@@ -585,8 +594,15 @@ async function getRankedPartMatches(
           FROM part_ranked
           JOIN products p ON p.id=part_ranked.id
           ORDER BY part_ranked.rank,p.normalized_part
-          LIMIT $4 OFFSET $5`,
-      [q, escaped + "%", "%" + escaped + "%", limit, offset],
+          LIMIT $5 OFFSET $6`,
+      [
+        q,
+        normalizeLookupPart(q),
+        normalizeLookupPart(q) + "%",
+        "%" + normalizeLookupPart(q) + "%",
+        limit,
+        offset,
+      ],
     )
   ).rows;
 }
@@ -628,7 +644,12 @@ async function countRankedPartMatches(
       db,
       partRankedCte(activeClause) +
         " SELECT count(*)::int AS n FROM part_ranked",
-      [q, escaped + "%", "%" + escaped + "%"],
+      [
+        q,
+        normalizeLookupPart(q),
+        normalizeLookupPart(q) + "%",
+        "%" + normalizeLookupPart(q) + "%",
+      ],
     ))!.n,
   );
 }
@@ -1028,17 +1049,7 @@ export async function search(
       SEARCH_RESULT_LIMIT,
     );
     const rankedIds = partMatches.map((row) => row.id);
-    if (q.length >= 2 && rankedIds.length < SEARCH_RESULT_LIMIT) {
-      const textMatches = await getRankedTextMatches(
-        db,
-        activeClause,
-        "%" + escaped + "%",
-        rankedIds,
-        SEARCH_RESULT_LIMIT - rankedIds.length,
-      );
-      rankedIds.push(...textMatches.map((row) => row.id));
-    }
-    const searchTokens = q.trim().split(/\s+/).filter(Boolean);
+    const searchTokens = q.trim().split(/[\s\-/_.,]+/).filter(Boolean);
     if (searchTokens.length > 1 && rankedIds.length < SEARCH_RESULT_LIMIT) {
       const tokenMatches = await getMultiTokenMatches(
         db,
@@ -1048,6 +1059,16 @@ export async function search(
         SEARCH_RESULT_LIMIT - rankedIds.length,
       );
       rankedIds.push(...tokenMatches.map((row) => row.id));
+    }
+    if (q.length >= 2 && rankedIds.length < SEARCH_RESULT_LIMIT) {
+      const textMatches = await getRankedTextMatches(
+        db,
+        activeClause,
+        "%" + escaped + "%",
+        rankedIds,
+        SEARCH_RESULT_LIMIT - rankedIds.length,
+      );
+      rankedIds.push(...textMatches.map((row) => row.id));
     }
     const rows = await hydrateLookupProductsByIds(db, rankedIds);
     return finish(
