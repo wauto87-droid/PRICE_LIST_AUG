@@ -219,7 +219,12 @@ export default function Cart({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  const [editingPriceRow, setEditingPriceRow] = useState<number | null>(null);
+  const [editingPriceRow, setEditingPriceRowState] = useState<number | null>(null);
+  const editingPriceRowRef = useRef<number | null>(null);
+  const setEditingPriceRow = (val: number | null) => {
+    editingPriceRowRef.current = val;
+    setEditingPriceRowState(val);
+  };
   const focusButton = useRef<HTMLButtonElement>(null);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -661,6 +666,7 @@ export default function Cart({
   function changeCatalogFinalPrice(index: number, value: string) {
     setError("");
     delete pricingSignatures.current[index];
+    const isPartialDecimal = String(value).trim().endsWith(".");
     const lines = cart.lines.map((line: any, lineIndex: number) => {
       if (lineIndex !== index || line.input?.type === "CUSTOM") return line;
       const result = normalizeTargetPrice(value);
@@ -672,6 +678,15 @@ export default function Cart({
           targetPriceRequested: undefined,
           targetPriceError: true,
           priceEntryNotice: result.error,
+        };
+      if (isPartialDecimal)
+        return {
+          ...line,
+          pending: false,
+          targetPriceDraft: value,
+          targetPriceRequested: undefined,
+          targetPriceError: false,
+          priceEntryNotice: "",
         };
       return {
         ...line,
@@ -774,6 +789,7 @@ export default function Cart({
                       ...discountInput,
                       discount: price.requestedDiscount,
                     };
+              const isCurrentlyEditing = editingPriceRowRef.current === index;
               return {
                 ...existing,
                 input: synchronizedInput,
@@ -781,7 +797,7 @@ export default function Cart({
                 pending: false,
                 offline: false,
                 livePriceError: "",
-                targetPriceDraft: undefined,
+                targetPriceDraft: isCurrentlyEditing ? existing.targetPriceDraft : undefined,
                 targetPriceRequested: undefined,
                 targetPriceError: false,
                 priceEntryNotice: adjusted,
@@ -808,7 +824,7 @@ export default function Cart({
             if (pricingGenerations.current[index] !== generation) return;
             setRepricingRows((current) => ({ ...current, [index]: false }));
           });
-      }, 350);
+      }, 500);
     });
     return () => {
       for (const timer of Object.values(pricingTimers.current)) clearTimeout(timer);
@@ -946,14 +962,25 @@ export default function Cart({
     return buildDuplicateGroups(cart.lines, colourGroups.current);
   }, [cart.lines]);
 
-  const { mismatchedRowIndexes } = useMemo(() => {
+  const { priceMismatches, mismatchedRowIndexes } = useMemo(() => {
     const isInclusive = Boolean(cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE");
     const mismatches = findRepeatedItemPriceMismatches(cart.lines, isInclusive, cart.workflowCurrency || "SAR");
-    return { mismatchedRowIndexes: getMismatchedRowIndexes(mismatches) };
+    return { priceMismatches: mismatches, mismatchedRowIndexes: getMismatchedRowIndexes(mismatches) };
   }, [cart.lines, cart.sharedWorkflow, cart.sharedTaxBasis, cart.workflowCurrency]);
 
   return (
     <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ''}`}>
+      {priceMismatches.length > 0 && (
+        <div className="notice warning quotation-mismatch-banner" role="alert" style={{ marginBottom: "8px" }}>
+          <span>
+            ⚠️ <b>{t("Price mismatch detected:", "تم اكتشاف اختلاف في الأسعار:")}</b>{" "}
+            {t(
+              `${priceMismatches.length} repeated item${priceMismatches.length > 1 ? "s have" : " has"} different prices across rows. Review rows or align prices before saving.`,
+              `${priceMismatches.length} صنف مكرر له أسعار مختلفة بين الصفوف. يرجى مراجعة الصفوف أو توحيد الأسعار قبل الحفظ.`,
+            )}
+          </span>
+        </div>
+      )}
       <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span></div>
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
         <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
@@ -1377,11 +1404,34 @@ export default function Cart({
                           inputMode="decimal"
                           maxLength={15}
                           onFocus={() => setEditingPriceRow(i)}
-                          onBlur={() => setEditingPriceRow(null)}
+                          onBlur={() => {
+                            setEditingPriceRow(null);
+                            setCartLine(i, (existing) => {
+                              if (existing.targetPriceDraft === undefined) return existing;
+                              const raw = String(existing.targetPriceDraft).trim();
+                              if (raw.endsWith(".")) {
+                                const result = normalizeTargetPrice(raw);
+                                if (result.ok) {
+                                  return {
+                                    ...existing,
+                                    targetPriceDraft: undefined,
+                                    targetPriceRequested: result.target,
+                                    pending: true,
+                                  };
+                                }
+                              }
+                              return {
+                                ...existing,
+                                targetPriceDraft: undefined,
+                              };
+                            });
+                          }}
                           data-cart-field="unitPriceExcl"
                           data-cart-row={i}
                           value={
-                            editingPriceRow === i ? (l.targetPriceDraft ?? l.price?.finalExcl ?? "") : compactQuotationNumber(l.targetPriceDraft ?? l.price?.finalExcl ?? "")
+                            editingPriceRow === i
+                              ? (l.targetPriceDraft ?? (l.price?.finalExcl ? compactQuotationNumber(l.price.finalExcl) : ""))
+                              : compactQuotationNumber(l.targetPriceDraft ?? l.price?.finalExcl ?? "")
                           }
                           onChange={(e) =>
                             changeCatalogFinalPrice(i, e.target.value)
@@ -1392,6 +1442,11 @@ export default function Cart({
                         />
                         {repricingRows[i] && (
                           <small>{t("Refreshing…", "جارٍ التحديث…")}</small>
+                        )}
+                        {hasPriceMismatch && (
+                          <small className="sales-check-error" style={{ display: "block", marginTop: "2px" }} title={t("This item has different prices on other rows", "هذا الصنف له أسعار مختلفة في صفوف أخرى")}>
+                            ⚠️ {t("Different price", "سعر مختلف")}
+                          </small>
                         )}
                         {!!l.priceEntryNotice && (
                           <small className="sales-check-error">
