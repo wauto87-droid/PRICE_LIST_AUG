@@ -5704,9 +5704,9 @@ body :is(h1, h2, h3, strong, b) {
  .quotation-entry-table .duplicate-color-3 { --quotation-row-tint:#f0fff0; }
  .quotation-entry-table .duplicate-color-4 { --quotation-row-tint:#fffaf0; }
  .quotation-entry-table .duplicate-color-5 { --quotation-row-tint:#f8f0ff; }
- .quotation-entry-table .duplicate-color-6 { --quotation-row-tint:#f0ffff; }
- .quotation-entry-table .responsive-table tr.duplicate-line>td { background:var(--quotation-row-tint); }
- .quotation-duplicate-label { font-size:9px; font-weight:500; border:1px solid currentColor; border-radius:3px; padding:0 3px; }
+ .quotation-entry-table .responsive-table tr.duplicate-line>td { background:var(--quotation-row-tint); border-bottom-color: var(--quotation-row-border, var(--line, #ddd)); }
+ .quotation-duplicate-label { font-size:9px; font-weight:600; border:1px solid currentColor; border-radius:3px; padding:0 4px; display:inline-block; vertical-align:middle; line-height:1.4; }
+ .quotation-price-mismatch-badge { font-size:9px; font-weight:600; background:#fef2f2; color:#b91c1c; border:1px solid #f87171; border-radius:3px; padding:0 4px; margin-inline-start:4px; display:inline-block; vertical-align:middle; line-height:1.4; white-space:nowrap; }
  .quotation-entry-table .quotation-drag-handle { cursor:grab; touch-action:none; min-width:24px; min-height:32px; padding:0; flex-shrink:0; background:transparent; border-color:transparent; font-size:18px; }
  .quotation-entry-table .quotation-drag-handle:disabled { cursor:wait; opacity:.4; }
  .quotation-entry-table .quotation-drag-handle:focus-visible { outline:2px solid var(--red); outline-offset:1px; }

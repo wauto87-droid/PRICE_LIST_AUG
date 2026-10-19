@@ -39,6 +39,15 @@ import {
 
 import { recalculateSharedDraft, sharedDraftCommand } from '../shared/shared-draft';
 import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
+import {
+  buildDuplicateGroups,
+  normalizeDuplicateItemKey,
+} from "./quotation-duplicate-groups";
+import {
+  findRepeatedItemPriceMismatches,
+  formatPriceMismatchWarning,
+  getMismatchedRowIndexes,
+} from "./quotation-price-mismatch";
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
   line?.input?.importMeta?.source === "DELIVERY_NOTE"
@@ -843,6 +852,27 @@ export default function Cart({
   }
 
   async function save() {
+    const isInclusive = Boolean(cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE");
+    const mismatches = findRepeatedItemPriceMismatches(cart.lines, isInclusive, cart.workflowCurrency || "SAR");
+    if (mismatches.length > 0) {
+      const message = formatPriceMismatchWarning(mismatches, t, cart.workflowCurrency || "SAR");
+      const proceed = await showConfirm(message, {
+        title: t("Warning: Different Prices for Repeated Items", "تحذير: أسعار مختلفة لنفس الأصناف المكررة"),
+        confirmText: t("Save Anyway", "حفظ على أي حال"),
+        cancelText: t("Review Items", "مراجعة الأصناف"),
+        tone: "warning",
+      });
+      if (!proceed) {
+        const firstMismatched = mismatches[0]?.occurrences[0]?.rowIndex;
+        if (firstMismatched !== undefined) {
+          activePriceRow.current = firstMismatched;
+          const el = document.querySelector(`[data-cart-row-index="${firstMismatched}"]`);
+          el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        return;
+      }
+    }
+
     if (cart.sharedWorkflow) {
       if (sharedSaving.current) return;
       sharedSaving.current = true; setBusy(true); setError('');
@@ -912,21 +942,15 @@ export default function Cart({
     }
   }
 
-  const { partCounts, duplicateIndices } = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const l of cart.lines) {
-      const pn = l.input?.partNumber || l.partNumber;
-      if (pn) counts[pn] = (counts[pn] || 0) + 1;
-    }
-    const indices: Record<string, number> = {};
-    for (const [pn, count] of Object.entries(counts)) {
-      if (count > 1) {
-        if (!colourGroups.current.has(pn)) colourGroups.current.set(pn, colourGroups.current.size % 6 + 1);
-        indices[pn] = colourGroups.current.get(pn)!;
-      }
-    }
-    return { partCounts: counts, duplicateIndices: indices };
+  const { partCounts, duplicateIndices, groupColors } = useMemo(() => {
+    return buildDuplicateGroups(cart.lines, colourGroups.current);
   }, [cart.lines]);
+
+  const { mismatchedRowIndexes } = useMemo(() => {
+    const isInclusive = Boolean(cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE");
+    const mismatches = findRepeatedItemPriceMismatches(cart.lines, isInclusive, cart.workflowCurrency || "SAR");
+    return { mismatchedRowIndexes: getMismatchedRowIndexes(mismatches) };
+  }, [cart.lines, cart.sharedWorkflow, cart.sharedTaxBasis, cart.workflowCurrency]);
 
   return (
     <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ''}`}>
@@ -1076,14 +1100,30 @@ export default function Cart({
                 }}
               />}
               {cart.lines.map((l: any, i: number) => {
+                const itemKey = normalizeDuplicateItemKey(l);
+                const isDuplicate = Boolean(itemKey && (partCounts[itemKey] || 0) > 1);
+                const dupIndex = isDuplicate ? duplicateIndices[itemKey] || 0 : 0;
+                const dupColor = isDuplicate ? groupColors[itemKey] : null;
+                const hasPriceMismatch = mismatchedRowIndexes.has(i);
                 const pn = l.input?.partNumber || l.partNumber;
-                const isDuplicate = pn && partCounts[pn] > 1;
-                const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
                 return (
-                <SortableQuotationRow id={rowIds[i]} disabled={reorderDisabled} handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)} className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""} key={rowIds[i]} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                <SortableQuotationRow
+                  id={rowIds[i]}
+                  disabled={reorderDisabled}
+                  handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)}
+                  className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""}
+                  style={dupColor ? ({
+                    '--quotation-row-tint': dupColor.bg,
+                    '--quotation-row-border': dupColor.border,
+                  } as React.CSSProperties) : undefined}
+                  key={rowIds[i]}
+                  data-cart-row-index={i}
+                  onFocusCapture={() => { activePriceRow.current = i; }}
+                  onMouseEnter={() => { activePriceRow.current = i; }}
+                >
                   {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
