@@ -48,6 +48,10 @@ import {
   formatPriceMismatchWarning,
   getMismatchedRowIndexes,
 } from "./quotation-price-mismatch";
+import {
+  syncQuotationDeliveryMeta,
+  stripDeliveryNotesFromReference,
+} from "./quotation-delivery-sync";
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
   line?.input?.importMeta?.source === "DELIVERY_NOTE"
@@ -254,6 +258,15 @@ export default function Cart({
   const refreshBaseline = useRef(JSON.stringify(cart.customer));
   useEffect(() => { refreshBaseline.current = JSON.stringify(cart.customer); },
     [cart.sharedDocumentId, cart.sharedRevision, cart.sharedQuoteVersion]);
+  useEffect(() => {
+    if (!cart.lines?.length) return;
+    const synced = syncQuotationDeliveryMeta(cart.lines, cart.customer);
+    if (synced.reference !== (cart.customer.reference || "") || synced.notes !== (cart.customer.notes || "")) {
+      const next = { ...cartRef.current, customer: synced };
+      cartRef.current = next;
+      setCart(next);
+    }
+  }, [cart.id]);
   async function refreshSharedDraft() {
     if ((cart.sharedDirty || refreshBaseline.current !== JSON.stringify(cart.customer)) &&
       !await showConfirm(t('Refresh prices and version? Unsaved quotation edits will be replaced.', 'تحديث الأسعار والنسخة؟ سيتم استبدال التعديلات غير المحفوظة.'))) return;
@@ -452,6 +465,7 @@ export default function Cart({
       const customer = customers.find((item: any) => String(item.number || "").trim() === code);
       if (!customer) return;
       const current = cartRef.current;
+      const cleanedRef = stripDeliveryNotesFromReference(customer.reference || "");
       const next = {
         ...current,
         customer: {
@@ -459,7 +473,7 @@ export default function Cart({
           name: customer.name || current.customer.name,
           number: code,
           mobile: customer.mobile || "",
-          reference: customer.reference || current.customer.reference || "",
+          reference: current.customer.reference || cleanedRef,
         },
       };
       cartRef.current = next;
@@ -908,12 +922,13 @@ export default function Cart({
     setNotice("");
     const requestId = cart.requestId || crypto.randomUUID();
     if (!cart.id && !cart.requestId) setCart({ ...cart, requestId });
+    const syncedCustomer = syncQuotationDeliveryMeta(cart.lines, cart.customer);
     try {
       const q = await api(
         "quotations" + (cart.id ? "/" + cart.id : ""),
         cart.id ? "PUT" : "POST",
         {
-          customer: cart.customer,
+          customer: syncedCustomer,
           lines: cart.lines.map((l: any) =>
             l.input?.type === "CUSTOM"
               ? sanitizeCustomInput(l.input)
@@ -931,6 +946,7 @@ export default function Cart({
       );
       setCart({
         ...cart,
+        customer: syncedCustomer,
         id: q.id,
         version: q.version,
         number: q.number,
@@ -1133,6 +1149,7 @@ export default function Cart({
                 const dupColor = isDuplicate ? groupColors[itemKey] : null;
                 const hasPriceMismatch = mismatchedRowIndexes.has(i);
                 const pn = l.input?.partNumber || l.partNumber;
+                const dnMeta = importedDeliveryMeta(l);
                 return (
                 <SortableQuotationRow
                   id={rowIds[i]}
@@ -1150,7 +1167,7 @@ export default function Cart({
                 >
                   {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${dnMeta.docDate}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${dnMeta.docDate}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${dnMeta.docDate}` : ''}</span></div>}</div></div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
@@ -1497,15 +1514,18 @@ export default function Cart({
                     </div></details>
                       <button
                         title={t("Remove", "حذف")}
-                        onClick={() =>
+                        onClick={() => {
+                          const nextLines = cart.lines.filter(
+                            (_: any, n: number) => n !== i,
+                          );
+                          const nextCustomer = syncQuotationDeliveryMeta(nextLines, cart.customer);
                           setCart({
                             ...cart,
+                            customer: nextCustomer,
                             sharedDirty: cart.sharedWorkflow ? true : undefined,
-                            lines: cart.lines.filter(
-                              (_: any, n: number) => n !== i,
-                            ),
-                          })
-                        }
+                            lines: nextLines,
+                          });
+                        }}
                       >
                         ×
                       </button>

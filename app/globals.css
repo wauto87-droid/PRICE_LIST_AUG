@@ -5707,6 +5707,9 @@ body :is(h1, h2, h3, strong, b) {
  .quotation-entry-table .responsive-table tr.duplicate-line>td { background:var(--quotation-row-tint); border-bottom-color: var(--quotation-row-border, var(--line, #ddd)); }
  .quotation-duplicate-label { font-size:9px; font-weight:600; border:1px solid currentColor; border-radius:3px; padding:0 4px; display:inline-block; vertical-align:middle; line-height:1.4; }
  .quotation-price-mismatch-badge { font-size:9px; font-weight:600; background:#fef2f2; color:#b91c1c; border:1px solid #f87171; border-radius:3px; padding:0 4px; margin-inline-start:4px; display:inline-block; vertical-align:middle; line-height:1.4; white-space:nowrap; }
+ .quotation-dn-line { margin-top:2px; line-height:1; }
+ .quotation-dn-badge { font-size:10px; font-weight:600; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:3px; padding:1px 5px; display:inline-flex; align-items:center; gap:3px; line-height:1.3; white-space:nowrap; }
+ .quotation-dn-badge b { font-weight:700; color:#1e3a8a; }
  .quotation-entry-table .quotation-drag-handle { cursor:grab; touch-action:none; min-width:24px; min-height:32px; padding:0; flex-shrink:0; background:transparent; border-color:transparent; font-size:18px; }
  .quotation-entry-table .quotation-drag-handle:disabled { cursor:wait; opacity:.4; }
  .quotation-entry-table .quotation-drag-handle:focus-visible { outline:2px solid var(--red); outline-offset:1px; }
