@@ -37,11 +37,32 @@ test("Universal Part Number Search Normalization & Delimiter Matching", async (t
       cost: "100",
     },
     {
+      partNumber: "BKJ63 1P 2A",
+      description: "MCB 2A 1P 6KA/400V C Curve",
+      brand: "LS",
+      category: "BREAKER",
+      cost: "10",
+    },
+    {
       partNumber: "BKJ63 1P 20A",
       description: "MCB 20A 1P 6KA/400V C Curve",
       brand: "LS",
       category: "BREAKER",
       cost: "10",
+    },
+    {
+      partNumber: "BKJ63 1P 32A",
+      description: "MCB 32A 1P 6KA/400V C Curve",
+      brand: "LS",
+      category: "BREAKER",
+      cost: "10",
+    },
+    {
+      partNumber: "2CDS381103R0634",
+      description: "S301P-C63NA",
+      brand: "ABB",
+      category: "BREAKER",
+      cost: "200",
     },
     {
       partNumber: "MT-32/3K 22A",
@@ -196,10 +217,58 @@ test("Universal Part Number Search Normalization & Delimiter Matching", async (t
     }
   });
 
+  await db.query(`INSERT INTO product_aliases(normalized, product_id, label, kind)
+    SELECT 'BKJ63N 1P 20A', id, 'BKJ63N 1P 20A', 'DELIVERY_NOTE' FROM products WHERE part_number = 'BKJ63 1P 20A'`);
+  await db.query(`INSERT INTO product_aliases(normalized, product_id, label, kind)
+    SELECT 'BKJ63N 1P 32A', id, 'BKJ63N 1P 32A', 'DELIVERY_NOTE' FROM products WHERE part_number = 'BKJ63 1P 32A'`);
+
+  await t.test("Rating boundary matching and model stemming prioritize target ratings", async () => {
+    // Query 63n 1p 2: Must return BKJ63 1P 2A as top result
+    const r1: any = await search(db, actor, "63n 1p 2", {}, false);
+    assert.equal(r1[0]?.partNumber, "BKJ63 1P 2A");
+
+    // Query BKJ63 1P 2A: Must return BKJ63 1P 2A and NOT match 32A
+    const r2: any = await search(db, actor, "BKJ63 1P 2A", {}, false);
+    assert.equal(r2[0]?.partNumber, "BKJ63 1P 2A");
+    assert(!r2.some((x: any) => x.partNumber === "BKJ63 1P 32A"));
+
+    // Query 63 1p 2
+    const r3: any = await search(db, actor, "63 1p 2", {}, false);
+    assert.equal(r3[0]?.partNumber, "BKJ63 1P 2A");
+
+    // Query bkj 1p 2
+    const r4: any = await search(db, actor, "bkj 1p 2", {}, false);
+    assert.equal(r4[0]?.partNumber, "BKJ63 1P 2A");
+
+    // Query bkj63n 2
+    const r5: any = await search(db, actor, "bkj63n 2", {}, false);
+    assert.equal(r5[0]?.partNumber, "BKJ63 1P 2A");
+
+    // Query bkj 1p 20
+    const r6: any = await search(db, actor, "bkj 1p 20", {}, false);
+    assert.equal(r6[0]?.partNumber, "BKJ63 1P 20A");
+
+    // Query bkj 1p 32
+    const r7: any = await search(db, actor, "bkj 1p 32", {}, false);
+    assert.equal(r7[0]?.partNumber, "BKJ63 1P 32A");
+
+    // Query BKJ 1P C2
+    const r8: any = await search(db, actor, "BKJ 1P C2", {}, false);
+    assert.equal(r8[0]?.partNumber, "BKJ63 1P 2A");
+
+    // Query BKJ 1P C20
+    const r9: any = await search(db, actor, "BKJ 1P C20", {}, false);
+    assert.equal(r9[0]?.partNumber, "BKJ63 1P 20A");
+
+    // Query BKJ 1P C32
+    const r10: any = await search(db, actor, "BKJ 1P C32", {}, false);
+    assert.equal(r10[0]?.partNumber, "BKJ63 1P 32A");
+  });
+
   await t.test("Admin catalog search supports normalized clean parts and pagination", async () => {
     const res: any = await search(db, actor, "BKJ63 1P", {}, true);
-    assert.equal(res.items.length, 1);
-    assert.equal(res.items[0].partNumber, "BKJ63 1P 20A");
+    assert.equal(res.items.length, 3);
+    assert(res.items.some((x: any) => x.partNumber === "BKJ63 1P 20A"));
 
     const res2: any = await search(db, actor, "MT-32", {}, true);
     assert.equal(res2.items.length, 1);
@@ -209,4 +278,6 @@ test("Universal Part Number Search Normalization & Delimiter Matching", async (t
     assert.equal(res3.items.length, 1);
     assert.equal(res3.items[0].partNumber, "ABN103c-60A");
   });
+
+  await db.close?.();
 });

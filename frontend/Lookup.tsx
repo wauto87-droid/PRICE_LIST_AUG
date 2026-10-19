@@ -217,11 +217,54 @@ export default function Lookup({
             }
             return (
               queryTokens.length > 0 &&
-              queryTokens.every((t) => {
-                const cleanT = t.toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
-                return raw.includes(t) || (cleanT.length > 0 && cleanPart.includes(cleanT));
+              queryTokens.every((token) => {
+                const cleanT = token.toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+                const ratingWithUnit = token.match(/^(\d+)[aA]$/i);
+                const curveWithRating = token.match(/^([cdbkz])(\d+)[aA]?$/i);
+                const pureNumber = token.match(/^(\d+)$/);
+                const modelStem = token.match(/^([a-z]*\d+)([a-z]+)$/i);
+
+                if (ratingWithUnit) {
+                  const num = ratingWithUnit[1];
+                  const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*[a]([^0-9a-z]|$)`, "i");
+                  return regex.test(raw);
+                }
+
+                if (curveWithRating) {
+                  const curve = curveWithRating[1].toLowerCase();
+                  const num = curveWithRating[2];
+                  const regex = new RegExp(`(^|[^0-9])${curve}?${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                  if (regex.test(raw)) return true;
+                  const numRegex = new RegExp(`(^|[^0-9])${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                  return numRegex.test(raw) && raw.includes(curve);
+                }
+
+                if (pureNumber) {
+                  const num = pureNumber[1];
+                  const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*([ap])?([^0-9a-z]|$)`, "i");
+                  if (regex.test(raw)) return true;
+                  if (num.length >= 2) {
+                    return raw.includes(num);
+                  }
+                  return false;
+                }
+
+                if (modelStem) {
+                  const base = modelStem[1];
+                  if (base.length >= 2 && raw.includes(base)) return true;
+                }
+
+                return raw.includes(token) || (cleanT.length > 0 && cleanPart.includes(cleanT));
               })
             );
+          });
+          rows.sort((a: any, b: any) => {
+            const aPart = String(a.partNumber || "");
+            const bPart = String(b.partNumber || "");
+            if (aPart.length !== bPart.length) {
+              return aPart.length - bPart.length;
+            }
+            return aPart.localeCompare(bPart);
           });
           setStamp(cache.at || "");
         }
