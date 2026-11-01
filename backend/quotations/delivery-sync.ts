@@ -28,15 +28,72 @@ export function extractActiveDeliveryNotes(lines: any[] = []) {
   return { docNos, dates };
 }
 
+export function formatDeliveryReference(docNos: string[], maxLen = 200): string {
+  if (!docNos.length) return "";
+  const full = `Delivery notes: ${docNos.join(", ")}`;
+  if (full.length <= maxLen) return full;
+  for (let count = docNos.length - 1; count >= 1; count--) {
+    const remaining = docNos.length - count;
+    const candidate = `Delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
+    if (candidate.length <= maxLen) return candidate;
+  }
+  const fallback = `Delivery notes: ${docNos.length} delivery notes`;
+  return fallback.length <= maxLen ? fallback : fallback.slice(0, maxLen);
+}
+
+export function formatDeliveryNotes(dates: string[], docNos: string[], maxLen = 1000): string {
+  const parts: string[] = [];
+  if (dates.length) {
+    const datesFull = `Delivery dates: ${dates.join(", ")}`;
+    if (datesFull.length <= 250) {
+      parts.push(datesFull);
+    } else {
+      parts.push(`Delivery dates: ${dates[0]} to ${dates[dates.length - 1]} (${dates.length} dates)`);
+    }
+  }
+  if (docNos.length) {
+    const remainingBudget = Math.max(100, maxLen - parts.join("\n").length - 50);
+    const docFull = `Imported from delivery notes: ${docNos.join(", ")}`;
+    if (docFull.length <= remainingBudget) {
+      parts.push(docFull);
+    } else {
+      let added = false;
+      for (let count = docNos.length - 1; count >= 1; count--) {
+        const remaining = docNos.length - count;
+        const candidate = `Imported from delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
+        if (candidate.length <= remainingBudget) {
+          parts.push(candidate);
+          added = true;
+          break;
+        }
+      }
+      if (!added) {
+        parts.push(`Imported from ${docNos.length} delivery notes`);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
 export function syncQuotationReference(
   currentRef: string | undefined | null,
   activeDocNos: string[],
+  maxLen = 200,
 ): string {
   const raw = String(currentRef ?? "").trim();
   const hasDn = /Delivery notes:\s*[^·;\n|]*/i.test(raw);
 
   if (activeDocNos.length > 0) {
-    const clause = `Delivery notes: ${activeDocNos.join(", ")}`;
+    let budget = maxLen;
+    if (hasDn) {
+      const nonDnPart = raw.replace(/Delivery notes:\s*[^·;\n|]*/i, "").replace(/^[\s·,;\-|]+/, "").replace(/[\s·,;\-|]+$/, "").trim();
+      if (nonDnPart) {
+        budget = Math.max(50, maxLen - nonDnPart.length - 3);
+      }
+    } else if (raw) {
+      budget = Math.max(50, maxLen - raw.length - 3);
+    }
+    const clause = formatDeliveryReference(activeDocNos, budget);
     if (hasDn) {
       return raw.replace(/Delivery notes:\s*[^·;\n|]*/i, clause).trim();
     }
@@ -71,6 +128,7 @@ export function syncQuotationNotes(
   currentNotes: string | undefined | null,
   activeDocNos: string[],
   activeDates: string[],
+  maxLen = 1000,
 ): string {
   const raw = String(currentNotes ?? "");
   const lines = raw.split(/\r?\n/);
@@ -94,16 +152,14 @@ export function syncQuotationNotes(
   }
 
   if (activeDocNos.length > 0) {
-    const dnParts: string[] = [];
-    if (activeDates.length > 0) {
-      dnParts.push(`Delivery dates: ${activeDates.join(", ")}`);
-    }
-    dnParts.push(`Imported from delivery notes: ${activeDocNos.join(", ")}`);
+    const otherText = otherLines.join("\n");
+    const budget = Math.max(200, maxLen - (otherText ? otherText.length + 1 : 0));
+    const dnText = formatDeliveryNotes(activeDates, activeDocNos, budget);
 
     if (otherLines.length > 0) {
-      return [...otherLines, ...dnParts].join("\n");
+      return `${otherText}\n${dnText}`;
     }
-    return dnParts.join("\n");
+    return dnText;
   }
 
   return otherLines.join("\n");

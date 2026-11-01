@@ -569,52 +569,14 @@ function summarizeReview(rows: any[], header: any) {
   };
 }
 
-export function formatDeliveryReference(docNos: string[], maxLen = 200): string {
-  if (!docNos.length) return "";
-  const full = `Delivery notes: ${docNos.join(", ")}`;
-  if (full.length <= maxLen) return full;
-  for (let count = docNos.length - 1; count >= 1; count--) {
-    const remaining = docNos.length - count;
-    const candidate = `Delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
-    if (candidate.length <= maxLen) return candidate;
-  }
-  const fallback = `Delivery notes: ${docNos.length} delivery notes`;
-  return fallback.length <= maxLen ? fallback : fallback.slice(0, maxLen);
-}
-
-export function formatDeliveryNotes(dates: string[], docNos: string[], maxLen = 1000): string {
-  const parts: string[] = [];
-  if (dates.length) {
-    const datesFull = `Delivery dates: ${dates.join(", ")}`;
-    if (datesFull.length <= 250) {
-      parts.push(datesFull);
-    } else {
-      parts.push(`Delivery dates: ${dates[0]} to ${dates[dates.length - 1]} (${dates.length} dates)`);
-    }
-  }
-  if (docNos.length) {
-    const remainingBudget = Math.max(100, maxLen - parts.join("\n").length - 50);
-    const docFull = `Imported from delivery notes: ${docNos.join(", ")}`;
-    if (docFull.length <= remainingBudget) {
-      parts.push(docFull);
-    } else {
-      let added = false;
-      for (let count = docNos.length - 1; count >= 1; count--) {
-        const remaining = docNos.length - count;
-        const candidate = `Imported from delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
-        if (candidate.length <= remainingBudget) {
-          parts.push(candidate);
-          added = true;
-          break;
-        }
-      }
-      if (!added) {
-        parts.push(`Imported from ${docNos.length} delivery notes`);
-      }
-    }
-  }
-  return parts.join("\n");
-}
+import {
+  formatDeliveryReference,
+  formatDeliveryNotes,
+} from "../quotations/delivery-sync";
+export {
+  formatDeliveryReference,
+  formatDeliveryNotes,
+};
 
 function toQuoteCustomer(header: any) {
   const normalized = normalizeDeliveryHeader(header);

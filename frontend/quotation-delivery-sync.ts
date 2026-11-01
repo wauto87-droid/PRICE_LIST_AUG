@@ -5,4 +5,6 @@ export {
   stripDeliveryNotesFromReference,
   syncQuotationNotes,
   syncQuotationDeliveryMeta,
+  formatDeliveryReference,
+  formatDeliveryNotes,
 } from "@/backend/quotations/delivery-sync";
