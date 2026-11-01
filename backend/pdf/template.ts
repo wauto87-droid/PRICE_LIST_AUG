@@ -65,7 +65,7 @@ export function quotationHtml(q: any, settings: any, logo: string) {
   const footer = [
     config.footer,
     "Quotation only - not a tax invoice. / عرض سعر فقط - ليس فاتورة ضريبية.",
-    "Unit VAT-inclusive values are rounded for display. Totals use line-level VAT rounding.",
+    q.sharedVersion ? "Totals reflect the saved quotation version. Unit VAT values are rounded for display." : "Unit VAT-inclusive values are rounded for display. Totals use line-level VAT rounding.",
   ]
     .filter(Boolean)
     .map((value) => `<span>${e(value)}</span>`)

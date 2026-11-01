@@ -1,7 +1,7 @@
 // Mirrored in Price List; only the ERP worker dispatches WHATSAPP messages.
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { ConnectionDB, check, remote, state } from "./core";
+import { ConnectionDB, check, remote, state, ConnectionError } from "./core";
 
 export const amount = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 const text = z.string().trim().min(1).max(500);
@@ -189,6 +189,7 @@ export async function deliver(
       );
     } catch (e) {
       const blocked = (e as any)?.code === "MISSING_PHONE";
+      const obsoleteCollection = row.endpoint === 'jobs-assign' && row.payload.kind === 'COLLECTION' && e instanceof ConnectionError && e.remoteStatus === 409 && /Confirm the shared quotation and assign collection through jobs-quotation-command/.test(e.message);
       const next = new Date(
         Date.now() + Math.min(3600000, 10000 * 2 ** Math.min(row.attempts, 8)),
       ).toISOString();
@@ -200,7 +201,7 @@ export async function deliver(
             ? blocked
               ? "FAILED"
               : "DELIVERY_UNKNOWN"
-            : "FAILED",
+            : obsoleteCollection ? 'REJECTED' : "FAILED",
           channel === "WHATSAPP"
             ? blocked
               ? "Staff WhatsApp number missing or access disabled"

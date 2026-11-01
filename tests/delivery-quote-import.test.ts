@@ -22,6 +22,8 @@ import {
   updateHeader,
   uploadStream,
   retryProcessing,
+  formatDeliveryReference,
+  formatDeliveryNotes,
 } from "../backend/delivery-quote-imports/service";
 import { json } from "../backend/core/audit";
 import { quotationHtml } from "../backend/pdf/template";
@@ -907,5 +909,127 @@ test("Delivery-note history searches, filters, sorts and paginates on Riyadh dat
   assert.equal(failed.items[0].filename, "failed.xlsx");
   await db.close?.();
 });
+
+test("formatDeliveryReference and formatDeliveryNotes summarize long delivery notes cleanly", () => {
+  // Empty
+  assert.equal(formatDeliveryReference([]), "");
+
+  // Fits within 200 chars
+  assert.equal(formatDeliveryReference(["DN-001", "DN-002"]), "Delivery notes: DN-001, DN-002");
+
+  // 100 delivery notes - exceeds 200 chars
+  const hundredNotes = Array.from({ length: 100 }, (_, i) => `DN-${String(i + 1).padStart(4, "0")}`);
+  const formattedRef = formatDeliveryReference(hundredNotes, 200);
+  assert.ok(formattedRef.length <= 200, `Expected length <= 200 but got ${formattedRef.length}`);
+  assert.match(formattedRef, /^Delivery notes: DN-0001/);
+  assert.match(formattedRef, /\(\+\d+ more\)$/);
+
+  // Long dates and doc numbers in notes
+  const hundredDates = Array.from({ length: 100 }, (_, i) => `2026-08-${String((i % 28) + 1).padStart(2, "0")}`);
+  const formattedNotes = formatDeliveryNotes(hundredDates, hundredNotes, 1000);
+  assert.ok(formattedNotes.length <= 1000, `Expected notes length <= 1000 but got ${formattedNotes.length}`);
+  assert.match(formattedNotes, /Delivery dates:/);
+  assert.match(formattedNotes, /Imported from delivery notes:/);
+});
+
+test("Delivery-note import with 300 rows and 40 delivery notes converts to quotation without character or line limits", async () => {
+  const db = await embedded();
+  await migrate(db);
+  process.env.SETUP_TOKEN = "delivery-quote-large-token-long-enough";
+  process.env.UPLOAD_DIR = path.join(
+    process.cwd(),
+    ".data",
+    "delivery-quote-large-" + randomUUID(),
+  );
+  await setup(db, {
+    token: process.env.SETUP_TOKEN,
+    username: "admin-large",
+    password: "abcd",
+    name: "Admin Large",
+    companyName: "AMT",
+  });
+  const signed = await login(db, { username: "admin-large", password: "abcd" });
+  const actor = await authenticate(
+    db,
+    new Request("http://localhost", {
+      headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+    }),
+  );
+
+  const filePath = path.join(process.env.UPLOAD_DIR, "large-delivery.csv");
+  await fs.mkdir(process.env.UPLOAD_DIR, { recursive: true });
+  await fs.writeFile(filePath, "fixture");
+  const jobId = randomUUID();
+  await db.query(
+    "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,summary) VALUES($1,'large.csv',$2,'AWAITING_MAPPING',$3,$4)",
+    [jobId, filePath, actor.id, json({ columns: ["Date", "Doc", "Customer", "Customer Code", "Item", "Description", "Qty", "Price"] })],
+  );
+
+  // Generate 300 rows spread across 40 distinct delivery notes
+  const totalRows = 300;
+  const numNotes = 40;
+  const rowChunks: any[] = [];
+  for (let i = 1; i <= totalRows; i++) {
+    const noteNum = ((i - 1) % numNotes) + 1;
+    rowChunks.push({
+      id: randomUUID(),
+      job_id: jobId,
+      row_number: i,
+      raw: {
+        Date: "2026-08-31",
+        Doc: `DN-${String(noteNum).padStart(4, "0")}`,
+        Customer: "BIG CUSTOMER CORP",
+        "Customer Code": "CUST-999",
+        Item: `PART-${i}`,
+        Description: `Product Description ${i}`,
+        Qty: "5",
+        Price: "10.00",
+      },
+    });
+  }
+
+  // Insert in chunks of 50
+  for (let i = 0; i < rowChunks.length; i += 50) {
+    const chunk = rowChunks.slice(i, i + 50);
+    const values = chunk.map((r, idx) => `($${idx * 4 + 1}, $${idx * 4 + 2}, $${idx * 4 + 3}, $${idx * 4 + 4})`).join(", ");
+    const params = chunk.flatMap((r) => [r.id, r.job_id, r.row_number, json(r.raw)]);
+    await db.query(`INSERT INTO delivery_quote_rows(id, job_id, row_number, raw) VALUES ${values}`, params);
+  }
+
+  await mapRows(db, actor, jobId, {
+    version: 1,
+    date: "Date",
+    docNo: "Doc",
+    customerName: "Customer",
+    customerCode: "Customer Code",
+    partNumber: "Item",
+    description: "Description",
+    quantity: "Qty",
+    price: "Price",
+  });
+
+  const opened: any = await get(db, actor, jobId, 0, 50, "all");
+  assert.equal(opened.status, "AWAITING_REVIEW");
+
+  // Finalize into a quotation
+  const quote: any = await finalize(db, actor, jobId, { version: opened.version });
+  assert.ok(quote.id, "Quotation was created successfully");
+  assert.equal(quote.customer.name, "BIG CUSTOMER CORP");
+  assert.equal(quote.customer.number, "CUST-999");
+
+  // Reference is capped under 200 chars and indicates additional notes
+  assert.ok(quote.customer.reference.length <= 200, `Reference length was ${quote.customer.reference.length}, expected <= 200`);
+  assert.match(quote.customer.reference, /^Delivery notes: DN-0001/);
+  assert.match(quote.customer.reference, /\(\+\d+ more\)$/);
+
+  // Notes are capped under 1000 chars
+  assert.ok(quote.customer.notes.length <= 1000, `Notes length was ${quote.customer.notes.length}, expected <= 1000`);
+
+  // Quotation preserved all 300 rows as quotation lines (>200 lines limit verified)
+  assert.equal(quote.lines.length, 300);
+
+  await db.close?.();
+});
+
 
 

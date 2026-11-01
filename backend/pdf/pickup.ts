@@ -50,7 +50,7 @@ export const pickupInput = z.object({
     poNumber: z.string(),
     revision: z.number().int().positive(),
     createdAt: z.string(),
-    lines: z.array(line).min(1).max(200),
+    lines: z.array(line).min(1).max(5000),
   }),
 });
 export function pickupHtml(

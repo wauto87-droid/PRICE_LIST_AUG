@@ -53,7 +53,7 @@ const rowUpdateItemSchema = z
 const reviewSchema = z
   .object({
     version: z.coerce.number().int(),
-    rowIds: z.array(z.string().uuid()).min(1).max(500),
+    rowIds: z.array(z.string().uuid()).min(1).max(5000),
     action: z.enum(["ADD", "REMOVE", "RESTORE"]).optional(),
     completed: z.boolean().optional(),
     updates: rowUpdateItemSchema.optional(),
@@ -569,24 +569,63 @@ function summarizeReview(rows: any[], header: any) {
   };
 }
 
+export function formatDeliveryReference(docNos: string[], maxLen = 200): string {
+  if (!docNos.length) return "";
+  const full = `Delivery notes: ${docNos.join(", ")}`;
+  if (full.length <= maxLen) return full;
+  for (let count = docNos.length - 1; count >= 1; count--) {
+    const remaining = docNos.length - count;
+    const candidate = `Delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
+    if (candidate.length <= maxLen) return candidate;
+  }
+  const fallback = `Delivery notes: ${docNos.length} delivery notes`;
+  return fallback.length <= maxLen ? fallback : fallback.slice(0, maxLen);
+}
+
+export function formatDeliveryNotes(dates: string[], docNos: string[], maxLen = 1000): string {
+  const parts: string[] = [];
+  if (dates.length) {
+    const datesFull = `Delivery dates: ${dates.join(", ")}`;
+    if (datesFull.length <= 250) {
+      parts.push(datesFull);
+    } else {
+      parts.push(`Delivery dates: ${dates[0]} to ${dates[dates.length - 1]} (${dates.length} dates)`);
+    }
+  }
+  if (docNos.length) {
+    const remainingBudget = Math.max(100, maxLen - parts.join("\n").length - 50);
+    const docFull = `Imported from delivery notes: ${docNos.join(", ")}`;
+    if (docFull.length <= remainingBudget) {
+      parts.push(docFull);
+    } else {
+      let added = false;
+      for (let count = docNos.length - 1; count >= 1; count--) {
+        const remaining = docNos.length - count;
+        const candidate = `Imported from delivery notes: ${docNos.slice(0, count).join(", ")} (+${remaining} more)`;
+        if (candidate.length <= remainingBudget) {
+          parts.push(candidate);
+          added = true;
+          break;
+        }
+      }
+      if (!added) {
+        parts.push(`Imported from ${docNos.length} delivery notes`);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
 function toQuoteCustomer(header: any) {
   const normalized = normalizeDeliveryHeader(header);
-  const reference = normalized.docNos.length
-    ? `Delivery notes: ${normalized.docNos.join(", ")}`
-    : "";
-  const notesParts = [];
-  if (normalized.dates.length)
-    notesParts.push(`Delivery dates: ${normalized.dates.join(", ")}`);
-  if (normalized.docNos.length)
-    notesParts.push(
-      `Imported from delivery notes: ${normalized.docNos.join(", ")}`,
-    );
+  const reference = formatDeliveryReference(normalized.docNos, 200);
+  const notes = formatDeliveryNotes(normalized.dates, normalized.docNos, 1000);
   return {
     name: normalized.customerName,
     number: normalized.customerCode || (!normalized.customerName ? "1" : ""),
     mobile: "",
     reference,
-    notes: notesParts.join("\n"),
+    notes,
   };
 }
 

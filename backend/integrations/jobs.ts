@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dashboardList } from './workflow-dashboard';
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { DB, one } from "../core/db";
@@ -28,6 +29,15 @@ const J = JSON.stringify;
 export const lineQuantity = (line: any) =>
   String(line.input?.quantity ?? line.price?.quantity ?? line.quantity ?? "");
 const idFor = (line: any) => line.input?.watcherEventId;
+/** Read canonical assignments for display, never manufacture a local collection job. */
+export function canonicalCollectionProgress(canonical: any, lineId: string, previous: any) {
+  const item = canonical?.items.find((i: any) => i.localLineId === lineId);
+  if (!item) return previous;
+  const assigned = (canonical.orders || []).flatMap((o: any) => o.lines.filter((l: any) => l.itemId === item.id && l.allocations.length).map((l: any) => ({ ...l, orderId: o.id, status: o.status })));
+  if (!assigned.length) return previous;
+  const line = assigned.at(-1), staff = line.staff[0];
+  return { ...previous, COLLECTION: { status: Number(line.outstanding) <= 0 ? 'COMPLETED' : 'ASSIGNED', owner: staff?.id, ownerName: canonical.people?.[staff?.id], shops: line.supplier, notes: line.poReferences?.length ? 'PO reference: ' + line.poReferences.join(', ') : '', movements: line.movements, orderId: line.orderId } };
+}
 function mayCost(actor: Actor, quote: any) {
   return (
     quote.owner_id === actor.id ||
@@ -86,13 +96,18 @@ async function prepare(tx: DB, q: any) {
 }
 export function ready(q: any, link: any) {
   const complete =
+    !Object.values<any>(link.data.lines).some((e) => e.decisionPending) &&
     q.lines.length > 0 &&
     q.lines.every((l: any) => {
-      const job = link.data.lines[idFor(l)]?.PRICING;
-      return l.workflowCostDecision?.status === "NOT_REQUESTED"
-        ? !job || job.status === "SKIPPED"
-        : l.workflowCost?.fingerprint === lineFingerprint(l) &&
-            (!job || job.status === "COMPLETED" || job.status === "KNOWN");
+      const entry = link.data.lines[idFor(l)];
+      const job = entry?.PRICING;
+      if (entry?.decisionPending) return false;
+      if (job?.status === "SKIPPED")
+        return job.fingerprint === lineFingerprint(l);
+      return (
+        l.workflowCost?.fingerprint === lineFingerprint(l) &&
+        (!job || job.status === "COMPLETED" || job.status === "KNOWN")
+      );
     });
   return {
     complete,
@@ -103,80 +118,10 @@ export function ready(q: any, link: any) {
           q.lines.map((l: any) => [
             idFor(l),
             l.workflowCost,
-            l.workflowCostDecision,
+            link.data.lines[idFor(l)]?.PRICING?.status,
           ]),
         )
       : null,
-  };
-}
-
-function workflowPresentation(q: any, link: any) {
-  const completion = ready(q, link);
-  const localOrders = link.data.collectionOrders || [];
-  const snapshots = link.data.orders || [];
-  const active = [...localOrders]
-    .reverse()
-    .find((o: any) => {
-      const state = snapshots.find((s: any) => s.id === o.id);
-      return !["DELIVERED", "CANCELLED"].includes(state?.status);
-    });
-  const state = active && snapshots.find((s: any) => s.id === active.id);
-  const available = (state?.lines || []).reduce(
-    (sum: Decimal, line: any) =>
-      sum.plus(new Decimal(line.availableToDeliver || "0")),
-    new Decimal(0),
-  );
-  const assigned = active
-    ? Object.keys(active.quantities || {}).every(
-        (id) => !!link.data.lines[id]?.collections?.[active.id],
-      )
-    : false;
-  const orderableQuantities = Object.fromEntries(
-    q.lines
-      .map((line: any) => {
-        const id = idFor(line);
-        const ordered = localOrders.reduce((sum: Decimal, order: any) => {
-          const snapshot = snapshots.find((state: any) => state.id === order.id);
-          return snapshot?.status === "CANCELLED"
-            ? sum
-            : sum.plus(order.quantities?.[id] || "0");
-        }, new Decimal(0));
-        const remaining = Decimal.max(
-          new Decimal(lineQuantity(line) || "0").minus(ordered),
-          0,
-        );
-        return [id, remaining.toFixed()];
-      })
-      .filter(([, quantity]: any) => new Decimal(quantity).gt(0)),
-  );
-  let stage = "PRICING";
-  if (q.status === "DRAFT" && completion.complete) stage = "QUOTATION";
-  if (q.status !== "DRAFT" && !active) stage = "CUSTOMER_ORDER";
-  if (active && !assigned) stage = "ASSIGN_COLLECTION";
-  if (active && assigned) stage = available.gt(0) ? "DELIVERY" : "COLLECTION";
-  if (
-    localOrders.length > 0 &&
-    localOrders.every((o: any) =>
-      ["DELIVERED", "CANCELLED"].includes(
-        snapshots.find((s: any) => s.id === o.id)?.status,
-      ),
-    )
-  )
-    stage = "CLOSED";
-  return {
-    stage,
-    nextAction: {
-      PRICING: "Complete price decisions",
-      QUOTATION: "Prepare quotation",
-      CUSTOMER_ORDER: "Customer confirmed — create collection list",
-      ASSIGN_COLLECTION: "Assign collection by supplier",
-      COLLECTION: "Track collection",
-      DELIVERY: "Confirm delivery",
-      CLOSED: "Workflow closed",
-    }[stage],
-    activeOrderId: active?.id || null,
-    deliveryAvailable: available.toFixed(),
-    orderableQuantities,
   };
 }
 function branchLocked(link: any) {
@@ -188,7 +133,7 @@ function branchLocked(link: any) {
     )
   );
 }
-async function workflowContext(
+export async function workflowContext(
   db: DB,
   actor: Actor,
   q: any,
@@ -250,10 +195,12 @@ export async function jobWorkspace(
   actor: Actor,
   req: Request,
   transport = remote,
+  startWorker = true,
 ) {
   workflowEnabled();
   const url = new URL(req.url);
   const id = url.searchParams.get("documentId");
+  if (req.method === 'GET' && !id && url.searchParams.get('dashboard') === '1') return dashboardList(db, actor, url, transport);
   if (req.method === "GET" && url.searchParams.has("staff")) {
     check(id, "Choose a document first");
     const q = await document(db, actor, id);
@@ -345,10 +292,10 @@ export async function jobWorkspace(
     const params: any[] = [];
 
     if (statusParam === "QUOTATIONS") {
-      conditions.push("q.status<>'DRAFT'");
+      conditions.push("(CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END)<>'DRAFT'");
     } else if (statusParam && statusParam !== "ALL") {
       params.push(statusParam);
-      conditions.push(`q.status = $${params.length}`);
+      conditions.push(`(CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END) = $${params.length}`);
     }
 
     if (!isAdmin) {
@@ -398,7 +345,7 @@ export async function jobWorkspace(
         return {
           id: q.id,
           number: q.number,
-          status: q.status,
+          status: q.workflow?.sharedQuotations?.length ? "ISSUED" : q.status,
           customer: q.customer,
           creator: q.creator || "Unknown",
           ownerId: q.owner_id,
@@ -418,24 +365,36 @@ export async function jobWorkspace(
       }),
     };
   }
+  if (req.method === 'GET' && id) {
+    await document(db, actor, id);
+    await retireObsoleteCollectionAssignments(db, id);
+  }
   if (req.method === "GET" && id)
     return db.transaction(async (tx) => {
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const q = await document(tx, actor, id);
       const link = await prepare(tx, q);
+      let canonical: any;
+      let syncWarning = '';
+      if (link.data.erpRequestId && (q.owner_id === actor.id || actor.role === 'ADMIN')) {
+        try { canonical = await remote(await state(tx), 'jobs-quotation', { documentId: id, actorId: actor.id }); }
+        catch (e) { syncWarning = `Collection progress could not refresh: ${(e as Error).message}`; }
+      }
       const failures = (
         await tx.query(
-          "SELECT id,state,error,channel,endpoint FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC",
+          "SELECT id,state,error FROM sw_job_outbox WHERE payload->>'documentId'=$1 AND state<>'SENT' ORDER BY next_at DESC",
           [id],
         )
       ).rows;
       return {
         id: q.id,
         number: q.number,
-        status: q.status,
+        status: canonical?.quotations?.length || link.data.sharedQuotations?.length ? "ISSUED" : q.status,
         version: q.version,
         workflowVersion: link.revision,
         creatorId: q.owner_id,
+        customer: q.customer,
+        internalReference: q.internal_reference,
         creator: await one(
           tx,
           "SELECT name,integration_reference reference FROM users WHERE id=$1",
@@ -450,7 +409,6 @@ export async function jobWorkspace(
         orders: link.data.orders || [],
         collectionOrders: link.data.collectionOrders || [],
         ...ready(q, link),
-        presentation: workflowPresentation(q, link),
         canOverride: actor.role === "ADMIN" && q.owner_id !== actor.id,
         handoverPending: !!link.data.handover,
         canAssign:
@@ -461,22 +419,26 @@ export async function jobWorkspace(
                 Date.now())) &&
           has(actor, "QUOTE_EDIT"),
         failures,
+        syncWarning,
         lines: q.lines.map((l: any) => ({
           id: idFor(l),
           description: l.description,
           partNumber: l.partNumber,
           unit: l.unit,
           quantity: lineQuantity(l),
-          jobs: link.data.lines[idFor(l)] || {},
+          jobs: canonicalCollectionProgress(canonical, idFor(l), link.data.lines[idFor(l)] || {}),
           ...(mayCost(actor, q)
             ? {
                 workflowCost: l.workflowCost,
-                workflowCostDecision: l.workflowCostDecision,
+                workflowPricing: l.workflowPricing,
                 sellingPrice: l.price?.finalExcl,
                 margin:
                   l.workflowCost &&
                   l.price?.finalExcl &&
-                  l.workflowCost.currency === q.workflowCurrency
+                  l.workflowCost.currency === q.workflowCurrency &&
+                  l.workflowCost.unit === l.unit &&
+                  !l.workflowCost.stale &&
+                  ["Excluding VAT", "No VAT"].includes(l.workflowCost.taxBasis)
                     ? new Decimal(l.price.finalExcl)
                         .minus(l.workflowCost.cost)
                         .toFixed()
@@ -575,12 +537,7 @@ export async function jobWorkspace(
       }
       if (input.action === "orderAction") {
         const op = z
-          .enum([
-            "orderCancel",
-            "orderConfirm",
-            "orderEdit",
-            "orderDelivered",
-          ])
+          .enum(["orderCancel", "orderConfirm", "orderEdit"])
           .parse(input.operation);
         check(
           (link.data.collectionOrders || []).some(
@@ -602,167 +559,134 @@ export async function jobWorkspace(
           );
           o.suppliers = { ...o.suppliers, ...changes };
         }
-        const order = (link.data.collectionOrders || []).find(
-          (o: any) => o.id === input.orderId,
-        );
-        const selected =
-          op === "orderEdit"
-            ? Object.keys(input.suppliers || {})
-            : op === "orderDelivered"
-              ? z.array(z.string().uuid()).min(1).parse(input.selected)
-              : Object.keys(order.quantities);
-        check(
-          selected.every((id: string) => order.quantities[id]),
-          "Choose valid order products",
-        );
-        if (op === "orderDelivered") {
-          z.object({
-            deliveryDate: z.string().min(1),
-            invoiceNumber: z.string().trim().max(500).default(""),
-            deliveryNumber: z.string().trim().max(500).default(""),
-            quantities: z.record(
-              z.string(),
-              z.string().regex(/^\d+(\.\d+)?$/),
-            ),
-            receivedConfirmed: z.literal(true),
-          })
-            .refine(
-              (value) => value.invoiceNumber || value.deliveryNumber,
-              "Invoice number or delivery number is required",
-            )
-            .parse(input);
-        }
         await enqueue(tx, commandId, "jobs-order-command", {
           ...input,
           action: op,
           actorId: actor.id,
           revision: link.data.erpRevision,
           authorized: input.authorized === true,
-          selected,
+          selected:
+            input.operation === "orderEdit"
+              ? Object.keys(input.suppliers || {})
+              : Object.keys(
+                  (link.data.collectionOrders || []).find(
+                    (o: any) => o.id === input.orderId,
+                  ).quantities,
+                ),
         });
       } else if (input.action === "createOrder") {
-        check(
-          ["ISSUED", "SENT", "VIEWED", "ACCEPTED"].includes(q.status),
-          "Issue quotation before creating an order",
-        );
-        check(input.authorized === true, "Explicit authorization required");
-        const order = z
-          .object({
-            id: z.string().uuid(),
-            mode: z.enum(["ORDER_CONFIRMED", "EARLY_AUTHORIZED"]),
-            quantities: z.record(z.string(), z.string().regex(/^\d+(\.\d+)?$/)),
-            suppliers: z.record(z.string(), z.string().max(500)).default({}),
-          })
-          .parse(input.order);
-        check(
-          Object.keys(order.quantities).length > 0,
-          "Select ordered products",
-        );
-        for (const [id, qty] of Object.entries(order.quantities)) {
-          const l = q.lines.find((l: any) => idFor(l) === id);
-          const previouslyOrdered = (link.data.collectionOrders || []).reduce(
-            (sum: Decimal, previous: any) => {
-              const snapshot = (link.data.orders || []).find(
-                (state: any) => state.id === previous.id,
-              );
-              return snapshot?.status === "CANCELLED"
-                ? sum
-                : sum.plus(previous.quantities?.[id] || "0");
-            },
-            new Decimal(0),
-          );
-          check(
-            l &&
-              new Decimal(qty).gt(0) &&
-              previouslyOrdered
-                .plus(qty)
-                .lte(lineQuantity(l) || "0"),
-            "Order quantity invalid or missing",
-          );
-          check(
-            String(order.suppliers[id] || l.workflowCost?.supplier || "").trim(),
-            "A planned pickup shop is required for every ordered product",
-          );
-        }
-        check(
-          !(link.data.collectionOrders || []).some(
-            (o: any) => o.id === order.id,
-          ),
-          "Order already exists",
-        );
-        (link.data.collectionOrders ||= []).push({
-          ...order,
-          poNumber: String(input.poNumber || ""),
-          createdAt: new Date().toISOString(),
-        });
-      } else if (input.action === "known") {
+        check(input.action !== "createOrder", "Confirm the customer quotation in the creator workflow; it creates the shared order", 409);
+      } else if (["known", "skip", "remove"].includes(input.action)) {
         check(
           q.status === "DRAFT",
-          "Only editable drafts can receive confirmed prices",
+          "Only editable drafts can change pricing decisions",
           409,
         );
         const line = q.lines.find((l: any) => idFor(l) === input.lineId);
-        check(line, "Line missing");
+        check(line, "Product no longer exists in this draft", 409);
+        const entry = (link.data.lines[input.lineId] ||= {});
         check(
-          !link.data.lines[input.lineId]?.PRICING ||
-            ["COMPLETED", "KNOWN", "REVIEW_REQUIRED"].includes(
-              link.data.lines[input.lineId].PRICING.status,
-            ),
-          "Finish or reassign the pending pricing job before marking its cost known",
+          !entry.decisionPending,
+          "Previous decision is still syncing. Retry synchronization first",
           409,
         );
-        const cost = costInput.parse(input.cost);
-        check(
-          cost.unit === line.unit && cost.currency === q.workflowCurrency,
-          "Confirm currency and unit conversion first",
+        const needsERP = !!(
+          link.data.erpRequestId ||
+          entry.PRICING?.token ||
+          input.requestId
         );
-        line.workflowCost = {
-          ...cost,
-          ownerId: q.owner_id,
-          fingerprint: lineFingerprint(line),
-          actorName: (actor as any).name || "Creator",
-          actorId: actor.id,
-          updatedAt: new Date().toISOString(),
-        };
-        delete line.workflowCostDecision;
-        link.data.lines[input.lineId] = {
-          ...link.data.lines[input.lineId],
-          PRICING: { status: "KNOWN", updatedAt: line.workflowCost.updatedAt },
-        };
-        await tx.query(
-          "UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",
-          [q.id, J(q.lines)],
-        );
-      } else if (input.action === "skipCost") {
-        check(q.status === "DRAFT", "Only editable drafts can skip cost", 409);
-        const line = q.lines.find((l: any) => idFor(l) === input.lineId);
-        check(line, "Line missing");
-        const job = link.data.lines[input.lineId]?.PRICING;
-        check(
-          !job || ["COMPLETED", "KNOWN", "REVIEW_REQUIRED", "SKIPPED"].includes(job.status),
-          "Finish or reassign the pending pricing job before skipping cost",
-          409,
-        );
-        const reason = z.string().trim().min(3).max(500).parse(input.reason);
-        delete line.workflowCost;
-        line.workflowCostDecision = {
-          status: "NOT_REQUESTED",
-          reason,
-          actorId: actor.id,
-          actorName: (actor as any).name || "Creator",
-          updatedAt: new Date().toISOString(),
-        };
-        link.data.lines[input.lineId] = {
-          ...link.data.lines[input.lineId],
-          PRICING: {
+        (entry.history ||= []).push({
+          job: entry.PRICING,
+          cost: line.workflowCost,
+          date: new Date().toISOString(),
+          actor: actor.id,
+        });
+        const updatedAt = new Date().toISOString();
+        if (input.action === "known") {
+          const cost = z
+            .object({
+              cost: z.string().regex(/^\d{1,12}(\.\d{1,6})?$/),
+              currency: z.string().regex(/^[A-Z]{3}$/),
+              unit: z.string().trim().min(1).max(500),
+              supplier: z.string().trim().max(500).default(""),
+              taxBasis: z.enum([
+                "Excluding VAT",
+                "Including VAT",
+                "No VAT",
+                "Unknown",
+              ]),
+              evidence: z.string().max(500).default(""),
+              availability: z
+                .string()
+                .max(500)
+                .default("Confirmed by salesman"),
+              leadTime: z.string().max(500).default("Unknown"),
+            })
+            .parse(input.cost);
+          check(
+            cost.unit === line.unit && cost.currency === q.workflowCurrency,
+            "Confirm currency and unit conversion first",
+            409,
+          );
+          line.workflowCost = {
+            ...cost,
+            ownerId: q.owner_id,
+            fingerprint: lineFingerprint(line),
+            actorName: actor.name,
+            actorId: actor.id,
+            updatedAt,
+          };
+          delete line.workflowPricing;
+          entry.PRICING = {
+            status: "KNOWN",
+            updatedAt,
+            fingerprint: lineFingerprint(line),
+          };
+        } else if (input.action === "skip") {
+          line.workflowPricing = {
             status: "SKIPPED",
-            updatedAt: line.workflowCostDecision.updatedAt,
-          },
-        };
+            fingerprint: lineFingerprint(line),
+            actorId: actor.id,
+            updatedAt,
+          };
+          delete line.workflowCost;
+          entry.PRICING = {
+            status: "SKIPPED",
+            updatedAt,
+            fingerprint: lineFingerprint(line),
+          };
+        } else {
+          check(
+            q.lines.length > 1,
+            "Keep at least one product in the draft",
+            409,
+          );
+          (link.data.removedLines ||= []).push({
+            line,
+            actorId: actor.id,
+            updatedAt,
+          });
+          q.lines = q.lines.filter((l: any) => idFor(l) !== input.lineId);
+          entry.PRICING = { status: "REMOVED", updatedAt };
+          const { computeTotals } = await import("../quotations/service");
+          q.totals = computeTotals(q.lines);
+        }
+        if (needsERP) entry.decisionPending = commandId;
         await tx.query(
-          "UPDATE quotations SET lines=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",
-          [q.id, J(q.lines)],
+          "UPDATE quotations SET lines=$2::jsonb,totals=$3::jsonb,version=version+1,updated_at=now() WHERE id=$1",
+          [q.id, J(q.lines), J(q.totals)],
         );
+        if (needsERP)
+          await enqueue(tx, commandId, "jobs-pricing-decision", {
+            eventId: commandId,
+            documentId: q.id,
+            lineId: input.lineId,
+            action: input.action,
+            decision: entry.PRICING,
+            cost: line.workflowCost,
+            number: q.number,
+            version: q.version + 1,
+          });
       } else {
         check(input.action === "assign", "Unknown job action");
         check(
@@ -775,6 +699,9 @@ export async function jobWorkspace(
           403,
         );
         const kind = z.enum(["PRICING", "COLLECTION"]).parse(input.kind);
+        if (kind === 'COLLECTION') {
+          check(Array.isArray(input.selected) && input.selected.every((id: string) => link.data.lines[id]?.collections?.[input.orderId]?.token || link.data.lines[id]?.COLLECTION?.token), 'Assign new collections through the shared creator workflow after customer confirmation', 409);
+        }
         const order =
           kind === "COLLECTION"
             ? (link.data.collectionOrders || []).find(
@@ -788,7 +715,7 @@ export async function jobWorkspace(
         check(
           kind === "PRICING"
             ? q.status === "DRAFT"
-            : ["ISSUED", "SENT", "VIEWED", "ACCEPTED"].includes(q.status),
+            : ["ISSUED", "ACCEPTED"].includes(q.status),
           kind === "PRICING"
             ? "Save an editable draft before assigning pricing"
             : "Issue the quotation before authorizing collection",
@@ -838,6 +765,8 @@ export async function jobWorkspace(
             currency: q.workflowCurrency,
             fingerprint: lineFingerprint(l),
             knownCost:
+              l.workflowCost?.supplier &&
+              l.workflowCost?.evidence &&
               l.workflowCost?.fingerprint === lineFingerprint(l)
                 ? l.workflowCost
                 : undefined,
@@ -859,6 +788,21 @@ export async function jobWorkspace(
         if (!oldEvent) {
           for (const lineId of payload.selected) {
             const entry = (link.data.lines[lineId] ||= {});
+            if (kind === "PRICING") {
+              check(
+                !entry.decisionPending,
+                "Previous pricing decision is still syncing",
+                409,
+              );
+              const line = q.lines.find((l: any) => idFor(l) === lineId);
+              if (line?.workflowPricing) {
+                delete line.workflowPricing;
+                await tx.query(
+                  "UPDATE quotations SET lines=$2::jsonb WHERE id=$1",
+                  [q.id, J(q.lines)],
+                );
+              }
+            }
             entry[kind] = {
               token: payload.eventId,
               status: "PENDING_ERP_SYNC",
@@ -902,7 +846,7 @@ export async function jobWorkspace(
       return { saved: true, ...completion };
     },
   );
-  void runPriceJobs(db).catch(() => {});
+  if (startWorker) void runPriceJobs(db).catch(() => {});
   return result;
 }
 const resultInput = z.object({
@@ -978,6 +922,7 @@ export async function receiveJobResult(db: DB, req: Request) {
     if (result.kind === "COLLECTION") job.movements = result.movements;
     if (!conflict && result.kind === "PRICING" && result.done) {
       check(result.cost, "Completed pricing requires a supplier cost");
+      delete line.workflowPricing;
       line.workflowCost = {
         ...result.cost,
         ownerId: q.owner_id,
@@ -1003,11 +948,34 @@ export async function receiveJobResult(db: DB, req: Request) {
   });
 }
 let running = false;
+/** Retire only explicitly rejected obsolete commands; retain their receipts/history. */
+export async function retireObsoleteCollectionAssignments(db: DB, documentId?: string) {
+  await db.transaction(async tx => {
+    const rejected = (await tx.query("SELECT * FROM sw_job_outbox WHERE endpoint='jobs-assign' AND payload->>'kind'='COLLECTION' AND state IN ('FAILED','REJECTED') AND error LIKE '%Remote HTTP 409: Confirm the shared quotation and assign collection through jobs-quotation-command%' AND ($1::text IS NULL OR payload->>'documentId'=$1) FOR UPDATE", [documentId || null])).rows;
+    for (const row of rejected) {
+      await tx.query("UPDATE sw_job_outbox SET state='REJECTED',lease_until=NULL WHERE id=$1", [row.id]);
+      const link = await one(tx, 'SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE', [row.payload.documentId]);
+      if (!link) continue;
+      for (const lineId of row.payload.selected || []) {
+        const entry = link.data.lines[lineId];
+        for (const job of [entry?.COLLECTION, ...Object.values<any>(entry?.collections || {})]) {
+          if (job?.token === row.payload.eventId && job.status === 'PENDING_ERP_SYNC') { job.status = 'REJECTED'; job.blocker = 'Previous collection assignment was rejected. Open quotation to assign the confirmed order.'; }
+        }
+      }
+      await tx.query('UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1', [link.id, J(link.data)]);
+    }
+  });
+}
 export async function runPriceJobs(db: DB) {
   if (running || process.env.WORKFLOW_INTEGRATION_ENABLED !== "true") return;
   running = true;
   try {
+    await retireObsoleteCollectionAssignments(db);
     await deliver(db, "REMOTE", undefined, async (row, response) => {
+      if (row.endpoint === "jobs-pricing-decision") {
+        await acknowledgePricingDecision(db, row, response);
+        return;
+      }
       if (!["jobs-assign", "jobs-order-command"].includes(row.endpoint)) return;
       await db.transaction(async (tx) => {
         const link = await one(
@@ -1067,13 +1035,18 @@ export function preserveWorkflowCosts(lines: any[], oldLines: any[]) {
     );
     ids.add(id);
     const previous = old.get(id);
+    delete line.workflowCost;
+    delete line.workflowPricing;
+    if (previous?.workflowPricing)
+      line.workflowPricing = {
+        ...previous.workflowPricing,
+        stale: previous.workflowPricing.fingerprint !== lineFingerprint(line),
+      };
     if (previous?.workflowCost)
       line.workflowCost = {
         ...previous.workflowCost,
         stale: previous.workflowCost.fingerprint !== lineFingerprint(line),
       };
-    if (previous?.workflowCostDecision)
-      line.workflowCostDecision = { ...previous.workflowCostDecision };
   }
   return lines;
 }
@@ -1088,4 +1061,112 @@ export async function assertWorkflowPricingReady(db: DB, q: any) {
       "Finish or review all assigned supplier prices before issuing this quotation",
       409,
     );
+}
+
+// A cart edit uses the same cancellation contract as the focused ERP screen.
+export async function recordRemovedDraftLines(
+  tx: DB,
+  actor: Actor,
+  id: string,
+  oldLines: any[],
+  lines: any[],
+) {
+  const removed = oldLines.filter(
+    (l) => !lines.some((n) => idFor(n) === idFor(l)),
+  );
+  const link = await one(
+    tx,
+    "SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE",
+    [id],
+  );
+  if (!link) return;
+  check(
+    !lines.some((l) =>
+      (link.data.removedLines || []).some(
+        (r: any) => idFor(r.line) === idFor(l),
+      ),
+    ),
+    "Removed products cannot be restored by an old draft save",
+    409,
+  );
+  if (!removed.length) return;
+  const q = await one(tx, "SELECT version,number FROM quotations WHERE id=$1", [
+    id,
+  ]);
+  check(q, "Document missing", 404);
+  for (const line of removed) {
+    const entry = (link.data.lines[idFor(line)] ||= {});
+    check(
+      !entry.decisionPending,
+      "Finish pending pricing synchronization before removing products",
+      409,
+    );
+    const eventId = randomUUID(),
+      updatedAt = new Date().toISOString();
+    (entry.history ||= []).push({
+      job: entry.PRICING,
+      cost: line.workflowCost,
+      date: updatedAt,
+      actor: actor.id,
+    });
+    (link.data.removedLines ||= []).push({
+      line,
+      actorId: actor.id,
+      updatedAt,
+    });
+    entry.PRICING = { status: "REMOVED", updatedAt };
+    entry.decisionPending = eventId;
+    await enqueue(tx, eventId, "jobs-pricing-decision", {
+      eventId,
+      documentId: id,
+      lineId: idFor(line),
+      action: "remove",
+      decision: entry.PRICING,
+      number: q.number,
+      version: q.version + 1,
+    });
+  }
+  await tx.query(
+    "UPDATE sw_job_documents SET data=$2::jsonb,revision=revision+1 WHERE id=$1",
+    [id, J(link.data)],
+  );
+  await audit(tx, actor.id, "WORKFLOW_REMOVE_LINES", "quotations", id, null, {
+    removed: removed.map(idFor),
+  });
+}
+export async function acknowledgePricingDecision(
+  db: DB,
+  row: any,
+  response: any,
+) {
+  check(response?.received, "Pricing decision acknowledgement missing", 502);
+  await db.transaction(async (tx) => {
+    const link = await one(
+      tx,
+      "SELECT * FROM sw_job_documents WHERE id=$1 FOR UPDATE",
+      [row.payload.documentId],
+    );
+    if (
+      link &&
+      link.data.lines[row.payload.lineId]?.decisionPending === row.id
+    ) {
+      delete link.data.lines[row.payload.lineId].decisionPending;
+      await tx.query("UPDATE sw_job_documents SET data=$2::jsonb WHERE id=$1", [
+        link.id,
+        J(link.data),
+      ]);
+      const q = await one(tx, "SELECT * FROM quotations WHERE id=$1", [
+        link.id,
+      ]);
+      check(q, "Document missing", 404);
+      const completion = ready(q, link);
+      if (completion.ready)
+        await enqueue(tx, `ready:${q.id}:${completion.round}`, "jobs-ready", {
+          eventId: `ready:${q.id}:${completion.round}`,
+          documentId: q.id,
+          actorId: q.owner_id,
+          ...completion,
+        });
+    }
+  });
 }

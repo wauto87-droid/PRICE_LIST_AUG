@@ -5,6 +5,7 @@ import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
 import { appPath } from "../shared/paths";
 import PricingCollectionJobs from "./PricingCollectionJobs";
+import SharedQuotation from "./SharedQuotation";
 import QuotationTemplates from "./QuotationTemplates";
 export default function Quotations({
   t,
@@ -12,12 +13,20 @@ export default function Quotations({
   user,
   cart,
   onUseTemplate,
+  workflowIdentity,
+  onOpenSharedDraft,
+  onCloseWorkflow,
+  onOpenWorkflow,
 }: {
   t: Translate;
   onOpen: (q: any) => void;
   user: any;
   cart: any;
   onUseTemplate: (cart: any, message?: string) => void;
+  workflowIdentity?: any;
+  onOpenSharedDraft?: (identity: any) => void;
+  onCloseWorkflow?: () => void;
+  onOpenWorkflow?: (identity: any) => void;
 }) {
   const [rows, setRows] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(null),
@@ -63,6 +72,16 @@ export default function Quotations({
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (!workflowIdentity) return;
+    let active = true;
+    const { documentId, requestId } = workflowIdentity;
+    const query = documentId ? 'documentId=' + encodeURIComponent(documentId) : 'requestId=' + encodeURIComponent(requestId);
+    const read = documentId ? api('quotations/' + documentId) : api('shared-quotation?' + query + '&draft=1');
+    void read.then(q => { if (active) { setSelected({ ...q, sharedWorkflow: true, workflowIdentity }); setReview(null); setPdf(null); } }).catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [workflowIdentity]);
+  useEffect(() => { if (selected?.sharedWorkflow && onOpenWorkflow) { onOpenWorkflow({documentId:selected.id || selected.sharedDocumentId,requestId:selected.sharedRequestId,...selected.workflowIdentity,fulfillment:true}); setSelected(null); } }, [selected, onOpenWorkflow]);
   async function action(fn: () => Promise<any>) {
     setBusy(true);
     setError("");
@@ -140,12 +159,12 @@ export default function Quotations({
                   let regex = /(?:\"([^\"]*)\"|([^,]*))(?:,|$)/g;
                   let m;
                   while ((m = regex.exec(row)) !== null && m[0] !== "") cols.push(m[1] !== undefined ? m[1] : m[2]);
-                  
+
                   const partNumber = cols[0] || "";
                   const description = cols[1] || "";
                   const quantity = Number(cols[2] || 1);
                   const unitPriceExcl = cols[3] || "";
-                  
+
                   return {
                     source: "CUSTOM",
                     partNumber,
@@ -269,7 +288,7 @@ export default function Quotations({
                         : t("Draft", "مسودة")}
                   </span>
                 </td>
-                <td>SAR {q.totals.total}</td>
+                <td>{q.currency || "SAR"} {q.totals.total}</td>
                 <td>
                   <button
                     onClick={() =>
@@ -296,7 +315,7 @@ export default function Quotations({
           )}
         </div>
       )}
-      {selected && <details open><summary>Quotation workflow for {selected.number}</summary><PricingCollectionJobs key={selected.id} documentId={selected.id} onPrepareQuotation={() => document.getElementById("quotation-review-actions")?.scrollIntoView({ behavior: "smooth", block: "center" })} /></details>}
+
       {selected && (
         <div className="modal-backdrop">
           <section className="modal">
@@ -305,6 +324,7 @@ export default function Quotations({
               <button
                 onClick={() => {
                   setSelected(null);
+                  onCloseWorkflow?.();
                   setReview(null);
                   setSharing(false);
                 }}
@@ -312,6 +332,8 @@ export default function Quotations({
                 ×
               </button>
             </div>
+            {selected.sharedWorkflow ? <SharedQuotation showFulfillment={selected.workflowIdentity?.fulfillment === true} key={selected.id || selected.sharedRequestId} documentId={selected.id} initialRequestId={selected.workflowIdentity?.requestId || selected.sharedRequestId} initialVersion={selected.workflowIdentity?.version} onOpenDraft={onOpenSharedDraft}/> : <PricingCollectionJobs key={selected.id} documentId={selected.id} onOpenDraft={onOpenSharedDraft} onOpenQuotation={identity => setSelected({ ...selected, sharedWorkflow: true, workflowIdentity: { ...identity, fulfillment: true } })}/>}
+            {!selected.sharedWorkflow && <>
             <p>
               {selected.customer.name || t("Walk-in Customer", "عميل نقدي")}
             </p>
@@ -445,7 +467,7 @@ export default function Quotations({
               {t("Internal reference", "المرجع الداخلي")}:{" "}
               {selected.internalReference}
             </small>
-            <div className="actions wrap" id="quotation-review-actions">
+            <div className="actions wrap">
               {["DRAFT", "REJECTED", "APPROVED"].includes(selected.status) && (
                 <>
                   <button
@@ -646,6 +668,7 @@ export default function Quotations({
                       )}
                 </div>
               ))}
+            </>}
             {error && <div className="notice error">{error}</div>}
           </section>
         </div>

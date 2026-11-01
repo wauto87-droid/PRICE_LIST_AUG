@@ -199,7 +199,7 @@ const reuseSchema = z.object({
   customerNumber: z.string().trim().max(80).default(""),
   customerName: z.string().trim().max(150).default(""),
   excludeQuotationId: z.string().uuid().optional(),
-  lines: z.array(z.object({ index: z.number().int().min(0), input: z.unknown() }).strict()).min(1).max(200),
+  lines: z.array(z.object({ index: z.number().int().min(0), input: z.unknown() }).strict()).min(1).max(5000),
 }).strict();
 
 export async function reusableCustomerPrices(db: DB, actor: Actor, raw: unknown) {

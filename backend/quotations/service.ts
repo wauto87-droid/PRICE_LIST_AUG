@@ -1,5 +1,5 @@
 import { assertWorkflowOwner } from '../integrations/ownership';
-import { preserveWorkflowCosts, assertWorkflowPricingReady } from "../integrations/jobs";
+import { preserveWorkflowCosts, assertWorkflowPricingReady, recordRemovedDraftLines } from "../integrations/jobs";
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -86,11 +86,11 @@ export const quoteInput = z
         name: z.string().max(150).default(""),
         number: z.string().max(80).default(""),
         mobile: z.string().max(50).default(""),
-        reference: z.string().max(200).default(""),
-        notes: z.string().max(1000).default(""),
+        reference: z.string().max(2000).default(""),
+        notes: z.string().max(5000).default(""),
       })
       .strict(),
-    lines: z.array(quotationLineInput).min(1).max(200),
+    lines: z.array(quotationLineInput).min(1).max(5000),
     adjustment: quoteAdjustmentInput.optional().default({ targetTotal: "" }),
   })
   .strict();
@@ -115,7 +115,7 @@ const unresolvedImportedCustom = (line: any) =>
   line?.importMeta?.unresolved &&
   !String(line?.unitPriceExcl ?? "").trim();
 
-function computeTotals(lines: any[], targetTotalInput = "") {
+export function computeTotals(lines: any[], targetTotalInput = "") {
   const base = totals(
     lines.flatMap((line) => (line.price ? [line.price] : [])),
   );
@@ -443,6 +443,8 @@ export async function saveDraft(
     if (id) {
       await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
       const old = await getQuote(tx, actor, id, true);
+      const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+      assert(!shared?.data.sharedQuotations?.length, 409, 'Open Pricing & Collection Jobs to edit the shared quotation in both apps');
       oldLines = old.lines;
       assert(["DRAFT", "REJECTED"].includes(old.status), 409, "Only draft or rejected quotations can be edited");
       assert(
@@ -467,6 +469,7 @@ export async function saveDraft(
       oldLines,
     );
     preserveWorkflowCosts(lines, oldLines);
+    if(id) await recordRemovedDraftLines(tx,actor,id,oldLines,lines);
     const sum = computeTotals(lines, data.adjustment?.targetTotal);
     const quoteId = id ?? randomUUID();
     if (id)
@@ -550,6 +553,8 @@ export async function reviewIssue(
       "SELECT data FROM settings WHERE id=1 FOR SHARE",
     ))!.data;
     const q = await getQuote(tx, actor, id, true);
+    const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+    assert(!shared?.data.erpRequestId && !shared?.data.sharedQuotations?.length, 409, 'Create and print the shared quotation from the creator workflow in Price List');
     await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");
@@ -585,6 +590,8 @@ export async function issue(
     ))!.data;
     await tx.query("SELECT id FROM quotations WHERE id=$1 FOR UPDATE", [id]);
     const q = await getQuote(tx, actor, id, true);
+    const shared = await one(tx, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+    assert(!shared?.data.erpRequestId && !shared?.data.sharedQuotations?.length, 409, 'Create and print the shared quotation from the creator workflow in Price List');
     await assertWorkflowPricingReady(tx, q);
     const activeRules = Number((await one(tx, "SELECT count(*) n FROM approval_rules WHERE active"))?.n ?? 0);
     assert(q.status === "APPROVED" || (q.status === "DRAFT" && activeRules === 0), 409, activeRules ? "Quotation approval is required before issue" : "Only drafts can be issued");

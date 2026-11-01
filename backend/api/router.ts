@@ -1,4 +1,5 @@
 import { jobWorkspace } from "../integrations/jobs";
+import { sharedQuotationWorkspace } from "../integrations/shared-quotation";
 import { integrationPublic, integrationAdmin } from "../integrations/service";
 import { whatsappAdmin } from "../storefront/whatsapp";
 import fs from "node:fs/promises";
@@ -678,6 +679,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     const actor = await auth.authenticate(db, req);
     if (!["GET", "HEAD"].includes(method)) auth.checkCsrf(req, actor);
+    if (root === "shared-quotation") return sharedQuotationWorkspace(db, actor, req);
     if (root === "workflow-jobs") return response(await jobWorkspace(db, actor, req));
     if (root === "connected-apps") return integrationAdmin(db, actor, req);
     const settings = await admin.settings(db);
@@ -1609,7 +1611,7 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         return response(
           (
             await db.query(
-              `SELECT id,number,status,customer,totals,version,created_at FROM quotations WHERE status<>'DELETED' AND ($1 OR owner_id=$2 OR $2 = ANY(shared_with)) AND ($3='' OR number ILIKE $3||'%') AND ($4='' OR status=$4) AND ($5::date IS NULL OR created_at >= ($5::date::timestamp AT TIME ZONE 'Asia/Riyadh')) AND ($6::date IS NULL OR created_at < (($6::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh')) ORDER BY CASE WHEN upper(number)=$7 THEN 0 ELSE 1 END,created_at DESC LIMIT 200`,
+              `SELECT q.id,q.number,(CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END) status,CASE WHEN (j.data->'sharedQuotations'->-1) IS NULL THEN q.customer ELSE q.customer || COALESCE((j.data->'sharedQuotations'->-1)->'customerDetails','{}'::jsonb) || jsonb_build_object('name',(j.data->'sharedQuotations'->-1)->>'customer','mobile',(j.data->'sharedQuotations'->-1)->>'contact') END customer,CASE WHEN (j.data->'sharedQuotations'->-1) IS NULL THEN q.totals ELSE jsonb_build_object('subtotal',(j.data->'sharedQuotations'->-1)->>'subtotal','vat',(j.data->'sharedQuotations'->-1)->>'taxTotal','total',(j.data->'sharedQuotations'->-1)->>'total') END totals,COALESCE((j.data->'sharedQuotations'->-1)->>'currency','SAR') currency,q.version,q.created_at FROM quotations q LEFT JOIN sw_job_documents j ON j.id=q.id::text WHERE q.status<>'DELETED' AND ($1 OR q.owner_id=$2 OR $2 = ANY(q.shared_with)) AND ($3='' OR q.number ILIKE $3||'%') AND ($4='' OR (CASE WHEN jsonb_array_length(COALESCE(j.data->'sharedQuotations','[]'::jsonb))>0 THEN 'ISSUED' ELSE q.status END)=$4) AND ($5::date IS NULL OR q.created_at >= ($5::date::timestamp AT TIME ZONE 'Asia/Riyadh')) AND ($6::date IS NULL OR q.created_at < (($6::date+1)::timestamp AT TIME ZONE 'Asia/Riyadh')) ORDER BY CASE WHEN upper(q.number)=$7 THEN 0 ELSE 1 END,q.created_at DESC LIMIT 200`,
               [
                 scope === "all",
                 actor.id,
@@ -1643,10 +1645,14 @@ export async function handle(req: Request, db: DB): Promise<Response> {
         );
       if (id) {
         uuid(id);
+        const workflowLink = await one(db, 'SELECT data FROM sw_job_documents WHERE id=$1', [id]);
+        const workflowManaged = Boolean(workflowLink && (workflowLink.data.erpRequestId || workflowLink.data.sharedQuotations?.length || Object.keys(workflowLink.data.lines || {}).length));
         if (!action && method === "GET")
-          return response(
-            quotes.publicQuote(await quotes.getQuote(db, actor, id), actor),
-          );
+          return response({ ...quotes.publicQuote(await quotes.getQuote(db, actor, id), actor), sharedWorkflow: workflowManaged });
+        if (workflowManaged && (['duplicate', 'revision', 'print', 'pdf', 'customer-link', 'submit-approval', 'review', 'issue'].includes(action || '') || (!action && method === 'DELETE'))) {
+          await quotes.getQuote(db, actor, id, true);
+          assert(false, 409, 'Use the creator workflow in Price List for this shared quotation, its versions and themed PDF');
+        }
         if (!action && method === "PUT") {
           const { version, ...data } = await body(req);
           return response(
