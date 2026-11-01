@@ -39,6 +39,19 @@ import {
 
 import { recalculateSharedDraft, sharedDraftCommand } from '../shared/shared-draft';
 import { pendingQuotationCommand, quotationCommandRejected, type PendingQuotationCommand } from './shared-quotation-command';
+import {
+  buildDuplicateGroups,
+  normalizeDuplicateItemKey,
+} from "./quotation-duplicate-groups";
+import {
+  findRepeatedItemPriceMismatches,
+  formatPriceMismatchWarning,
+  getMismatchedRowIndexes,
+} from "./quotation-price-mismatch";
+import {
+  syncQuotationDeliveryMeta,
+  stripDeliveryNotesFromReference,
+} from "./quotation-delivery-sync";
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
   line?.input?.importMeta?.source === "DELIVERY_NOTE"
@@ -210,7 +223,12 @@ export default function Cart({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  const [editingPriceRow, setEditingPriceRow] = useState<number | null>(null);
+  const [editingPriceRow, setEditingPriceRowState] = useState<number | null>(null);
+  const editingPriceRowRef = useRef<number | null>(null);
+  const setEditingPriceRow = (val: number | null) => {
+    editingPriceRowRef.current = val;
+    setEditingPriceRowState(val);
+  };
   const focusButton = useRef<HTMLButtonElement>(null);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -240,6 +258,15 @@ export default function Cart({
   const refreshBaseline = useRef(JSON.stringify(cart.customer));
   useEffect(() => { refreshBaseline.current = JSON.stringify(cart.customer); },
     [cart.sharedDocumentId, cart.sharedRevision, cart.sharedQuoteVersion]);
+  useEffect(() => {
+    if (!cart.lines?.length) return;
+    const synced = syncQuotationDeliveryMeta(cart.lines, cart.customer);
+    if (synced.reference !== (cart.customer.reference || "") || synced.notes !== (cart.customer.notes || "")) {
+      const next = { ...cartRef.current, customer: synced };
+      cartRef.current = next;
+      setCart(next);
+    }
+  }, [cart.id]);
   async function refreshSharedDraft() {
     if ((cart.sharedDirty || refreshBaseline.current !== JSON.stringify(cart.customer)) &&
       !await showConfirm(t('Refresh prices and version? Unsaved quotation edits will be replaced.', 'تحديث الأسعار والنسخة؟ سيتم استبدال التعديلات غير المحفوظة.'))) return;
@@ -438,6 +465,7 @@ export default function Cart({
       const customer = customers.find((item: any) => String(item.number || "").trim() === code);
       if (!customer) return;
       const current = cartRef.current;
+      const cleanedRef = stripDeliveryNotesFromReference(customer.reference || "");
       const next = {
         ...current,
         customer: {
@@ -445,7 +473,7 @@ export default function Cart({
           name: customer.name || current.customer.name,
           number: code,
           mobile: customer.mobile || "",
-          reference: customer.reference || current.customer.reference || "",
+          reference: current.customer.reference || cleanedRef,
         },
       };
       cartRef.current = next;
@@ -652,6 +680,7 @@ export default function Cart({
   function changeCatalogFinalPrice(index: number, value: string) {
     setError("");
     delete pricingSignatures.current[index];
+    const isPartialDecimal = String(value).trim().endsWith(".");
     const lines = cart.lines.map((line: any, lineIndex: number) => {
       if (lineIndex !== index || line.input?.type === "CUSTOM") return line;
       const result = normalizeTargetPrice(value);
@@ -663,6 +692,15 @@ export default function Cart({
           targetPriceRequested: undefined,
           targetPriceError: true,
           priceEntryNotice: result.error,
+        };
+      if (isPartialDecimal)
+        return {
+          ...line,
+          pending: false,
+          targetPriceDraft: value,
+          targetPriceRequested: undefined,
+          targetPriceError: false,
+          priceEntryNotice: "",
         };
       return {
         ...line,
@@ -765,6 +803,7 @@ export default function Cart({
                       ...discountInput,
                       discount: price.requestedDiscount,
                     };
+              const isCurrentlyEditing = editingPriceRowRef.current === index;
               return {
                 ...existing,
                 input: synchronizedInput,
@@ -772,7 +811,7 @@ export default function Cart({
                 pending: false,
                 offline: false,
                 livePriceError: "",
-                targetPriceDraft: undefined,
+                targetPriceDraft: isCurrentlyEditing ? existing.targetPriceDraft : undefined,
                 targetPriceRequested: undefined,
                 targetPriceError: false,
                 priceEntryNotice: adjusted,
@@ -799,7 +838,7 @@ export default function Cart({
             if (pricingGenerations.current[index] !== generation) return;
             setRepricingRows((current) => ({ ...current, [index]: false }));
           });
-      }, 350);
+      }, 500);
     });
     return () => {
       for (const timer of Object.values(pricingTimers.current)) clearTimeout(timer);
@@ -843,6 +882,27 @@ export default function Cart({
   }
 
   async function save() {
+    const isInclusive = Boolean(cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE");
+    const mismatches = findRepeatedItemPriceMismatches(cart.lines, isInclusive, cart.workflowCurrency || "SAR");
+    if (mismatches.length > 0) {
+      const message = formatPriceMismatchWarning(mismatches, t, cart.workflowCurrency || "SAR");
+      const proceed = await showConfirm(message, {
+        title: t("Warning: Different Prices for Repeated Items", "تحذير: أسعار مختلفة لنفس الأصناف المكررة"),
+        confirmText: t("Save Anyway", "حفظ على أي حال"),
+        cancelText: t("Review Items", "مراجعة الأصناف"),
+        tone: "warning",
+      });
+      if (!proceed) {
+        const firstMismatched = mismatches[0]?.occurrences[0]?.rowIndex;
+        if (firstMismatched !== undefined) {
+          activePriceRow.current = firstMismatched;
+          const el = document.querySelector(`[data-cart-row-index="${firstMismatched}"]`);
+          el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        return;
+      }
+    }
+
     if (cart.sharedWorkflow) {
       if (sharedSaving.current) return;
       sharedSaving.current = true; setBusy(true); setError('');
@@ -862,12 +922,13 @@ export default function Cart({
     setNotice("");
     const requestId = cart.requestId || crypto.randomUUID();
     if (!cart.id && !cart.requestId) setCart({ ...cart, requestId });
+    const syncedCustomer = syncQuotationDeliveryMeta(cart.lines, cart.customer);
     try {
       const q = await api(
         "quotations" + (cart.id ? "/" + cart.id : ""),
         cart.id ? "PUT" : "POST",
         {
-          customer: cart.customer,
+          customer: syncedCustomer,
           lines: cart.lines.map((l: any) =>
             l.input?.type === "CUSTOM"
               ? sanitizeCustomInput(l.input)
@@ -885,6 +946,7 @@ export default function Cart({
       );
       setCart({
         ...cart,
+        customer: syncedCustomer,
         id: q.id,
         version: q.version,
         number: q.number,
@@ -912,24 +974,29 @@ export default function Cart({
     }
   }
 
-  const { partCounts, duplicateIndices } = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const l of cart.lines) {
-      const pn = l.input?.partNumber || l.partNumber;
-      if (pn) counts[pn] = (counts[pn] || 0) + 1;
-    }
-    const indices: Record<string, number> = {};
-    for (const [pn, count] of Object.entries(counts)) {
-      if (count > 1) {
-        if (!colourGroups.current.has(pn)) colourGroups.current.set(pn, colourGroups.current.size % 6 + 1);
-        indices[pn] = colourGroups.current.get(pn)!;
-      }
-    }
-    return { partCounts: counts, duplicateIndices: indices };
+  const { partCounts, duplicateIndices, groupColors } = useMemo(() => {
+    return buildDuplicateGroups(cart.lines, colourGroups.current);
   }, [cart.lines]);
+
+  const { priceMismatches, mismatchedRowIndexes } = useMemo(() => {
+    const isInclusive = Boolean(cart.sharedWorkflow && cart.sharedTaxBasis === "INCLUSIVE");
+    const mismatches = findRepeatedItemPriceMismatches(cart.lines, isInclusive, cart.workflowCurrency || "SAR");
+    return { priceMismatches: mismatches, mismatchedRowIndexes: getMismatchedRowIndexes(mismatches) };
+  }, [cart.lines, cart.sharedWorkflow, cart.sharedTaxBasis, cart.workflowCurrency]);
 
   return (
     <section className={`card quotation-editor${focusTable ? ' quotation-focus-table' : ''}`}>
+      {priceMismatches.length > 0 && (
+        <div className="notice warning quotation-mismatch-banner" role="alert" style={{ marginBottom: "8px" }}>
+          <span>
+            ⚠️ <b>{t("Price mismatch detected:", "تم اكتشاف اختلاف في الأسعار:")}</b>{" "}
+            {t(
+              `${priceMismatches.length} repeated item${priceMismatches.length > 1 ? "s have" : " has"} different prices across rows. Review rows or align prices before saving.`,
+              `${priceMismatches.length} صنف مكرر له أسعار مختلفة بين الصفوف. يرجى مراجعة الصفوف أو توحيد الأسعار قبل الحفظ.`,
+            )}
+          </span>
+        </div>
+      )}
       <div className="quotation-compact-header"><strong>{cart.number || t('Current quotation','عرض السعر الحالي')}</strong><span title={cart.customer.name}>{cart.customer.name || t('Walk-in Customer','عميل نقدي')}</span><span>{cart.lines.length} {t('items','أصناف')}</span></div>
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
         <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
@@ -1076,14 +1143,31 @@ export default function Cart({
                 }}
               />}
               {cart.lines.map((l: any, i: number) => {
+                const itemKey = normalizeDuplicateItemKey(l);
+                const isDuplicate = Boolean(itemKey && (partCounts[itemKey] || 0) > 1);
+                const dupIndex = isDuplicate ? duplicateIndices[itemKey] || 0 : 0;
+                const dupColor = isDuplicate ? groupColors[itemKey] : null;
+                const hasPriceMismatch = mismatchedRowIndexes.has(i);
                 const pn = l.input?.partNumber || l.partNumber;
-                const isDuplicate = pn && partCounts[pn] > 1;
-                const dupIndex = isDuplicate ? duplicateIndices[pn] : 0;
+                const dnMeta = importedDeliveryMeta(l);
                 return (
-                <SortableQuotationRow id={rowIds[i]} disabled={reorderDisabled} handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)} className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""} key={rowIds[i]} data-cart-row-index={i} onFocusCapture={() => { activePriceRow.current = i; }} onMouseEnter={() => { activePriceRow.current = i; }}>
+                <SortableQuotationRow
+                  id={rowIds[i]}
+                  disabled={reorderDisabled}
+                  handleLabel={t(`Drag item ${i+1}: ${pn || 'Custom item'}`, `اسحب الصنف ${i+1}: ${pn || 'صنف مخصص'}`)}
+                  className={isDuplicate ? `duplicate-line duplicate-color-${dupIndex}` : ""}
+                  style={dupColor ? ({
+                    '--quotation-row-tint': dupColor.bg,
+                    '--quotation-row-border': dupColor.border,
+                  } as React.CSSProperties) : undefined}
+                  key={rowIds[i]}
+                  data-cart-row-index={i}
+                  onFocusCapture={() => { activePriceRow.current = i; }}
+                  onMouseEnter={() => { activePriceRow.current = i; }}
+                >
                   {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'} {isDuplicate && <span className="quotation-duplicate-label" title={t(`${partCounts[pn]} occurrences of this part`, `${partCounts[pn]} تكرارات لهذا الصنف`)}>{t('Repeated','مكرر')} ×{partCounts[pn]}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small></div></div>
+                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${dnMeta.docDate}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${dnMeta.docDate}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${dnMeta.docDate}` : ''}</span></div>}</div></div>
                     <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
@@ -1337,11 +1421,34 @@ export default function Cart({
                           inputMode="decimal"
                           maxLength={15}
                           onFocus={() => setEditingPriceRow(i)}
-                          onBlur={() => setEditingPriceRow(null)}
+                          onBlur={() => {
+                            setEditingPriceRow(null);
+                            setCartLine(i, (existing) => {
+                              if (existing.targetPriceDraft === undefined) return existing;
+                              const raw = String(existing.targetPriceDraft).trim();
+                              if (raw.endsWith(".")) {
+                                const result = normalizeTargetPrice(raw);
+                                if (result.ok) {
+                                  return {
+                                    ...existing,
+                                    targetPriceDraft: undefined,
+                                    targetPriceRequested: result.target,
+                                    pending: true,
+                                  };
+                                }
+                              }
+                              return {
+                                ...existing,
+                                targetPriceDraft: undefined,
+                              };
+                            });
+                          }}
                           data-cart-field="unitPriceExcl"
                           data-cart-row={i}
                           value={
-                            editingPriceRow === i ? (l.targetPriceDraft ?? l.price?.finalExcl ?? "") : compactQuotationNumber(l.targetPriceDraft ?? l.price?.finalExcl ?? "")
+                            editingPriceRow === i
+                              ? (l.targetPriceDraft ?? (l.price?.finalExcl ? compactQuotationNumber(l.price.finalExcl) : ""))
+                              : compactQuotationNumber(l.targetPriceDraft ?? l.price?.finalExcl ?? "")
                           }
                           onChange={(e) =>
                             changeCatalogFinalPrice(i, e.target.value)
@@ -1352,6 +1459,11 @@ export default function Cart({
                         />
                         {repricingRows[i] && (
                           <small>{t("Refreshing…", "جارٍ التحديث…")}</small>
+                        )}
+                        {hasPriceMismatch && (
+                          <small className="sales-check-error" style={{ display: "block", marginTop: "2px" }} title={t("This item has different prices on other rows", "هذا الصنف له أسعار مختلفة في صفوف أخرى")}>
+                            ⚠️ {t("Different price", "سعر مختلف")}
+                          </small>
                         )}
                         {!!l.priceEntryNotice && (
                           <small className="sales-check-error">
@@ -1402,15 +1514,18 @@ export default function Cart({
                     </div></details>
                       <button
                         title={t("Remove", "حذف")}
-                        onClick={() =>
+                        onClick={() => {
+                          const nextLines = cart.lines.filter(
+                            (_: any, n: number) => n !== i,
+                          );
+                          const nextCustomer = syncQuotationDeliveryMeta(nextLines, cart.customer);
                           setCart({
                             ...cart,
+                            customer: nextCustomer,
                             sharedDirty: cart.sharedWorkflow ? true : undefined,
-                            lines: cart.lines.filter(
-                              (_: any, n: number) => n !== i,
-                            ),
-                          })
-                        }
+                            lines: nextLines,
+                          });
+                        }}
                       >
                         ×
                       </button>

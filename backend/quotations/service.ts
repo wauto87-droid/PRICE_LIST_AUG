@@ -9,6 +9,10 @@ import { type DB, one } from "../core/db";
 import { AppError, assert } from "../core/errors";
 import { audit, json } from "../core/audit";
 import {
+  syncQuotationDeliveryMeta,
+  stripDeliveryNotesFromReference,
+} from "./delivery-sync";
+import {
   type Actor,
   has,
   pricingPolicy,
@@ -458,10 +462,11 @@ export async function saveDraft(
     }
     if (!options.preserveCustomerMaster && data.customer.number && data.customer.number !== "1" && data.customer.name.trim()) {
       const savedCustomer = await one(tx, "SELECT id FROM customers WHERE btrim(number)=$1 ORDER BY id LIMIT 1", [data.customer.number]);
+      const masterReference = stripDeliveryNotesFromReference(data.customer.reference);
       if (savedCustomer)
-        await tx.query("UPDATE customers SET name=$2,mobile=$3,reference=$4 WHERE id=$1", [savedCustomer.id, data.customer.name, data.customer.mobile, data.customer.reference]);
+        await tx.query("UPDATE customers SET name=$2,mobile=$3,reference=$4 WHERE id=$1", [savedCustomer.id, data.customer.name, data.customer.mobile, masterReference]);
       else
-        await tx.query("INSERT INTO customers(id,name,number,mobile,reference) VALUES($1,$2,$3,$4,$5)", [randomUUID(), data.customer.name, data.customer.number, data.customer.mobile, data.customer.reference]);
+        await tx.query("INSERT INTO customers(id,name,number,mobile,reference) VALUES($1,$2,$3,$4,$5)", [randomUUID(), data.customer.name, data.customer.number, data.customer.mobile, masterReference]);
     }
     const lines = await attachToSavedQuote(
       tx,
@@ -474,11 +479,12 @@ export async function saveDraft(
     preserveWorkflowCosts(lines, oldLines);
     if(id) await recordRemovedDraftLines(tx,actor,id,oldLines,lines);
     const sum = computeTotals(lines, data.adjustment?.targetTotal);
+    const syncedCustomer = syncQuotationDeliveryMeta(lines, data.customer);
     const quoteId = id ?? randomUUID();
     if (id)
       await tx.query(
         "UPDATE quotations SET customer=$2,lines=$3,totals=$4,status='DRAFT',version=version+1,updated_at=now() WHERE id=$1",
-        [id, json(data.customer), json(lines), json(sum)],
+        [id, json(syncedCustomer), json(lines), json(sum)],
       );
     else
       await tx.query(
@@ -488,7 +494,7 @@ export async function saveDraft(
           await nextDraftNumber(tx, settings),
           await nextInternalReference(tx),
           actor.id,
-          json(data.customer),
+          json(syncedCustomer),
           json(lines),
           json(sum),
         ],
@@ -620,10 +626,10 @@ export async function issue(
       409,
       "Pricing or permissions changed. Review again before issuing",
     );
-    const customer = {
+    const customer = syncQuotationDeliveryMeta(lines, {
       ...q.customer,
       name: q.customer.name || (!q.customer.number || q.customer.number.trim() === "1" ? "Walk-in Customer" : ""),
-    };
+    });
     const allocated = await allocateNumber(tx, id, actor, settings);
     const logo =
       settings.quotation?.logo ||

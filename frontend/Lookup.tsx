@@ -189,11 +189,131 @@ export default function Lookup({
           const cache = JSON.parse(
             localStorage.getItem("amt-products-" + user.id) || "{}",
           );
-          rows = (cache.rows || []).filter((p: any) =>
-            (p.partNumber + " " + p.description)
-              .toLowerCase()
-              .includes(trimmedQuery.toLowerCase()),
-          );
+          const cleanQuery = trimmedQuery
+            .toUpperCase()
+            .replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+          const queryTokens = trimmedQuery
+            .toLowerCase()
+            .split(/[\s\-/_.,]+/)
+            .filter(Boolean);
+          rows = (cache.rows || []).filter((p: any) => {
+            const raw = (
+              (p.partNumber || "") +
+              " " +
+              (p.description || "") +
+              " " +
+              (p.brand || "") +
+              " " +
+              (p.category || "")
+            ).toLowerCase();
+            const cleanPart = String(p.partNumber || "")
+              .toUpperCase()
+              .replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+            if (
+              cleanQuery &&
+              (cleanPart.includes(cleanQuery) || cleanQuery.includes(cleanPart))
+            ) {
+              return true;
+            }
+            return (
+              queryTokens.length > 0 &&
+              queryTokens.every((token) => {
+                const cleanT = token.toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]+/g, "");
+                const ratingWithUnit = token.match(/^(\d+)[aA]$/i);
+                const curveWithRating = token.match(/^([cdbkz])(\d+)[aA]?$/i);
+                const pureNumber = token.match(/^(\d+)$/);
+                const modelStem = token.match(/^([a-z]*\d+)([a-z]+)$/i);
+
+                if (ratingWithUnit) {
+                  const num = ratingWithUnit[1];
+                  const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*[a]([^0-9a-z]|$)`, "i");
+                  return regex.test(raw);
+                }
+
+                if (curveWithRating) {
+                  const curve = curveWithRating[1].toLowerCase();
+                  const num = curveWithRating[2];
+                  const regex = new RegExp(`(^|[^0-9])${curve}?${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                  if (regex.test(raw)) return true;
+                  const numRegex = new RegExp(`(^|[^0-9])${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                  return numRegex.test(raw) && raw.includes(curve);
+                }
+
+                if (pureNumber) {
+                  const num = pureNumber[1];
+                  const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*([ap])?([^0-9a-z]|$)`, "i");
+                  if (regex.test(raw)) return true;
+                  if (num.length >= 2) {
+                    return raw.includes(num);
+                  }
+                  return false;
+                }
+
+                if (modelStem) {
+                  const base = modelStem[1];
+                  if (base.length >= 2 && raw.includes(base)) return true;
+                }
+
+                return raw.includes(token) || (cleanT.length > 0 && cleanPart.includes(cleanT));
+              })
+            );
+          });
+          const getPartScore = (p: any) => {
+            const partStr = String(p.partNumber || "").toLowerCase();
+            const cleanP = partStr.replace(/[^a-z0-9]/g, "").toUpperCase();
+            let score = 0;
+            if (cleanQuery && (cleanP === cleanQuery || cleanP.startsWith(cleanQuery))) {
+              score += 10;
+            }
+            for (const token of queryTokens) {
+              const cleanT = token.toUpperCase().replace(/[^A-Z0-9]/g, "");
+              const ratingWithUnit = token.match(/^(\d+)[aA]$/i);
+              const curveWithRating = token.match(/^([cdbkz])(\d+)[aA]?$/i);
+              const pureNumber = token.match(/^(\d+)$/);
+              const modelStem = token.match(/^([a-z]*\d+)([a-z]+)$/i);
+
+              if (ratingWithUnit) {
+                const num = ratingWithUnit[1];
+                const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*[a]([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr)) score += 2;
+                continue;
+              }
+              if (curveWithRating) {
+                const curve = curveWithRating[1].toLowerCase();
+                const num = curveWithRating[2];
+                const regex = new RegExp(`(^|[^0-9])${curve}?${num}\\s*[a]?([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr)) score += 2;
+                continue;
+              }
+              if (pureNumber) {
+                const num = pureNumber[1];
+                const regex = new RegExp(`(^|[^0-9])([cdbkz])?${num}\\s*([ap])?([^0-9a-z]|$)`, "i");
+                if (regex.test(partStr) || (num.length >= 2 && (partStr.includes(num) || cleanP.includes(num)))) score += 2;
+                continue;
+              }
+              if (modelStem && modelStem[1].length >= 2 && (partStr.includes(modelStem[1]) || cleanP.includes(modelStem[1].toUpperCase()))) {
+                score += 2;
+              }
+              if (partStr.includes(token) || (cleanT.length > 0 && cleanP.includes(cleanT))) {
+                score += 2;
+              }
+            }
+            return score;
+          };
+
+          rows.sort((a: any, b: any) => {
+            const scoreA = getPartScore(a);
+            const scoreB = getPartScore(b);
+            if (scoreA !== scoreB) {
+              return scoreB - scoreA;
+            }
+            const aPart = String(a.partNumber || "");
+            const bPart = String(b.partNumber || "");
+            if (aPart.length !== bPart.length) {
+              return aPart.length - bPart.length;
+            }
+            return aPart.localeCompare(bPart);
+          });
           setStamp(cache.at || "");
         }
         if (current === searchGeneration.current) {
@@ -482,7 +602,7 @@ export default function Lookup({
       )
     : results;
   const visibleResults = relatedLookupResults(filteredResults, selected);
-  const filteredSuggestions = topSuggestions(filteredResults, 8);
+  const filteredSuggestions = topSuggestions(filteredResults, 16);
   const hasRelatedMatches = !!selected && visibleResults.length > 0;
   const resolvedHighlightedIndex = activeSuggestionIndex(
     highlightedIndex,

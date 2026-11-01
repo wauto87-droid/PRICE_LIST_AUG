@@ -4167,6 +4167,7 @@
 
 
 .duplicate-line input { background-color: #fff !important; }
+.duplicate-line td { background-color: var(--quotation-row-tint, #fff0f0); border-bottom-color: var(--quotation-row-border, #f2bfc2); }
 
 .duplicate-color-1 { background-color: #fff0f0; }
 .duplicate-color-1 td { border-bottom-color: #f2bfc2; }

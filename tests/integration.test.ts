@@ -428,12 +428,20 @@ test("PostgreSQL-backed security, catalog, quotations, and imports", async (t) =
     assert.equal(instantiated.customer.name, "Template customer");
     assert.equal(instantiated.lines[0].price.adjustmentMode, "MARKUP");
     assert.equal(instantiated.warnings.length, 1);
+    const staffHistory = (
+      await request(
+        `quotation-price-history?itemKey=${encodeURIComponent(`CATALOG:${productId}`)}&stage=DRAFT`,
+      )
+    ).data;
+    assert.ok(staffHistory.items.length > 0);
+    await db.query("UPDATE roles SET permissions = array_remove(permissions, 'QUOTE_PRICE_HISTORY') WHERE id='STAFF'");
     await request(
       `quotation-price-history?itemKey=${encodeURIComponent(`CATALOG:${productId}`)}&stage=DRAFT`,
       "GET",
       undefined,
       403,
     );
+    await db.query("UPDATE roles SET permissions = array_append(permissions, 'QUOTE_PRICE_HISTORY') WHERE id='STAFF'");
     cookie = adminCookie;
     csrf = adminCsrf;
     const history = (
