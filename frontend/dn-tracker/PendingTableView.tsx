@@ -1,3 +1,4 @@
+import ResponsiveTable from "../ResponsiveTable";
 import React from 'react';
 import { OrderItem } from './types';
 
@@ -17,7 +18,7 @@ export default function PendingTableView({ activeItems }: PendingTableViewProps)
       </div>
       
       <div className="pt-table-container">
-        <table className="data-table">
+        <ResponsiveTable className="data-table">
           <thead>
             <tr>
               <th>Date</th>
@@ -54,7 +55,7 @@ export default function PendingTableView({ activeItems }: PendingTableViewProps)
               </tr>
             </tfoot>
           )}
-        </table>
+        </ResponsiveTable>
       </div>
     </div>
   );

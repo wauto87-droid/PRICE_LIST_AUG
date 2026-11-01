@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useState, useMemo } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -392,7 +393,7 @@ export default function StoreProducts({
         </div>
       ) : (
         <div className="products-table-wrapper">
-          <table className="products-enterprise-table">
+          <ResponsiveTable className="products-enterprise-table">
             <thead>
               <tr>
                 <th style={{ width: "36px", textAlign: "center" }}>
@@ -732,7 +733,7 @@ export default function StoreProducts({
                 );
               })}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       )}
 

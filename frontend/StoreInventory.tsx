@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 export default function StoreInventory({
@@ -185,7 +186,7 @@ export default function StoreInventory({
         />
       </label>
       <div className="dense-table-wrap">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               {[
@@ -212,7 +213,7 @@ export default function StoreInventory({
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       <div className="actions">
         <button disabled={page <= 1} onClick={() => setPage((v) => v - 1)}>

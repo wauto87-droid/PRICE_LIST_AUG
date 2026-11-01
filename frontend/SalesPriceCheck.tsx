@@ -1,3 +1,4 @@
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useMemo, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -780,7 +781,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
               </div>
 
               <div className="table-scroll sales-check-table-wrap">
-                <table className="sales-check-table">
+                <ResponsiveTable className="sales-check-table">
                   <thead>
                     <tr>
                       <th className="row-number-cell">#</th>
@@ -883,7 +884,7 @@ export default function SalesPriceCheck({ t }: { t: Translate }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </div>
 
               <div className="actions wrap sales-check-pagination">
@@ -986,7 +987,7 @@ function HistoricalPrices({ t, run, busy }: { t: Translate, run: any, busy: bool
           </form>
 
           <div className="table-scroll" style={{ marginTop: "1rem" }}>
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   <th>{t("Name", "الاسم")}</th>
@@ -1041,7 +1042,7 @@ function HistoricalPrices({ t, run, busy }: { t: Translate, run: any, busy: bool
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         </>
       ) : (

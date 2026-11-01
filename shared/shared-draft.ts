@@ -5,7 +5,10 @@ export function sharedDraft(result: any, source?: any, version?: number, mode: '
   const latest = result.quotations.at(-1);
   const quote = version ? result.quotations.find((q: any) => q.version === version) : latest;
   const eligible = (item: any) => item.offers.some((o: any) => !['UNAVAILABLE', 'WAITING', 'WAITING FOR SUPPLIER'].includes(String(o.availability || '').trim().toUpperCase()) && (!o.validUntil || Date.parse(o.validUntil) >= Date.now()));
-  const activeItems = result.items.filter((i: any) => i.active !== false);
+  // Restore the saved editor order without changing the request's item list.
+  const savedOrder = new Map<string, number>((quote?.lines || []).map((line: any, index: number) => [line.itemId, index]));
+  const activeItems = result.items.filter((i: any) => i.active !== false).sort((a: any, b: any) =>
+    (savedOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (savedOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER));
   const items = mode === 'version' && quote ? quote.lines.map((l: any) => result.items.find((i: any) => i.id === l.itemId)).filter(Boolean) : mode === 'priced' ? activeItems.filter(eligible) : activeItems;
   const omitted = activeItems.filter((i: any) => !items.some((selected: any) => selected.id === i.id)).map((i: any) => ({ id: i.id, partNumber: i.partNumber, name: i.name }));
   const currency = quote?.currency || source?.workflowCurrency || items[0]?.offers[0]?.currency || 'SAR';

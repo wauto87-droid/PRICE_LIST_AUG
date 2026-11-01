@@ -188,6 +188,8 @@ export async function deliver(
         ],
       );
     } catch (e) {
+      if(row.endpoint==='jobs-quotation-publish' && e instanceof ConnectionError && e.remoteStatus===409)
+        await db.query("UPDATE quotation_workflow_publications SET state='CONFLICT' WHERE event_id=$1 AND state<>'SYNCED'",[row.id]);
       const blocked = (e as any)?.code === "MISSING_PHONE";
       const obsoleteCollection = row.endpoint === 'jobs-assign' && row.payload.kind === 'COLLECTION' && e instanceof ConnectionError && e.remoteStatus === 409 && /Confirm the shared quotation and assign collection through jobs-quotation-command/.test(e.message);
       const next = new Date(

@@ -132,6 +132,52 @@ test('PDF retry creates no second quotation or job; company snapshot and histori
   } finally { await db.close!(); }
 });
 
+test('missing completed PDF is regenerated without changing the saved version or company snapshot', async () => {
+  const db = await embedded();
+  try {
+    await migrate(db);
+    const requestId = randomUUID();
+    const q = { id: randomUUID(), version: 1, date: '2026-10-16', customer: 'Synthetic', currency: 'SAR', taxBasis: 'EXEMPT', subtotal: '10', taxTotal: '0', total: '10', lines: [{ partNumber: 'SAVED-REFERENCE', name: 'Cable', quantity: '1', sellingPrice: '10', unit: 'm' }] };
+    const first = await sharedQuotationPdfJob(db, 'owner', requestId, q);
+    await db.query("UPDATE jobs SET status='DONE' WHERE id=$1", [first.id]);
+    const result = { requestId, quotations: [q] };
+    assert.equal((await (await sharedQuotationPdfDownload(db, result, first.id, false)).json()).status, 'EXPIRED');
+    await assert.rejects(sharedQuotationPdfDownload(db, result, first.id, true), /Generate PDF again/);
+    const retry = await sharedQuotationPdfJob(db, 'owner', requestId, q);
+    assert.notEqual(retry.id, first.id);
+    assert.deepEqual(retry.payload.snapshot, first.payload.snapshot);
+    assert.equal((await one(db, 'SELECT status FROM jobs WHERE id=$1', [first.id]))!.status, 'EXPIRED');
+    assert.equal((await sharedQuotationPdfJob(db, 'owner', requestId, q)).id, retry.id);
+  } finally { await db.close!(); }
+});
+
+test('saved quotation document and PDF actions survive ERP outage with creator permissions intact', async () => {
+  const db = await embedded();
+  try {
+    await migrate(db);
+    process.env.SETUP_TOKEN = 'saved-document-fixture-token-long-enough';
+    await setup(db, { token: process.env.SETUP_TOKEN, username: 'document-owner', password: 'Synthetic-password-129', name: 'Creator', companyName: 'Synthetic' });
+    const owner = (await one(db, "SELECT * FROM users WHERE username='document-owner'"))!;
+    const actor: any = { id: owner.id, role: 'ADMIN', permissions: ['QUOTE_EDIT'] };
+    const id = randomUUID(), requestId = randomUUID();
+    const q = { id: randomUUID(), version: 1, date: '2026-10-16', customer: 'Synthetic', currency: 'SAR', taxBasis: 'EXEMPT', subtotal: '10', taxTotal: '0', total: '10', lines: [{ partNumber: 'SAVED-1', name: 'Cable', quantity: '1', sellingPrice: '10', unit: 'm' }] };
+    await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-SYNTHETIC','DRAFT',$2,'{}','[]','{}')", [id, owner.id]);
+    await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2::jsonb)', [id, JSON.stringify({ erpRequestId: requestId, quotationRevision: 2, sharedQuotations: [q] })]);
+    const offline = async (): Promise<any> => { throw new Error('ERP unavailable'); };
+    const url = `http://localhost/shared-quotation?documentId=${id}&documentOnly=1`;
+    const data = await (await sharedQuotationWorkspace(db, actor, new Request(url), offline)).json();
+    assert.equal(data.quotations[0].lines[0].partNumber, 'SAVED-1');
+    assert.equal(data.savedDocument, true);
+    const job = await (await sharedQuotationWorkspace(db, actor, new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'quotationPdf', documentId: id, requestId, quoteVersion: 1, eventId: randomUUID() }) }), offline)).json();
+    assert.equal(job.status, 'PENDING');
+    const print = await sharedQuotationWorkspace(db, actor, new Request(`http://localhost/shared-quotation?documentId=${id}&print=1&version=1`), offline);
+    assert.match(await print.text(), /SAVED-1/);
+    await assert.rejects(sharedQuotationWorkspace(db, { ...actor, id: randomUUID(), role: 'STAFF' }, new Request(url), offline));
+    await assert.rejects(sharedQuotationWorkspace(db, actor, new Request(`${url}&requestId=${randomUUID()}`), offline), /identity mismatch/);
+    assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 1);
+  } finally { await db.close!(); }
+});
+
 test('quotation creation shows quotation controls only; jobs origin exposes one gated delivery form', () => {
   const props: any = { row: { id: 'r', ownerId: 'owner', items: [{ id: 'item', name: 'Contactor', quantity: '5', unit: 'pcs', offers: [], confirmableQuantity: '5' }], quotations: [{ id: 'q', version: 2, customer: 'Buyer', currency: 'SAR', total: '2500', lines: [{ itemId: 'item', name: 'Contactor', quantity: '5', confirmableQuantity: '5', unit: 'pcs', sellingPrice: '500' }] }], orders: [], legacyCollections: [{ allocationId: 'old', itemId: 'item', name: 'Contactor', quantity: '5', collected: '3', delivered: '1', availableToDeliver: '2', unit: 'pcs', customerConfirmed: false, deliveries: [] }] }, data: { actorId: 'owner', suppliers: [], collectionStaff: [] }, busy: false, submit: async () => {} };
   const draft = renderToStaticMarkup(createElement(QuotationActions, props));
@@ -146,7 +192,7 @@ test('quotation creation shows quotation controls only; jobs origin exposes one 
   assert.match(confirmed, /max="3"/); assert.match(confirmed, /Invoice reference/); assert.match(confirmed, /Delivery reference/);
 });
 
-test('native quotation routes direct shared records to the creator workspace and cannot duplicate or issue them', async () => {
+test('native quotation routes manage historical linked versions locally without editing the original snapshot', async () => {
   const db = await embedded();
   try {
     await migrate(db);
@@ -157,17 +203,42 @@ test('native quotation routes direct shared records to the creator workspace and
     const owner = (await one(db, "SELECT id FROM users WHERE username='shared-owner'"))!;
     const id = randomUUID();
     await db.query("INSERT INTO quotations(id,number,status,owner_id,customer,lines,totals) VALUES($1,'DR-SHARED','DRAFT',$2,'{\"name\":\"Buyer\"}','[]','{\"subtotal\":\"0.00\",\"vat\":\"0.00\",\"total\":\"0.00\"}')", [id, owner.id]);
-    await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2::jsonb)', [id, JSON.stringify({ erpRequestId: randomUUID(), sharedQuotations: [{ id: randomUUID(), version: 1 }], lines: {} })]);
+    await db.query('INSERT INTO sw_job_documents(id,data) VALUES($1,$2::jsonb)', [id, JSON.stringify({ erpRequestId: randomUUID(), sharedQuotations: [{ id: randomUUID(), version: 1, date:'2026-10-15',customer:'Buyer',currency:'SAR',taxBasis:'EXCLUSIVE',taxRate:'15',subtotal:'10',taxTotal:'1.5',total:'11.5',lines:[{itemId:randomUUID(),partNumber:'SAVED-REFERENCE',name:'Part',unit:'pcs',quantity:'1',sellingPrice:'10'}] }], lines: {} })]);
     const request = (action: string, method: string) => new Request(`http://localhost/amt_price_list/api/v1/quotations/${id}${action ? '/' + action : ''}`, { method, headers: { Cookie: cookie, 'X-CSRF-Token': session.csrf, 'Content-Type': 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}) });
     const view = await handle(request('', 'GET'), db);
-    assert.equal(view.status, 200); assert.equal((await view.json()).sharedWorkflow, true);
-    for (const action of ['duplicate', 'revision', 'issue', 'pdf', 'customer-link', 'submit-approval', 'review']) {
+    assert.equal(view.status, 200); const document=await view.json(); assert.equal(document.legacyShared, true); assert.equal(document.sharedWorkflow,true); assert.equal(document.quotationManagedLocally,true);
+    for (const action of ['issue', 'customer-link', 'submit-approval', 'review']) {
       const result = await handle(request(action, 'POST'), db);
-      assert.equal(result.status, 409, action); assert.match((await result.json()).error, /creator workflow/);
+      assert.equal(result.status, 409, action); assert.match((await result.json()).error, /immutable/);
     }
-    assert.equal((await handle(request('print', 'GET'), db)).status, 409);
+    assert.equal((await handle(request('print', 'GET'), db)).status, 200);
+    assert.equal((await handle(request('pdf','POST'),db)).status,200);
+    assert.equal((await handle(request('revision','POST'),db)).status,200);
+    assert.equal((await handle(request('duplicate','POST'),db)).status,200);
     assert.equal((await handle(request('', 'DELETE'), db)).status, 409);
-    assert.equal((await one(db, 'SELECT count(*) n FROM quotations'))!.n, 1);
-    assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 0);
+    assert.equal((await one(db, 'SELECT count(*) n FROM quotations'))!.n, 3);
+    assert.equal((await one(db, 'SELECT count(*) n FROM jobs'))!.n, 1);
+    assert.equal((await one(db, 'SELECT count(*) n FROM sw_job_outbox'))!.n, 0);
+    assert.equal((await one(db,'SELECT status FROM quotations WHERE id=$1',[id]))!.status,'DRAFT');
   } finally { await db.close!(); }
+});
+
+
+test('document preview hides workflow creation controls while Workflow retains all three actions', () => {
+ const row = { id:'request',ownerId:'owner',items:[{id:'item',partNumber:'CURRENT',name:'Part',offers:[]}],quotations:[{version:1,customer:'Buyer',currency:'SAR',total:'10',subtotal:'10',taxTotal:'0',lines:[{itemId:'item',partNumber:'SAVED-1',name:'Part',quantity:'1',unit:'pcs',sellingPrice:'10'}]}] };
+ const props = {row,data:{actorId:'owner'},busy:false,submit:async()=>{},onOpenDraft:()=>{},onPdf:()=>{},view:'quotation'};
+ const document = renderToStaticMarkup(createElement(QuotationActions,{...props,documentView:true}));
+ assert.match(document,/Edit quotation/); assert.doesNotMatch(document,/Create quotation —|Open this quotation from Workflow/);
+ assert.match(document,/SAVED-1/); assert.doesNotMatch(document,/CURRENT/);
+ const workflow = renderToStaticMarkup(createElement(QuotationActions,props));
+ for(const action of ['Edit draft (1)','Create quotation — all items (1)','Create quotation — priced items (0)']) assert.ok(workflow.includes(action));
+});
+
+test('PDF prints the saved part reference without current catalog or supplier information', () => {
+ const q = {id:'q',version:1,date:'2026-10-15',customer:'Buyer',currency:'SAR',taxBasis:'EXEMPT',taxRate:'0',subtotal:'10',taxTotal:'0',total:'10',lines:[{partNumber:'REF-<A>',name:'Part',quantity:'1',sellingPrice:'10',unit:'pcs',offer:{supplier:'private-shop',cost:'secret'}}]};
+ const company={companyName:'Synthetic',currency:'SAR'};
+ const snapshot=sharedQuotationSnapshot(q,company);
+ assert.equal(snapshot.lines[0].partNumber,'REF-<A>');
+ const html=quotationHtml(snapshot,company,'');
+ assert.match(html,/REF-&lt;A&gt;/); assert.doesNotMatch(html,/private-shop|secret/);
 });

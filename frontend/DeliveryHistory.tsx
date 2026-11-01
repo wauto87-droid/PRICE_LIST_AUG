@@ -1,4 +1,5 @@
 'use client';
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from 'react';
 import Decimal from 'decimal.js';
 type Row=Record<string,any>;
@@ -35,7 +36,7 @@ export default function DeliveryHistory({row,admin,busy,submit,onPickup}:{row:Ro
       <h4>Mark delivery</h4>
       {stale&&<p role="alert">Progress changed. Your entry is retained. Review the remaining quantities, then <button type="button" onClick={()=>setBasis(row.requestRevision)}>Use updated quantities</button>.</p>}
       <label><input type="checkbox" checked={!!deliverable.length&&eligible.length===deliverable.length} onChange={e=>setPicked(e.target.checked?deliverable.map(l=>l.itemId):[])}/> Select all deliverable items</label>
-      <div className="table-scroll"><table><thead><tr><th>Select</th><th>Part number</th><th>Description</th><th>Collected</th><th>Delivered</th><th>Remaining</th><th>Delivery quantity</th><th>Unit</th></tr></thead><tbody>{lines.map(l=><tr key={l.itemId}><td><input aria-label={`Select delivery ${l.name}`} type="checkbox" checked={picked.includes(l.itemId)} onChange={e=>setPicked(e.target.checked?[...picked,l.itemId]:picked.filter(id=>id!==l.itemId))}/></td><td>{l.partNumber||'—'}</td><td>{l.name}</td><td>{l.collected}</td><td>{l.delivered}</td><td>{l.remaining}</td><td><input data-delivery-quantity aria-label={`${l.name} delivery quantity`} type="number" min="0.000001" step="0.000001" max={l.remaining} required disabled={busy||!picked.includes(l.itemId)} value={quantities[l.itemId]??l.remaining} onChange={e=>setQuantities(q=>({...q,[l.itemId]:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();const fields=Array.from(e.currentTarget.form!.querySelectorAll<HTMLInputElement>('input[data-delivery-quantity]:not(:disabled)'));fields[fields.indexOf(e.currentTarget)+1]?.focus();}}}/></td><td>{l.unit}</td></tr>)}</tbody></table></div>
+      <div className="table-scroll"><ResponsiveTable><thead><tr><th>Select</th><th>Part number</th><th>Description</th><th>Collected</th><th>Delivered</th><th>Remaining</th><th>Delivery quantity</th><th>Unit</th></tr></thead><tbody>{lines.map(l=><tr key={l.itemId}><td><input aria-label={`Select delivery ${l.name}`} type="checkbox" checked={picked.includes(l.itemId)} onChange={e=>setPicked(e.target.checked?[...picked,l.itemId]:picked.filter(id=>id!==l.itemId))}/></td><td>{l.partNumber||'—'}</td><td>{l.name}</td><td>{l.collected}</td><td>{l.delivered}</td><td>{l.remaining}</td><td><input data-delivery-quantity aria-label={`${l.name} delivery quantity`} type="number" min="0.000001" step="0.000001" max={l.remaining} required disabled={busy||!picked.includes(l.itemId)} value={quantities[l.itemId]??l.remaining} onChange={e=>setQuantities(q=>({...q,[l.itemId]:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();const fields=Array.from(e.currentTarget.form!.querySelectorAll<HTMLInputElement>('input[data-delivery-quantity]:not(:disabled)'));fields[fields.indexOf(e.currentTarget)+1]?.focus();}}}/></td><td>{l.unit}</td></tr>)}</tbody></ResponsiveTable></div>
       <div className="grid"><label>Delivery reference<input name="deliveryNumber" maxLength={500}/></label><label>Delivery date<input name="date" type="datetime-local" required/></label></div>
       <details><summary>Optional supporting details</summary><label>Invoice reference (optional)<input name="invoiceNumber" maxLength={500}/></label></details>
       {admin&&<label>Administrator reason<input name="overrideReason" required minLength={5}/></label>}
@@ -44,13 +45,13 @@ export default function DeliveryHistory({row,admin,busy,submit,onPickup}:{row:Ro
     </form>}
     {!lines.length&&<p>No confirmed collected quantities are currently available for delivery.</p>}
     <h4>Collection and delivery history</h4>
-    <div className="table-scroll"><table><thead><tr><th>Part / item</th><th>Supplier / shop</th><th>Customer</th><th>Confirmed</th><th>Collected</th><th>Delivered</th><th>Date / references</th></tr></thead><tbody>{balances.map((l,index)=>{
+    <div className="table-scroll"><ResponsiveTable><thead><tr><th>Part / item</th><th>Supplier / shop</th><th>Customer</th><th>Confirmed</th><th>Collected</th><th>Delivered</th><th>Date / references</th></tr></thead><tbody>{balances.map((l,index)=>{
       const item=row.items.find((i:Row)=>i.id===l.itemId);
       const deliveries=l.movements?.filter((m:Row)=>!m.voided&&['COLLECT','DELIVER'].includes(m.type))||l.deliveries||[];
       const supplierIds=[...new Set([...deliveries.filter((m:Row)=>m.type==='COLLECT').map((m:Row)=>m.supplier),l.supplier].filter(Boolean))];
       const supplier= l.supplierName||supplierIds.map(id=>row.suppliers?.find((s:Row)=>s.id===id)?.name||id).join(', ')||'—';
       return <tr key={`${l.orderId||index}:${l.itemId}`}><td>{l.partNumber||item?.partNumber||'—'}<div>{l.name||item?.name}</div></td><td>{supplier}</td><td>{row.customer||'Customer'}</td><td>{l.confirmedQuantity||'0'} {l.unit}</td><td>{l.collected} {l.unit}</td><td>{l.delivered} {l.unit}</td><td>{l.poNumber||(l.poReferences||[]).join(', ')}{deliveries.map((m:Row)=><div key={m.id}>{m.type==='COLLECT'?'Collected':'Delivered'} · {Number.isFinite(Date.parse(m.date))?new Date(m.date).toLocaleString():'Date not recorded'} · {m.quantity} {l.unit} · {m.deliveryNumber||m.invoiceNumber||m.evidence||'—'}</div>)}</td></tr>;
-    })}</tbody></table></div>
+    })}</tbody></ResponsiveTable></div>
     {onPickup&&(row.orders||[]).filter((o:Row)=>o.lines.some((l:Row)=>new Decimal(l.collected||0).gt(0))).map((o:Row)=><button key={o.id} type="button" disabled={busy} onClick={()=>onPickup(o.id)}>Download internal collection slip · {o.number}</button>)}
   </section>;
 }

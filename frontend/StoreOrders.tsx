@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useState, useMemo } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -628,7 +629,7 @@ export default function StoreOrders({
         </div>
       ) : (
         <div className="orders-table-wrapper">
-          <table className="orders-enterprise-table">
+          <ResponsiveTable className="orders-enterprise-table">
             <thead>
               <tr>
                 <th>{t("Order Details", "تفاصيل الطلب")}</th>
@@ -801,7 +802,7 @@ export default function StoreOrders({
                 );
               })}
             </tbody>
-          </table>
+          </ResponsiveTable>
         </div>
       )}
 
@@ -1278,7 +1279,7 @@ export default function StoreOrders({
                   </div>
                   <div className="card-content" style={{ padding: 0 }}>
                     <div className="drawer-items-table-wrap">
-                      <table className="drawer-items-table">
+                      <ResponsiveTable className="drawer-items-table">
                         <thead>
                           <tr>
                             <th>{t("Product", "الصنف")}</th>
@@ -1308,7 +1309,7 @@ export default function StoreOrders({
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </ResponsiveTable>
                     </div>
                   </div>
                 </div>

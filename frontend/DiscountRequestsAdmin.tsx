@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import type { AdminActionRunner } from "./admin-actions";
@@ -119,7 +120,7 @@ export default function DiscountRequestsAdmin({
         ))}
       </div>
       <div className="table-scroll">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               <th>{t("Status", "الحالة")}</th>
@@ -174,7 +175,7 @@ export default function DiscountRequestsAdmin({
               </tr>
             )}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       {detail && (
         <section className="card" style={{ marginTop: 16 }}>
@@ -270,7 +271,7 @@ export default function DiscountRequestsAdmin({
           )}
           <h3>{t("Recent product history", "سجل المنتج الحديث")}</h3>
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <tbody>
                 {detail.history.map((row: any) => (
                   <tr key={row.id}>
@@ -292,11 +293,11 @@ export default function DiscountRequestsAdmin({
                   </tr>
                 )}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           <h3>{t("Recent quotation usage", "استخدامات عروض الأسعار الحديثة")}</h3>
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   <th>{t("Quotation", "عرض السعر")}</th>
@@ -336,11 +337,11 @@ export default function DiscountRequestsAdmin({
                   </tr>
                 )}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
           <h3>{t("Request history", "سجل الطلب")}</h3>
           <div className="table-scroll">
-            <table>
+            <ResponsiveTable>
               <tbody>
                 {detail.events.map((event: any) => (
                   <tr key={event.id}>
@@ -351,7 +352,7 @@ export default function DiscountRequestsAdmin({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         </section>
       )}

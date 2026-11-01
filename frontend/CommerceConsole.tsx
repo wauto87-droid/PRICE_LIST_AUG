@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -827,7 +828,7 @@ export default function CommerceConsole({
             </form>
           )}
           <div className="dense-table-wrap">
-            <table>
+            <ResponsiveTable>
               <thead>
                 <tr>
                   <th>{t("Product", "المنتج")}</th>
@@ -859,7 +860,7 @@ export default function CommerceConsole({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResponsiveTable>
           </div>
         </>
       )}

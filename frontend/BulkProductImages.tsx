@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useState } from "react";
 import { api, readApiResponse, type Translate } from "./api";
 import { appPath } from "../shared/paths";
@@ -96,7 +97,7 @@ export default function BulkProductImages({ t }: { t: Translate }) {
       />
       {!!rows.length && (
         <>
-          <table className="dense-table">
+          <ResponsiveTable className="dense-table">
             <thead>
               <tr>
                 <th>{t("File", "الملف")}</th>
@@ -113,7 +114,7 @@ export default function BulkProductImages({ t }: { t: Translate }) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </ResponsiveTable>
           <button
             disabled={busy || !rows.some((r) => r.status === "READY")}
             onClick={upload}

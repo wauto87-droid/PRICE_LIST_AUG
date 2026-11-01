@@ -1,4 +1,5 @@
 'use client';
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useRef, useState } from 'react';
 import { api, requestWasCancelled } from './api';
 import SharedQuotation from './SharedQuotation';
@@ -67,8 +68,7 @@ export default function PricingCollectionJobs({documentId,requestId,quotationVer
       {!!(result?.unknownProgress||result?.staleProgress)&&<p className="wf-warning" role="status">{result?.unknownProgress||0} document(s) have unavailable ERP progress; {result?.staleProgress||0} show last known progress. Counts may be incomplete.</p>}
       <div className="wf-header"><h3>{workflowCards.find(([v])=>v===filter)?.[1]} · {result?.total??'—'} documents</h3>{loading&&<span role="status">Refreshing…</span>}</div>
       {result&&!result.rows.length?<div className="wf-empty">No matching documents. Try another customer or document number, or clear the filters.</div>:<>
-        <div className="wf-desktop table-scroll"><table><thead><tr><th>Document / customer</th><th>Creator</th><th>Status</th><th>Progress</th><th>Attention</th></tr></thead><tbody>{result?.rows?.map((r:Row)=><tr key={r.id}><td><button className="wf-link" onClick={()=>open(r.id)}>{r.number}</button><div>{customerName(r)}</div><small className="wf-muted">{r.workflow||'Not linked to ERP'}</small></td><td>{r.creator}</td><td><span className="wf-pill">{r.status}</span></td><td><ProgressBadge row={r}/></td><td>{r.categories.includes('attention')?<span className="wf-warning">Needs attention</span>:'—'}</td></tr>)}</tbody></table></div>
-        <div className="wf-mobile">{result?.rows?.map((r:Row)=><article className="wf-document card" key={r.id}><button className="wf-link" onClick={()=>open(r.id)}>{r.number}</button><span className="wf-pill">{r.status}</span><h3>{customerName(r)}</h3><p className="wf-muted">{r.creator}</p><ProgressBadge row={r}/>{r.categories.includes('attention')&&<p className="wf-warning">Needs attention</p>}</article>)}</div>
+        <div className="wf-desktop table-scroll"><ResponsiveTable><thead><tr><th>Document / customer</th><th>Creator</th><th>Status</th><th>Progress</th><th>Attention</th></tr></thead><tbody>{result?.rows?.map((r:Row)=><tr key={r.id}><td><button className="wf-link" onClick={()=>open(r.id)}>{r.number}</button><div>{customerName(r)}</div><small className="wf-muted">{r.workflow||'Not linked to ERP'}</small></td><td>{r.creator}</td><td><span className="wf-pill">{r.status}</span></td><td><ProgressBadge row={r}/></td><td>{r.categories.includes('attention')?<span className="wf-warning">Needs attention</span>:'—'}</td></tr>)}</tbody></ResponsiveTable></div>
       </>}
       {result&&<div className="wf-header"><button disabled={loading||result.page<=1} onClick={()=>setPage(result.page-1)}>Previous</button><span>Page {result.page} of {Math.max(1,Math.ceil(result.total/result.pageSize))} · {result.total} results</span><button disabled={loading||result.page*result.pageSize>=result.total} onClick={()=>setPage(result.page+1)}>Next</button></div>}
     </>:<>

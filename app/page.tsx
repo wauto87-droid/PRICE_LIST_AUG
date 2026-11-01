@@ -17,6 +17,7 @@ import AdDisplay from "@/frontend/AdDisplay";
 import { showConfirm } from "@/frontend/confirm";
 import { appPath } from "@/shared/paths";
 import { healthTransition } from "@/frontend/connectivity";
+import { normalizeEditableQuotationCart } from "@/shared/quotation-line-compat";
 const emptyCart = () => ({
   customer: { name: "", number: "", mobile: "", reference: "", notes: "" },
   lines: [] as any[],
@@ -35,6 +36,19 @@ export default function App() {
     [updateReady, setUpdateReady] = useState(false),
     [maintenance, setMaintenance] = useState<any>(null);
   const workflowOpened=useRef(false);
+  const editorBaseline=useRef('');
+  const currentCart=useRef(cart);currentCart.current=cart;
+  const returningToEditor=useRef(false);
+  const editorSignature=(value:any)=>JSON.stringify({customer:value.customer,lines:value.lines.map((l:any)=>({input:l.input,partNumber:l.partNumber,description:l.description})),adjustment:value.adjustment});
+  const editorHasChanges=()=>!!editorBaseline.current && editorBaseline.current!==editorSignature(currentCart.current);
+  useEffect(()=>{
+    const guard=(event:BeforeUnloadEvent)=>{if(editorHasChanges()){event.preventDefault();event.returnValue='';}};
+    window.addEventListener('beforeunload',guard);return()=>window.removeEventListener('beforeunload',guard);
+  },[]);
+  async function returnToQuotations(){
+    if(editorHasChanges() && !await showConfirm(t('Discard unsaved quotation edits?','تجاهل التعديلات غير المحفوظة؟')))return;
+    editorBaseline.current='';setCart(emptyCart());setWorkflowEditor(false);setTab('quotations');
+  }
   useEffect(()=>{
     if(!session||workflowOpened.current)return;
     const params=new URLSearchParams(location.search);const id=params.get('workflowDocument');const requestId=params.get('workflowRequest');if(!id&&!requestId)return;
@@ -89,7 +103,7 @@ export default function App() {
           }),
         );
         const saved = localStorage.getItem("amt-draft-" + s.user.id);
-        if (saved) setCart(JSON.parse(saved));
+        if (saved) setCart(normalizeEditableQuotationCart(JSON.parse(saved)));
       } else {
         localStorage.removeItem("amt-offline-session");
         for (const k of Object.keys(localStorage))
@@ -108,7 +122,7 @@ export default function App() {
           const s = JSON.parse(saved);
           setSession(s);
           const draft = localStorage.getItem("amt-draft-" + s.user.id);
-          if (draft) setCart(JSON.parse(draft));
+          if (draft) setCart(normalizeEditableQuotationCart(JSON.parse(draft)));
         }
       } else {
         try {
@@ -281,17 +295,31 @@ export default function App() {
   }
   const [workflowIdentity, setWorkflowIdentity] = useState<any>();
   const [workflowEditor,setWorkflowEditor] = useState(false);
-  async function openSharedDraft(identity: any) {
+  const [workflowFromQuotations,setWorkflowFromQuotations] = useState(false);
+  useEffect(() => {
+    const restore = async (event: PopStateEvent) => {
+      if (!event.state?.amtQuotations) return;
+      if(returningToEditor.current){returningToEditor.current=false;return;}
+      if(editorHasChanges()){
+        if(!await showConfirm('Discard unsaved quotation edits?')){returningToEditor.current=true;window.history.forward();return;}
+        editorBaseline.current='';setCart(emptyCart());
+      }
+      setWorkflowIdentity(undefined); setWorkflowEditor(false); setWorkflowFromQuotations(false); setTab('quotations');
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, []);
+  async function openSharedDraft(identity: any, destination = 'workflow-jobs') {
     try {
       const query = identity.documentId ? 'documentId=' + encodeURIComponent(identity.documentId) : 'requestId=' + encodeURIComponent(identity.requestId);
       const draft = await api('shared-quotation?' + query + '&draft=1&mode=' + encodeURIComponent(identity.mode || 'edit'));
-      setCart(draft); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab('workflow-jobs');
+      setCart(normalizeEditableQuotationCart(draft)); setWorkflowIdentity({...identity}); setWorkflowEditor(true); setTab(destination);
     } catch (e) { setMessage((e as Error).message); }
   }
-  function openSharedQuotation(identity: any) { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab('workflow-jobs'); }
+  function openSharedQuotation(identity: any, destination = 'workflow-jobs') { setWorkflowIdentity({ ...identity }); setWorkflowEditor(false); setTab(destination); }
   function openQuote(q: any) {
-    if (q.sharedWorkflow) { void openSharedDraft({ documentId: q.id }); return; }
-    setCart({
+    if(q.revisionPricingNotice)setMessage(q.revisionPricingNotice);
+    const next=normalizeEditableQuotationCart({
       id: q.id,
       version: q.version,
       number: q.number,
@@ -299,7 +327,11 @@ export default function App() {
       workflowCurrency: q.workflowCurrency || "SAR",
       customer: q.customer,
       lines: q.lines,
+      adjustment:q.adjustment || {targetTotal:q.totals?.targetTotal || ''},
     });
+    editorBaseline.current=editorSignature(next);
+    setCart(next);
+    setWorkflowEditor(false);
     setTab("draft");
   }
   const compactWorkspace = !!session && tab === "workspace";
@@ -561,7 +593,7 @@ export default function App() {
               <button
                 key={key}
                 className={tab === key ? "active" : ""}
-                onClick={() => setTab(key)}
+                onClick={() => { setWorkflowEditor(false); setWorkflowFromQuotations(false); if (key === 'quotations') setWorkflowIdentity(undefined); setTab(key); }}
               >
                 {t(en, ar)}
                 {key === "draft" && !!cart.lines.length && (
@@ -574,6 +606,7 @@ export default function App() {
             </div>
           </nav>
           <main className={compactWorkspace ? "workspace-compact-main" : ""}>
+            {tab === 'workflow-jobs' && workflowFromQuotations && <button type="button" onClick={() => { setWorkflowFromQuotations(false); setWorkflowEditor(false); setWorkflowIdentity(undefined); setTab('quotations'); }}>{t('Back to quotations','العودة إلى عروض الأسعار')}</button>}
             <div
               className={
                 "page-heading" +
@@ -626,9 +659,10 @@ export default function App() {
                 />
               </div>
             )}
-            {(tab === "draft" || (tab === "workflow-jobs" && workflowEditor)) && (
-              <div className={tab === "workflow-jobs" ? "workflow-editor" : "workspace-side"}>
-                {tab === "workflow-jobs" && <><button onClick={() => setWorkflowEditor(false)}>Back to workflow</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
+            {(tab === "draft" || (['workflow-jobs','quotations'].includes(tab) && workflowEditor)) && (
+              <div className={workflowEditor ? "workflow-editor" : "workspace-side"}>
+                {!workflowEditor && cart.id && <button type="button" onClick={()=>void returnToQuotations()}>{t('Back to quotation','العودة إلى عرض السعر')}</button>}
+                {workflowEditor && <><button onClick={() => setWorkflowEditor(false)}>{tab === 'quotations' ? 'Back to quotation' : 'Back to workflow'}</button><p>{cart.lines.length} items included{cart.sharedOmittedItems?.length ? ` · ${cart.sharedOmittedItems.length} omitted: ${cart.sharedOmittedItems.map((i: any) => i.partNumber || i.name).join(', ')}` : ''}</p></>}
                 <Cart
                   t={t}
                   user={session.user}
@@ -637,8 +671,10 @@ export default function App() {
                   settings={session.settings}
                   online={online}
                   onSaved={(q) => {
-                    if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }); setCart(emptyCart()); return; }
+                    if (q.sharedWorkflow) { setMessage(t('Quotation saved', 'تم حفظ عرض السعر')); openSharedQuotation({ documentId: q.sharedDocumentId, requestId: q.sharedRequestId }, tab === 'quotations' ? 'quotations' : 'workflow-jobs'); setCart(emptyCart()); return; }
                     setCart(emptyCart());
+                    editorBaseline.current='';
+                    if(q.id){setWorkflowIdentity({documentId:q.id});setTab('quotations');}
                     setMessage(
                       t(
                         "Saved quotation " + q.number,
@@ -647,7 +683,7 @@ export default function App() {
                     );
                   }}
                   onTemplates={() => setTab("quotations")}
-                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId, mode:cart.sharedDraftMode })}
+                  onReloadShared={() => void openSharedDraft({ documentId: cart.sharedDocumentId, requestId: cart.sharedRequestId, mode:cart.sharedDraftMode }, tab === 'quotations' ? 'quotations' : 'workflow-jobs')}
                 />
                 <div className="actions footer-actions">
                   <button
@@ -665,7 +701,7 @@ export default function App() {
                   >
                     {t("New quotation", "عرض سعر جديد")}
                   </button>
-                  <button onClick={() => setTab("quotations")}>
+                  <button onClick={() => void returnToQuotations()}>
                     {t("Open saved quotations", "فتح العروض المحفوظة")}
                   </button>
                 </div>
@@ -678,13 +714,13 @@ export default function App() {
                   user={session.user}
                   online={online}
                   onImported={(q) => {
-                    setCart({
+                    setCart(normalizeEditableQuotationCart({
                       id: q.id,
                       version: q.version,
                       number: q.number,
                       customer: q.customer,
                       lines: q.lines,
-                    });
+                    }));
                     setTab("draft");
                     setMessage(
                       t(
@@ -703,19 +739,19 @@ export default function App() {
                 </div>
               ))}
             {tab === "workflow-jobs" && <div hidden={workflowEditor}><PricingCollectionJobs onOpenDraft={identity => void openSharedDraft(identity)} onOpenQuotation={identity => openSharedQuotation({ ...identity, fulfillment: true })} requestId={workflowIdentity?.requestId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowRequest')||undefined:undefined)} quotationVersion={workflowIdentity?.version || (typeof window!=='undefined'?Number(new URLSearchParams(window.location.search).get('quotationVersion'))||undefined:undefined)} documentId={workflowIdentity?.documentId || (typeof window!=='undefined'?new URLSearchParams(window.location.search).get('workflowDocument')||undefined:undefined)} /></div>}
-            {tab === "quotations" &&
+            {(tab === "quotations" || (tab==='draft' && cart.id)) &&
               (online ? (
-                <Quotations
+                <div hidden={workflowEditor || tab!=='quotations'}><Quotations
                   t={t}
                   user={session.user}
                   onOpen={openQuote}
                   workflowIdentity={workflowIdentity}
-                  onCloseWorkflow={() => setWorkflowIdentity(undefined)}
-                  onOpenWorkflow={openSharedQuotation}
-                  onOpenSharedDraft={identity => void openSharedDraft(identity)}
+                  onCloseWorkflow={() => { setWorkflowIdentity(undefined); setWorkflowEditor(false); }}
+                  onOpenWorkflow={identity => { setWorkflowFromQuotations(true); openSharedQuotation(identity); }}
+                  onOpenSharedDraft={identity => void openSharedDraft(identity, 'quotations')}
                   cart={cart}
                   onUseTemplate={(next, warning) => {
-                    setCart(next);
+                    setCart(normalizeEditableQuotationCart(next));
                     setTab("draft");
                     setMessage(
                       warning ||
@@ -725,7 +761,7 @@ export default function App() {
                         ),
                     );
                   }}
-                />
+                /></div>
               ) : (
                 <div className="card notice">
                   {t(

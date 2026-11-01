@@ -1,4 +1,5 @@
 "use client";
+import ResponsiveTable from "./ResponsiveTable";
 import { useEffect, useState } from "react";
 import { api, type Translate } from "./api";
 import { showConfirm } from "./confirm";
@@ -918,7 +919,7 @@ export default function Imports({
       </label>
       {error && <div className="notice error">{error}</div>}
       <div className="table-scroll">
-        <table>
+        <ResponsiveTable>
           <thead>
             <tr>
               <th>{t("File", "الملف")}</th>
@@ -950,7 +951,7 @@ export default function Imports({
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       {job && (
         <div className="modal-backdrop">
@@ -1574,7 +1575,7 @@ export default function Imports({
                       <>
                         <h4>{t("Activity presets", "إعدادات النشاط")}</h4>
                         <div className="table-scroll">
-                          <table>
+                          <ResponsiveTable>
                             <thead>
                               <tr>
                                 <th>{t("Activity", "النشاط")}</th>
@@ -1662,7 +1663,7 @@ export default function Imports({
                                 );
                               })}
                             </tbody>
-                          </table>
+                          </ResponsiveTable>
                         </div>
                       </>
                     )}
@@ -2357,7 +2358,7 @@ export default function Imports({
                     </button>
                   </div>
                 )}
-                <table className="import-review-table">
+                <ResponsiveTable className="import-review-table">
                   <thead>
                     <tr>
                       <th>{t("Select", "تحديد")}</th>
@@ -2595,7 +2596,7 @@ export default function Imports({
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </div>
             )}
             {job.totalPages > 1 && (
@@ -2806,7 +2807,7 @@ export default function Imports({
             {confirmation && (
               <div className="table-scroll">
                 <h3>Final reviewed prices / الأسعار النهائية</h3>
-                <table>
+                <ResponsiveTable>
                   <thead>
                     <tr>
                       <th>Part</th>
@@ -2870,7 +2871,7 @@ export default function Imports({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResponsiveTable>
               </div>
             )}
             {job.status === "IMPORTED" && (

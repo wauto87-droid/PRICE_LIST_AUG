@@ -433,7 +433,8 @@ export async function createCustomerLink(
   days = 30,
 ) {
   requirePermission(actor, "QUOTE_ISSUE");
-  const q = await quotes.getQuote(db, actor, quotationId);
+  const protectedSource=(await one(db,"SELECT id FROM sw_job_documents WHERE id=$1",[quotationId])) || (await one(db,"SELECT d.id FROM quotation_revision_sources r JOIN sw_job_documents d ON d.id=r.root_document_id::text WHERE r.quotation_id=$1",[quotationId]));
+  const q = await quotes.getQuote(db, actor, quotationId,Boolean(protectedSource));
   assert(
     ["ISSUED", "SENT", "VIEWED"].includes(q.status),
     409,
