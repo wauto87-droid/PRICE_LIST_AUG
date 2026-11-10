@@ -372,9 +372,9 @@ test("Delivery-note quotation import maps rows, supports row actions, and finali
   assert.equal(quote.customer.number, "001");
   assert.match(quote.customer.reference, /DN-100/);
   assert.doesNotMatch(quote.customer.reference, /1463/);
-  assert.match(quote.customer.notes, /Delivery dates: 2026-08-31/);
+  assert.match(quote.customer.notes, /Delivery dates: 31-08-26/);
   assert.match(quote.customer.notes, /Imported from delivery notes: DN-100/);
-  assert.doesNotMatch(quote.customer.notes, /1463|2026-08-30/);
+  assert.doesNotMatch(quote.customer.notes, /1463|2026-08-30|30-08-26/);
   assert.equal(quote.lines.length, 2);
   assert.equal(quote.lines[0].source, "CATALOG");
   assert.equal(quote.lines[1].source, "CUSTOM");
@@ -752,7 +752,7 @@ test("Delivery-note quotation import normalizes Excel serial dates and doc numbe
   assert.equal(quote.lines[0].importMeta.docNo, "1586");
   assert.equal(quote.lines[0].importMeta.docDate.startsWith("2026-08-3"), true);
   assert.equal(quote.customer.reference, "Delivery notes: 1586");
-  assert.match(quote.customer.notes, /Delivery dates: 2026-08-3/);
+  assert.match(quote.customer.notes, /Delivery dates: 30-08-26/);
   assert.match(quote.customer.notes, /Imported from delivery notes: 1586/);
   assert.doesNotMatch(quote.customer.notes, /46264\.478310185186|1586\.0/);
   const html = quotationHtml(
@@ -766,7 +766,7 @@ test("Delivery-note quotation import normalizes Excel serial dates and doc numbe
     },
     "",
   );
-  assert.match(html, /Delivery dates: 2026-08-3/);
+  assert.match(html, /Delivery dates: 30-08-26/);
   assert.match(html, /Imported from delivery notes: 1586/);
   assert.doesNotMatch(html, /46264\.478310185186|1586\.0/);
   await db.close?.();

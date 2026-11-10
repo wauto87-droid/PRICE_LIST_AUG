@@ -1,7 +1,59 @@
+import { formatDeliveryDateDisplay } from "../pricing/normalize";
+
 export function importedDeliveryMeta(line: any) {
   if (line?.input?.importMeta?.source === "DELIVERY_NOTE") return line.input.importMeta;
   if (line?.importMeta?.source === "DELIVERY_NOTE") return line.importMeta;
   return null;
+}
+
+export function parseDeliveryDocNoNumber(docNo: unknown): number | null {
+  if (docNo === null || docNo === undefined) return null;
+  const str = String(docNo).trim();
+  const match = str.match(/(\d+(?:\.\d+)?)/);
+  if (match) {
+    const num = parseFloat(match[1]);
+    if (!isNaN(num)) return num;
+  }
+  return null;
+}
+
+export function compareDeliveryNotes(aMeta: any, bMeta: any): number {
+  if (!aMeta && !bMeta) return 0;
+  if (!aMeta) return 1;
+  if (!bMeta) return -1;
+
+  const aDocNo = String(aMeta.docNo ?? "").trim();
+  const bDocNo = String(bMeta.docNo ?? "").trim();
+
+  const aNum = parseDeliveryDocNoNumber(aDocNo);
+  const bNum = parseDeliveryDocNoNumber(bDocNo);
+
+  if (aNum !== null && bNum !== null && aNum !== bNum) {
+    return aNum - bNum;
+  }
+  if (aDocNo !== bDocNo) {
+    return aDocNo.localeCompare(bDocNo, undefined, { numeric: true, sensitivity: "base" });
+  }
+
+  // Same DN number: compare dates ascending (oldest to newest)
+  const aDate = String(aMeta.docDate ?? "").trim();
+  const bDate = String(bMeta.docDate ?? "").trim();
+  if (aDate && bDate && aDate !== bDate) {
+    return aDate.localeCompare(bDate);
+  }
+
+  // Same date: compare row numbers
+  const aRow = Number(aMeta.rowNumber ?? 0);
+  const bRow = Number(bMeta.rowNumber ?? 0);
+  return aRow - bRow;
+}
+
+export function sortLinesByDeliveryNote<T = any>(lines: T[]): T[] {
+  return [...lines].sort((a: any, b: any) => {
+    const aMeta = importedDeliveryMeta(a);
+    const bMeta = importedDeliveryMeta(b);
+    return compareDeliveryNotes(aMeta, bMeta);
+  });
 }
 
 export function extractActiveDeliveryNotes(lines: any[] = []) {
@@ -25,6 +77,13 @@ export function extractActiveDeliveryNotes(lines: any[] = []) {
     }
   }
 
+  docNos.sort((a, b) => {
+    const an = parseDeliveryDocNoNumber(a);
+    const bn = parseDeliveryDocNoNumber(b);
+    if (an !== null && bn !== null && an !== bn) return an - bn;
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  });
+
   return { docNos, dates };
 }
 
@@ -44,11 +103,12 @@ export function formatDeliveryReference(docNos: string[], maxLen = 200): string 
 export function formatDeliveryNotes(dates: string[], docNos: string[], maxLen = 1000): string {
   const parts: string[] = [];
   if (dates.length) {
-    const datesFull = `Delivery dates: ${dates.join(", ")}`;
+    const formattedDates = dates.map((d) => formatDeliveryDateDisplay(d));
+    const datesFull = `Delivery dates: ${formattedDates.join(", ")}`;
     if (datesFull.length <= 250) {
       parts.push(datesFull);
     } else {
-      parts.push(`Delivery dates: ${dates[0]} to ${dates[dates.length - 1]} (${dates.length} dates)`);
+      parts.push(`Delivery dates: ${formattedDates[0]} to ${formattedDates[formattedDates.length - 1]} (${formattedDates.length} dates)`);
     }
   }
   if (docNos.length) {

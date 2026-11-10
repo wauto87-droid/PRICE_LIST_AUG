@@ -1883,18 +1883,111 @@ export async function handle(req: Request, db: DB): Promise<Response> {
     }
     if (root === "customers") {
       auth.requirePermission(actor, "QUOTE_CREATE");
-      if (method === "GET")
-        return response(
-          (
+      if (method === "GET") {
+        const query = (url.searchParams.get("q") ?? "").slice(0, 100);
+        const searchPattern = "%" + query + "%";
+        const trimmedCode = query.trim();
+
+        const masterCustomers = (
+          await db.query(
+            "SELECT * FROM customers WHERE name ILIKE $1 OR number ILIKE $1 ORDER BY CASE WHEN btrim(number)=$2 THEN 0 ELSE 1 END, name LIMIT 50",
+            [searchPattern, trimmedCode],
+          )
+        ).rows;
+
+        let quoteCustomers: any[] = [];
+        try {
+          quoteCustomers = (
             await db.query(
-              "SELECT * FROM customers WHERE name ILIKE $1 OR number ILIKE $1 ORDER BY CASE WHEN btrim(number)=$2 THEN 0 ELSE 1 END,name LIMIT 50",
-              [
-                "%" + (url.searchParams.get("q") ?? "").slice(0, 100) + "%",
-                (url.searchParams.get("q") ?? "").slice(0, 100).trim(),
-              ],
+              `SELECT DISTINCT ON (btrim(customer->>'number'))
+                 customer->>'name' AS name,
+                 customer->>'number' AS number,
+                 customer->>'mobile' AS mobile,
+                 customer->>'reference' AS reference,
+                 updated_at
+               FROM quotations
+               WHERE (customer->>'number' ILIKE $1 OR customer->>'name' ILIKE $1)
+                 AND btrim(COALESCE(customer->>'number', '')) != ''
+                 AND btrim(COALESCE(customer->>'number', '')) != '1'
+                 AND btrim(COALESCE(customer->>'name', '')) != ''
+               ORDER BY btrim(customer->>'number'), updated_at DESC
+               LIMIT 50`,
+              [searchPattern],
             )
-          ).rows,
-        );
+          ).rows;
+        } catch {}
+
+        let jobCustomers: any[] = [];
+        try {
+          jobCustomers = (
+            await db.query(
+              `SELECT DISTINCT ON (btrim(header->>'customerCode'))
+                 header->>'customerName' AS name,
+                 header->>'customerCode' AS number,
+                 header->>'customerMobile' AS mobile,
+                 '' AS reference,
+                 updated_at
+               FROM delivery_quote_jobs
+               WHERE (header->>'customerCode' ILIKE $1 OR header->>'customerName' ILIKE $1)
+                 AND btrim(COALESCE(header->>'customerCode', '')) != ''
+                 AND btrim(COALESCE(header->>'customerName', '')) != ''
+               ORDER BY btrim(header->>'customerCode'), updated_at DESC
+               LIMIT 50`,
+              [searchPattern],
+            )
+          ).rows;
+        } catch {}
+
+        let dnCustomers: any[] = [];
+        try {
+          dnCustomers = (
+            await db.query(
+              `SELECT DISTINCT ON (btrim(customer_code))
+                 customer AS name,
+                 customer_code AS number,
+                 '' AS mobile,
+                 '' AS reference
+               FROM dn_entries
+               WHERE (customer_code ILIKE $1 OR customer ILIKE $1)
+                 AND btrim(customer_code) != ''
+                 AND btrim(customer) != ''
+               ORDER BY btrim(customer_code)
+               LIMIT 50`,
+              [searchPattern],
+            )
+          ).rows;
+        } catch {}
+
+        const byCode = new Map<string, boolean>();
+        const results: any[] = [];
+
+        function addCandidate(c: any) {
+          const num = String(c.number || "").trim().toLowerCase();
+          if (num && byCode.has(num)) return;
+          if (num) byCode.set(num, true);
+          results.push({
+            id: c.id,
+            name: c.name || "",
+            number: c.number || "",
+            mobile: c.mobile || "",
+            reference: c.reference || "",
+          });
+        }
+
+        for (const c of masterCustomers) addCandidate(c);
+        for (const c of quoteCustomers) addCandidate(c);
+        for (const c of jobCustomers) addCandidate(c);
+        for (const c of dnCustomers) addCandidate(c);
+
+        results.sort((a, b) => {
+          const aExact = String(a.number || "").trim().toLowerCase() === trimmedCode.toLowerCase() ? 0 : 1;
+          const bExact = String(b.number || "").trim().toLowerCase() === trimmedCode.toLowerCase() ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+
+        return response(results.slice(0, 50));
+      }
       if (method === "POST") {
         const customer = quotes.quoteInput.shape.customer.parse(
           await body(req),

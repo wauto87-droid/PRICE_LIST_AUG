@@ -5,6 +5,7 @@ import { api, uploadApi, type Translate } from "./api";
 import {
   formatDeliveryDocNo,
   formatDeliveryDate,
+  formatDeliveryDateDisplay,
 } from "@/backend/pricing/normalize";
 import { showConfirm } from "./confirm";
 import { deliveryQuoteMappingDefaults } from "./delivery-quote-mapping";
@@ -980,7 +981,7 @@ export default function DeliveryQuoteImport({
                         />
                       </td>
                       <td>{row.row_number}</td>
-                      <td>{formatDeliveryDate(row.doc_date ?? row.docDate ?? raw[job.mapping?.date]) || "—"}</td>
+                      <td>{formatDeliveryDateDisplay(row.doc_date ?? row.docDate ?? raw[job.mapping?.date]) || "—"}</td>
                       {showCustomerColumn && (
                         <td>{raw[job.mapping?.customerName] || "—"}</td>
                       )}

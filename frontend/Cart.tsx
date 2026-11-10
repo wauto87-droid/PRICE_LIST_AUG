@@ -22,6 +22,7 @@ import { humanizeCustomLineError } from "./custom-line-errors";
 import {
   formatDeliveryDocNo,
   formatDeliveryDate,
+  formatDeliveryDateDisplay,
 } from "@/backend/pricing/normalize";
 import {
   cartLineHasBlockingError,
@@ -51,6 +52,7 @@ import {
 import {
   syncQuotationDeliveryMeta,
   stripDeliveryNotesFromReference,
+  sortLinesByDeliveryNote,
 } from "./quotation-delivery-sync";
 const decimalPattern = /^\d{1,12}(?:\.\d{1,6})?$/;
 const importedDeliveryMeta = (line: any) =>
@@ -62,6 +64,41 @@ const importedDeliveryMeta = (line: any) =>
 const unresolvedImportedCustom = (line: any) =>
   line?.input?.type === "CUSTOM" &&
   importedDeliveryMeta(line)?.unresolved === true;
+
+export function isEmptyDraftRow(line: any): boolean {
+  if (!line) return false;
+  if (line.productId || line.sellingLevels || importedDeliveryMeta(line)) return false;
+  if (line.input?.type === "CUSTOM" || line.source === "CUSTOM") {
+    const pn = String(line.input?.partNumber ?? line.partNumber ?? "").trim();
+    const desc = String(line.input?.description ?? line.description ?? "").trim();
+    const qty = String(line.input?.quantity ?? "").trim();
+    const price = String(line.input?.unitPriceExcl ?? "").trim();
+    const isPnDefault = !pn || pn === "CUSTOM";
+    return isPnDefault && !desc && (!qty || qty === "0") && (!price || price === "0");
+  }
+  return false;
+}
+
+export function createBlankEntryLine(): any {
+  return {
+    source: "CUSTOM",
+    partNumber: "",
+    description: "",
+    unit: "pcs",
+    quantityPrecision: 6,
+    input: {
+      type: "CUSTOM",
+      partNumber: "",
+      description: "",
+      unit: "pcs",
+      quantity: "",
+      discount: "0",
+      unitPriceExcl: "",
+    },
+    price: null,
+    pending: false,
+  };
+}
 export const blankZeroDiscount = (value: unknown) =>
   Number(String(value ?? "").trim() || "0") === 0 ? "" : String(value);
 const catalogUsesMarkup = (line: any, loadedLevels: any[] = []) => {
@@ -251,6 +288,7 @@ export default function Cart({
   const [reusePreviousPrices, setReusePreviousPrices] = useState(false);
   const [reuseBusy, setReuseBusy] = useState(false);
   const activePriceRow = useRef<number | null>(null);
+  const codeLookupTimer = useRef<any>(null);
   const customerIdentity = useRef(`${cart.id || "NEW"}|${cart.customer.number?.trim() || ""}|${cart.customer.name?.trim() || ""}`);
   const cartRef = useRef(cart);
   const pendingSharedSave = useRef<PendingQuotationCommand | null>(null);
@@ -309,7 +347,7 @@ export default function Cart({
   if (!cart.sharedDirty || savedPricing.current.document !== cart.sharedDocumentId) savedPricing.current = { document: cart.sharedDocumentId, key: pricingKey };
   const sum = cart.sharedWorkflow && (!cart.sharedDirty || pricingKey === savedPricing.current.key) && cart.sharedCanonicalTotals ? { ...calculatedSum, ...cart.sharedCanonicalTotals } : calculatedSum;
   const hasBlockingErrors =
-    cart.lines.some((line: any) => cartLineHasBlockingError(line)) ||
+    cart.lines.filter((line: any) => !isEmptyDraftRow(line)).some((line: any) => cartLineHasBlockingError(line)) ||
     !!sum.error;
   cartRef.current = cart;
   useEffect(() => {
@@ -450,11 +488,17 @@ export default function Cart({
     event.preventDefault();
     const nextIndex = nextEditableRow(cartRef.current.lines, index, field);
     if (nextIndex < 0) return;
-    const next = document.querySelector<HTMLInputElement>(
-      `[data-cart-field="${field}"][data-cart-row="${nextIndex}"]`,
-    );
-    next?.focus();
-    next?.select();
+    const focusTarget = () => {
+      const next = document.querySelector<HTMLInputElement>(
+        `[data-cart-field="${field}"][data-cart-row="${nextIndex}"]`,
+      );
+      if (next) {
+        next.focus();
+        next.select();
+      }
+    };
+    focusTarget();
+    setTimeout(focusTarget, 30);
   };
 
   async function loadCustomerByCode(rawCode: string) {
@@ -462,8 +506,12 @@ export default function Cart({
     if (!online || !code || code === "1") return;
     try {
       const customers = await api(`customers?q=${encodeURIComponent(code)}`);
-      const customer = customers.find((item: any) => String(item.number || "").trim() === code);
-      if (!customer) return;
+      const customer =
+        customers.find(
+          (item: any) =>
+            String(item.number || "").trim().toLowerCase() === code.toLowerCase(),
+        ) || (customers.length === 1 && String(customers[0]?.number || "").trim() ? customers[0] : null);
+      if (!customer || !customer.name) return;
       const current = cartRef.current;
       const cleanedRef = stripDeliveryNotesFromReference(customer.reference || "");
       const next = {
@@ -471,14 +519,14 @@ export default function Cart({
         customer: {
           ...current.customer,
           name: customer.name || current.customer.name,
-          number: code,
-          mobile: customer.mobile || "",
+          number: customer.number || code,
+          mobile: customer.mobile || current.customer.mobile || "",
           reference: current.customer.reference || cleanedRef,
         },
       };
       cartRef.current = next;
       setCart(next);
-      setNotice(t(`Customer ${code} loaded.`, `تم تحميل العميل ${code}.`));
+      setNotice(t(`Customer loaded: ${customer.name}`, `تم تحميل العميل: ${customer.name}`));
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -674,6 +722,17 @@ export default function Cart({
         },
       };
     });
+    if (
+      key === "quantity" &&
+      index === lines.length - 1 &&
+      value.trim() !== "" &&
+      !isNaN(Number(value)) &&
+      Number(value) > 0
+    ) {
+      if (!isEmptyDraftRow(lines[lines.length - 1])) {
+        lines.push(createBlankEntryLine());
+      }
+    }
     setCart({ ...cart, lines });
   }
 
@@ -922,14 +981,15 @@ export default function Cart({
     setNotice("");
     const requestId = cart.requestId || crypto.randomUUID();
     if (!cart.id && !cart.requestId) setCart({ ...cart, requestId });
-    const syncedCustomer = syncQuotationDeliveryMeta(cart.lines, cart.customer);
+    const activeLines = cart.lines.filter((l: any) => !isEmptyDraftRow(l));
+    const syncedCustomer = syncQuotationDeliveryMeta(activeLines, cart.customer);
     try {
       const q = await api(
         "quotations" + (cart.id ? "/" + cart.id : ""),
         cart.id ? "PUT" : "POST",
         {
           customer: syncedCustomer,
-          lines: cart.lines.map((l: any) =>
+          lines: activeLines.map((l: any) =>
             l.input?.type === "CUSTOM"
               ? sanitizeCustomInput(l.input)
               : {
@@ -1001,6 +1061,22 @@ export default function Cart({
       <div className="actions quotation-editor-actions" role="toolbar" aria-label="Quotation preparation actions">
         <strong className="editor-total">{cart.lines.length} {t("items", "أصناف")} · {cart.workflowCurrency || "SAR"} {quotationMoney(sum.total, cart.workflowCurrency || "SAR")}</strong>
         <button type="button" ref={focusButton} aria-pressed={focusTable} onClick={() => setFocusTable(value => !value)}>{focusTable ? t("Exit focus", "إنهاء التركيز") : t("Focus table", "تركيز الجدول")}</button>
+        {cart.lines.some((l: any) => Boolean(importedDeliveryMeta(l)?.docNo)) && (
+          <button
+            type="button"
+            title={t("Sort quotation rows by DN number (smallest to largest / oldest to newest)", "ترتيب صفوف العرض حسب رقم إذن التسليم من الأصغر إلى الأكبر")}
+            onClick={() => {
+              const sorted = sortLinesByDeliveryNote(cart.lines);
+              const syncedCustomer = syncQuotationDeliveryMeta(sorted.filter((l: any) => !isEmptyDraftRow(l)), cart.customer);
+              const next = { ...cart, lines: sorted, customer: syncedCustomer };
+              cartRef.current = next;
+              setCart(next);
+              setNotice(t("Quotation rows sorted by DN number (oldest to newest).", "تم ترتيب صفوف عرض السعر حسب رقم إذن التسليم (من الأقدم إلى الأحدث)."));
+            }}
+          >
+            📋 {t("Sort by DN", "ترتيب حسب إذن التسليم")}
+          </button>
+        )}
         {cart.sharedWorkflow && onReloadShared && <button disabled={busy || !!cart.sharedPendingCommand} onClick={() => void refreshSharedDraft()}>Refresh prices and version</button>}
         {cart.sharedPendingCommand && <p role="status">Retry the pending save before editing or refreshing. It will use the original command.</p>}
         {!cart.sharedWorkflow && user.permissions.includes("QUOTE_TEMPLATE_MANAGE") && (
@@ -1016,7 +1092,7 @@ export default function Cart({
         </button>
         <button
           className="primary"
-          disabled={!online || busy || !cart.lines.length || hasBlockingErrors}
+          disabled={!online || busy || !cart.lines.filter((l: any) => !isEmptyDraftRow(l)).length || hasBlockingErrors}
           onClick={save}
         >
           {busy
@@ -1051,7 +1127,7 @@ export default function Cart({
         }}
       />}
       </div>
-<div className="form-grid quotation-customer-fields">{[["name","Customer name","اسم العميل"],["number","Customer Code","رمز العميل"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>setCart({...cart,customer:{...cart.customer,[key]:e.target.value}})} onBlur={()=>{if(key==='number')void loadCustomerByCode(String(cart.customer.number||''));}}/></label>)}</div>
+<div className="form-grid quotation-customer-fields">{[["name","Customer name","اسم العميل"],["number","Customer Code","رمز العميل"]].map(([key,en,ar])=><label key={key}>{t(en,ar)}<input value={cart.customer[key] || ''} onChange={e=>{const val=e.target.value; setCart({...cart,customer:{...cart.customer,[key]:val}}); if(key==='number'){clearTimeout(codeLookupTimer.current); if(val.trim().length>=2){codeLookupTimer.current=setTimeout(()=>void loadCustomerByCode(val),450);}}}} onKeyDown={e=>{if(key==='number'&&e.key==='Enter'){e.preventDefault(); clearTimeout(codeLookupTimer.current); void loadCustomerByCode(String(cart.customer.number||''));}}} onBlur={()=>{if(key==='number'){clearTimeout(codeLookupTimer.current); void loadCustomerByCode(String(cart.customer.number||''));}}}/></label>)}</div>
       <details ref={detailsRef} className="quotation-customer-extras" open={detailsOpen} onToggle={e=>setDetailsOpen(e.currentTarget.open)}><summary>{t('Quotation details','تفاصيل عرض السعر')} · {cart.workflowCurrency || 'SAR'} · {t('VAT','الضريبة')} {cart.sharedWorkflow ? cart.sharedTaxBasis === 'EXEMPT' ? '0' : cart.sharedTaxRate : settings.vat}%</summary>
       {cart.sharedWorkflow && <div className="form-grid quotation-customer-fields">
         <label>Currency<input value={cart.workflowCurrency} readOnly/></label>
@@ -1167,8 +1243,8 @@ export default function Cart({
                 >
                   {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${dnMeta.docDate}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${dnMeta.docDate}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${dnMeta.docDate}` : ''}</span></div>}</div></div>
-                    <details className="quotation-line-options"><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
+                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}</span></div>}</div></div>
+                    <details className="quotation-line-options" open={l.input?.type === "CUSTOM" && (!l.input?.description || !l.input?.partNumber) ? true : undefined}><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
                     {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
                       <>
                         <span className="pill custom-line-badge">
@@ -1176,6 +1252,7 @@ export default function Cart({
                         </span>
                         <input
                           aria-label={t("Part / reference", "الصنف / المرجع")}
+                          placeholder={t("Part / reference", "الصنف / المرجع")}
                           value={l.input.partNumber}
                           onChange={(e) =>
                             change(i, "partNumber", e.target.value)
@@ -1183,6 +1260,7 @@ export default function Cart({
                         />
                         <input
                           aria-label={t("Description", "الوصف")}
+                          placeholder={t("Description", "الوصف")}
                           value={l.input.description}
                           onChange={(e) =>
                             change(i, "description", e.target.value)
@@ -1216,7 +1294,7 @@ export default function Cart({
                             {t("Delivery row", "صف التسليم")}{" "}
                             {importedDeliveryMeta(l)?.rowNumber || "—"} ·{" "}
                             {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
-                            {importedDeliveryMeta(l)?.docDate || "—"}
+                            {formatDeliveryDateDisplay(importedDeliveryMeta(l)?.docDate) || "—"}
                             {importedDeliveryMeta(l)?.sourcePartNumber &&
                               importedDeliveryMeta(l)?.sourcePartNumber !==
                                 l.partNumber && (
@@ -1233,7 +1311,7 @@ export default function Cart({
                       <small>
                         {t("Delivery source", "مصدر التسليم")}:{" "}
                         {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
-                        {importedDeliveryMeta(l)?.docDate || "—"}
+                        {formatDeliveryDateDisplay(importedDeliveryMeta(l)?.docDate) || "—"}
                       </small>
                     )}
 

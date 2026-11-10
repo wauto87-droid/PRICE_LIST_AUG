@@ -7,7 +7,10 @@ import {
   syncQuotationNotes,
   syncQuotationDeliveryMeta,
   importedDeliveryMeta,
+  sortLinesByDeliveryNote,
 } from "../backend/quotations/delivery-sync";
+import { formatDeliveryDateDisplay } from "../backend/pricing/normalize";
+import { isEmptyDraftRow, createBlankEntryLine } from "../frontend/Cart";
 import { quotationHtml } from "../backend/pdf/template";
 
 test("extractActiveDeliveryNotes extracts and deduplicates active DN docNos and dates", () => {
@@ -92,7 +95,7 @@ test("syncQuotationNotes synchronizes dates and docNos while preserving user not
     [
       "Please pack carefully in two boxes",
       "Call 0501234567 on arrival",
-      "Delivery dates: 2026-09-28",
+      "Delivery dates: 28-09-26",
       "Imported from delivery notes: 1924",
     ].join("\n"),
   );
@@ -139,7 +142,7 @@ test("syncQuotationDeliveryMeta synchronizes customer object with active lines",
   assert.equal(synced.reference, "Delivery notes: 1924");
   assert.equal(
     synced.notes,
-    ["Delivery dates: 2026-09-28", "Imported from delivery notes: 1924"].join("\n"),
+    ["Delivery dates: 28-09-26", "Imported from delivery notes: 1924"].join("\n"),
   );
 });
 
@@ -186,6 +189,55 @@ test("quotationHtml prints only active delivery notes and prunes stale ones", ()
   // Active delivery note 1924 SHOULD be in the HTML
   assert.ok(html.includes("Delivery notes: 1924"), "Active DN 1924 should appear in Reference");
   assert.ok(html.includes("Imported from delivery notes: 1924"), "Active DN 1924 should appear in Notes");
-  assert.ok(html.includes("Delivery dates: 2026-09-28"), "Active date should appear in Notes");
-  assert.ok(html.includes("DN: 1924 · Date: 2026-09-28"), "Line item should show DN info");
+  assert.ok(html.includes("Delivery dates: 28-09-26"), "Active date should appear in Notes");
+  assert.ok(html.includes("DN: 1924 · Date: 28-09-26"), "Line item should show DN info");
+});
+
+test("formatDeliveryDateDisplay formats dates strictly to DD-MM-YY", () => {
+  assert.equal(formatDeliveryDateDisplay("2026-10-29"), "29-10-26");
+  assert.equal(formatDeliveryDateDisplay("2026-09-08"), "08-09-26");
+  assert.equal(formatDeliveryDateDisplay("29-10-26"), "29-10-26");
+  assert.equal(formatDeliveryDateDisplay("29-10-2026"), "29-10-26");
+  assert.equal(formatDeliveryDateDisplay(""), "");
+});
+
+test("sortLinesByDeliveryNote sorts items by DN number ascending (oldest to newest / smallest to largest)", () => {
+  const lines = [
+    { partNumber: "ITEM-2276", importMeta: { source: "DELIVERY_NOTE", docNo: "2276", docDate: "2026-10-29" } },
+    { partNumber: "ITEM-2242", importMeta: { source: "DELIVERY_NOTE", docNo: "2242", docDate: "2026-10-27" } },
+    { partNumber: "ITEM-2383-A", importMeta: { source: "DELIVERY_NOTE", docNo: "2383", docDate: "2026-11-09", rowNumber: 1 } },
+    { partNumber: "ITEM-2100", importMeta: { source: "DELIVERY_NOTE", docNo: "2100", docDate: "2026-10-14" } },
+    { partNumber: "ITEM-2143", importMeta: { source: "DELIVERY_NOTE", docNo: "2143", docDate: "2026-10-18" } },
+    { partNumber: "ITEM-2383-B", importMeta: { source: "DELIVERY_NOTE", docNo: "2383", docDate: "2026-11-09", rowNumber: 2 } },
+    { partNumber: "CUSTOM-NO-DN", source: "CUSTOM", input: { type: "CUSTOM", description: "Standalone" } },
+  ];
+
+  const sorted = sortLinesByDeliveryNote(lines);
+  const partOrder = sorted.map((l: any) => l.partNumber);
+  assert.deepEqual(partOrder, [
+    "ITEM-2100",
+    "ITEM-2143",
+    "ITEM-2242",
+    "ITEM-2276",
+    "ITEM-2383-A",
+    "ITEM-2383-B",
+    "CUSTOM-NO-DN",
+  ]);
+});
+
+test("isEmptyDraftRow identifies empty trailing entry placeholder lines", () => {
+  const blankLine = createBlankEntryLine();
+  assert.equal(isEmptyDraftRow(blankLine), true);
+
+  const filledLine = {
+    ...blankLine,
+    input: { ...blankLine.input, quantity: "5", unitPriceExcl: "100" },
+  };
+  assert.equal(isEmptyDraftRow(filledLine), false);
+
+  const dnLine = {
+    partNumber: "ENS-705025",
+    importMeta: { source: "DELIVERY_NOTE", docNo: "2276" },
+  };
+  assert.equal(isEmptyDraftRow(dnLine), false);
 });

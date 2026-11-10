@@ -65,3 +65,50 @@ export function formatDeliveryDate(input: unknown): string {
   }
   return source;
 }
+
+export function formatDeliveryDateDisplay(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  const source = String(input).trim();
+  if (!source) return "";
+
+  // If already in DD-MM-YY format (e.g. 29-10-26)
+  if (/^\d{2}-\d{2}-\d{2}$/.test(source)) return source;
+
+  // If in DD-MM-YYYY or DD/MM/YYYY format
+  const dmyMatch = source.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+  if (dmyMatch && Number(dmyMatch[1]) <= 31 && Number(dmyMatch[2]) <= 12) {
+    const [, d, m, y] = dmyMatch;
+    return `${d.padStart(2, "0")}-${m.padStart(2, "0")}-${y.slice(-2)}`;
+  }
+
+  // If in YYYY-MM-DD or YYYY/MM/DD format
+  const ymdMatch = source.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (ymdMatch) {
+    const [, y, m, d] = ymdMatch;
+    return `${d.padStart(2, "0")}-${m.padStart(2, "0")}-${y.slice(-2)}`;
+  }
+
+  // Excel serial date number
+  const num = Number(source);
+  if (!isNaN(num) && num > 10000 && num < 100000) {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const date = new Date(excelEpoch.getTime() + num * 86400000);
+    if (!isNaN(date.getTime())) {
+      const d = String(date.getUTCDate()).padStart(2, "0");
+      const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const y = String(date.getUTCFullYear()).slice(-2);
+      return `${d}-${m}-${y}`;
+    }
+  }
+
+  // Fallback via Date parser
+  const parsed = new Date(source);
+  if (!isNaN(parsed.getTime()) && source.length >= 6 && /\d/.test(source)) {
+    const d = String(parsed.getUTCDate()).padStart(2, "0");
+    const m = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+    const y = String(parsed.getUTCFullYear()).slice(-2);
+    if (`${y}-${m}-${d}` !== "70-01-01") return `${d}-${m}-${y}`;
+  }
+
+  return source;
+}
