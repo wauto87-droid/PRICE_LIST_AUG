@@ -8,6 +8,7 @@ import { handle } from "../backend/api/router";
 import { formatDeliveryDateDisplay } from "../backend/pricing/normalize";
 import { sortLinesByDeliveryNote } from "../backend/quotations/delivery-sync";
 import { isEmptyDraftRow, createBlankEntryLine } from "../frontend/Cart";
+import { normalizeEditableQuotationLine } from "../shared/quotation-line-compat";
 
 test("Customer lookup resolves customer names from draft quotations, imports, and DN tracker", async () => {
   const db = await embedded();
@@ -127,3 +128,38 @@ test("isEmptyDraftRow differentiates blank entry lines from real quotation items
   const modified = { ...blank, input: { ...blank.input, quantity: "2" } };
   assert.equal(isEmptyDraftRow(modified), false);
 });
+
+test("normalizeEditableQuotationLine preserves empty string quantity when cleared by backspace and does not attach compatibilityIssue to blank draft rows", () => {
+  const blank = createBlankEntryLine();
+  const normalizedBlank = normalizeEditableQuotationLine(blank);
+  assert.equal(normalizedBlank.input.quantity, "");
+  assert.equal(normalizedBlank.compatibilityIssue, undefined);
+
+  // When user backspaces an existing line's quantity to empty string
+  const existingCatalogLine = {
+    source: "CATALOG",
+    productId: "prod-1",
+    input: {
+      type: "CATALOG",
+      productId: "prod-1",
+      quantity: "", // cleared by backspace!
+      discount: "0",
+    },
+  };
+  const normalizedCatalog = normalizeEditableQuotationLine(existingCatalogLine);
+  assert.equal(normalizedCatalog.input.quantity, "");
+
+  const existingCustomLine = {
+    source: "CUSTOM",
+    input: {
+      type: "CUSTOM",
+      partNumber: "CUSTOM-X",
+      description: "My custom item",
+      quantity: "", // cleared by backspace!
+      unitPriceExcl: "50",
+    },
+  };
+  const normalizedCustom = normalizeEditableQuotationLine(existingCustomLine);
+  assert.equal(normalizedCustom.input.quantity, "");
+});
+

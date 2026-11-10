@@ -25,6 +25,12 @@ function compatibilityIssue(
     return "";
   }
   if (explicitKind === "CUSTOM") {
+    if (
+      !text(input.partNumber) &&
+      !text(input.description) &&
+      !text(input.unitPriceExcl)
+    )
+      return "";
     if (!text(input.description))
       return "This saved custom line is missing its description. Enter the description before saving.";
     if (!text(input.quantity))
@@ -50,10 +56,16 @@ export function normalizeEditableQuotationLine(line: any) {
           text(existing?.productId ?? source.productId)
         ? "CATALOG"
         : "";
-  const quantity = text(
-    existing?.quantity ?? source.price?.quantity ?? source.quantity,
-    "1",
-  );
+  const rawQuantity =
+    existing && existing.quantity !== undefined
+      ? existing.quantity
+      : source.price?.quantity !== undefined && source.price?.quantity !== null
+        ? source.price.quantity
+        : source.quantity;
+  const quantity =
+    rawQuantity !== undefined && rawQuantity !== null
+      ? String(rawQuantity)
+      : "1";
   let input: any;
 
   if (explicitKind === "CATALOG") {

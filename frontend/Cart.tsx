@@ -16,6 +16,7 @@ import {
 import CustomLineForm from "./CustomLineForm";
 import WorkflowCostReference from "./WorkflowCostReference";
 import QuotationLineQuickAdd from "./QuotationLineQuickAdd";
+import QuotationInlineSearch from "./QuotationInlineSearch";
 import CustomLineCatalogResolver from "./CustomLineCatalogResolver";
 import { buildLookupLineRequest } from "./lookup-pricing";
 import { humanizeCustomLineError } from "./custom-line-errors";
@@ -145,12 +146,13 @@ export function nextEditableRow(
 }
 
 function computeCartTotals(lines: any[], targetTotalValue: string) {
+  const activeLines = lines.filter((line: any) => !isEmptyDraftRow(line));
   const base = totals(
-    lines.flatMap((line: any) =>
+    activeLines.flatMap((line: any) =>
       line.price && !line.compatibilityIssue ? [line.price] : [],
     ),
   );
-  const unresolvedLines = lines.filter(
+  const unresolvedLines = activeLines.filter(
     (line: any) => !line.price || line.compatibilityIssue,
   ).length;
   const rawTarget = String(targetTotalValue ?? "").trim();
@@ -634,6 +636,104 @@ export default function Cart({
       t(
         `${replacements.length} custom row(s) replaced with ${product.partNumber}.`,
         `تم استبدال ${replacements.length} صف مخصص بالصنف ${product.partNumber}.`,
+      ),
+    );
+  }
+
+  async function selectCatalogItemForLine(index: number, product: any) {
+    try {
+      setBusy(true);
+      setError("");
+      const current = cartRef.current;
+      const currentLine = current.lines[index];
+      const rawQty = String(currentLine?.input?.quantity ?? "").trim();
+      const qty =
+        rawQty && !isNaN(Number(rawQty)) && Number(rawQty) > 0 ? rawQty : "1";
+      const basePricingInput = buildLookupLineRequest(
+        product.id,
+        product.defaultLevel ?? "END_CUSTOMER",
+        qty,
+        "0",
+      );
+      const selectedProductLevel = visibleLevels(product).find(
+        (level) => level.code === (product.defaultLevel ?? "END_CUSTOMER"),
+      );
+      const pricingInput =
+        selectedProductLevel?.entryMode === "MARKUP" ||
+        selectedProductLevel?.method === "COST_MARKUP"
+          ? { ...basePricingInput, markup: "0" }
+          : basePricingInput;
+      const price = await api("pricing", "POST", pricingInput);
+      const newLine = {
+        productId: product.id,
+        sellingLevel: product.defaultLevel ?? "END_CUSTOMER",
+        partNumber: product.partNumber,
+        description: product.description,
+        unit: product.unit,
+        quantityPrecision: product.quantityPrecision,
+        sellingLevels: visibleLevels(product),
+        input: {
+          ...pricingInput,
+          type: "CATALOG" as const,
+        },
+        price,
+        pending: false,
+        offline: false,
+      };
+      const lines = [...cartRef.current.lines];
+      lines[index] = newLine;
+      if (index === lines.length - 1) {
+        lines.push(createBlankEntryLine());
+      }
+      const next = { ...cartRef.current, lines };
+      cartRef.current = next;
+      setCart(next);
+      setNotice(
+        t(
+          `Added ${product.partNumber} to quotation.`,
+          `تمت إضافة ${product.partNumber} إلى عرض السعر.`,
+        ),
+      );
+      setTimeout(() => {
+        const qtyInput = document.querySelector<HTMLInputElement>(
+          `[data-cart-field="quantity"][data-cart-row="${index}"]`,
+        );
+        if (qtyInput) {
+          qtyInput.focus();
+          qtyInput.select();
+        }
+      }, 50);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useAsCustomPartForLine(index: number, partNumber: string) {
+    const trimmed = partNumber.trim();
+    if (!trimmed) return;
+    const lines = [...cartRef.current.lines];
+    const current = lines[index];
+    if (!current) return;
+    const nextInput = {
+      ...current.input,
+      type: "CUSTOM" as const,
+      partNumber: trimmed,
+      quantity: String(current.input?.quantity ?? "").trim() || "1",
+    };
+    lines[index] = {
+      ...current,
+      partNumber: trimmed,
+      input: nextInput,
+    };
+    const next = { ...cartRef.current, lines };
+    cartRef.current = next;
+    setCart(next);
+    setNotice(
+      t(
+        `Added custom line ${trimmed}. Complete description and price.`,
+        `تمت إضافة السطر المخصص ${trimmed}. أكمل الوصف والسعر.`,
       ),
     );
   }
@@ -1243,148 +1343,176 @@ export default function Cart({
                 >
                   {handle => <>
                   <td className="quotation-item-cell">
-                    <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}</span></div>}</div></div>
-                    <details className="quotation-line-options" open={l.input?.type === "CUSTOM" && (!l.input?.description || !l.input?.partNumber) ? true : undefined}><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
-                    {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
-                      <>
-                        <span className="pill custom-line-badge">
-                          {t("Custom", "مخصص")}
-                        </span>
-                        <input
-                          aria-label={t("Part / reference", "الصنف / المرجع")}
-                          placeholder={t("Part / reference", "الصنف / المرجع")}
-                          value={l.input.partNumber}
-                          onChange={(e) =>
-                            change(i, "partNumber", e.target.value)
-                          }
-                        />
-                        <input
-                          aria-label={t("Description", "الوصف")}
-                          placeholder={t("Description", "الوصف")}
-                          value={l.input.description}
-                          onChange={(e) =>
-                            change(i, "description", e.target.value)
-                          }
-                        />
-                        <details><summary>{t("Find catalog match", "مطابقة الكتالوج")}</summary><CustomLineCatalogResolver
-                          t={t}
-                          sourceReference={String(l.input.partNumber ?? "")}
-                          sourceDescription={String(l.input.description ?? "")}
-                          identicalCount={
-                            matchingCustomLineIndexes(
-                              cart.lines,
-                              i,
-                              "ALL_IDENTICAL",
-                            ).length
-                          }
-                          canRemember={user.permissions.includes("PRODUCT_EDIT")}
-                          online={online}
-                          disabled={busy}
-                          onReplace={(product, scope, remember) =>
-                            replaceCustomWithCatalog(i, product, scope, remember)
-                          }
-                        /></details>
-                      </>
+                    {isEmptyDraftRow(l) ? (
+                      <div className="quotation-item-summary">
+                        {handle}
+                        <span className="quotation-row-number">{i + 1}</span>
+                        <div
+                          style={{
+                            flex: 1,
+                            minWidth: "220px",
+                            position: "relative",
+                          }}
+                        >
+                          <QuotationInlineSearch
+                            t={t}
+                            online={online}
+                            disabled={busy}
+                            rowNumber={i + 1}
+                            onSelectProduct={(product) =>
+                              void selectCatalogItemForLine(i, product)
+                            }
+                            onAddCustom={(partNumber) =>
+                              useAsCustomPartForLine(i, partNumber)
+                            }
+                          />
+                        </div>
+                      </div>
                     ) : (
                       <>
-                        <strong>{l.partNumber}</strong>
-                        <small className="quotation-line-description" title={l.description}>{l.description}</small>
-                        {importedDeliveryMeta(l) && (
+                        <div className="quotation-item-summary">{handle}<span className="quotation-row-number">{i+1}</span><div><strong>{pn || '—'}{" "}{isDuplicate && <span className="quotation-duplicate-label" style={dupColor ? { borderColor: dupColor.border, color: dupColor.text } : undefined} title={t(`Group #${dupIndex} · ${partCounts[itemKey]} occurrences of this item`, `المجموعة #${dupIndex} · ${partCounts[itemKey]} تكرارات لهذا الصنف`)}>#{dupIndex} {t('Repeated','مكرر')} ×{partCounts[itemKey]}</span>}{hasPriceMismatch && <span className="quotation-price-mismatch-badge" title={t("This repeated item has different prices across rows. Review before saving.", "هذا الصنف المكرر يحتوي على أسعار مختلفة بين الصفوف. يرجى المراجعة قبل الحفظ.")}>⚠️ {t("Different price", "سعر مختلف")}</span>}</strong><small className="quotation-line-description" title={l.input?.description || l.description}>{l.input?.description || l.description}</small>{dnMeta && (dnMeta.docNo || dnMeta.docDate) && <div className="quotation-dn-line"><span className="quotation-dn-badge" title={t(`Delivery note ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · Date: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}${dnMeta.rowNumber ? ` · Row #${dnMeta.rowNumber}` : ''}`, `إذن تسليم ${dnMeta.docNo || '—'}${dnMeta.docDate ? ` · التاريخ: ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}`)}>📋 DN: <b>{dnMeta.docNo || '—'}</b>{dnMeta.docDate ? ` · ${formatDeliveryDateDisplay(dnMeta.docDate)}` : ''}</span></div>}</div></div>
+                        <details className="quotation-line-options" open={l.input?.type === "CUSTOM" && (!l.input?.description || !l.input?.partNumber) ? true : undefined}><summary aria-label={t('Item details','تفاصيل الصنف')+' '+(i+1)}>{t('Details','تفاصيل')}</summary><div className="quotation-expanded-item">
+                        {l.input?.type === "CUSTOM" && !cart.sharedWorkflow ? (
+                          <>
+                            <span className="pill custom-line-badge">
+                              {t("Custom", "مخصص")}
+                            </span>
+                            <input
+                              aria-label={t("Part / reference", "الصنف / المرجع")}
+                              placeholder={t("Part / reference", "الصنف / المرجع")}
+                              value={l.input.partNumber}
+                              onChange={(e) =>
+                                change(i, "partNumber", e.target.value)
+                              }
+                            />
+                            <input
+                              aria-label={t("Description", "الوصف")}
+                              placeholder={t("Description", "الوصف")}
+                              value={l.input.description}
+                              onChange={(e) =>
+                                change(i, "description", e.target.value)
+                              }
+                            />
+                            <details><summary>{t("Find catalog match", "مطابقة الكتالوج")}</summary><CustomLineCatalogResolver
+                              t={t}
+                              sourceReference={String(l.input.partNumber ?? "")}
+                              sourceDescription={String(l.input.description ?? "")}
+                              identicalCount={
+                                matchingCustomLineIndexes(
+                                  cart.lines,
+                                  i,
+                                  "ALL_IDENTICAL",
+                                ).length
+                              }
+                              canRemember={user.permissions.includes("PRODUCT_EDIT")}
+                              online={online}
+                              disabled={busy}
+                              onReplace={(product, scope, remember) =>
+                                replaceCustomWithCatalog(i, product, scope, remember)
+                              }
+                            /></details>
+                          </>
+                        ) : (
+                          <>
+                            <strong>{l.partNumber}</strong>
+                            <small className="quotation-line-description" title={l.description}>{l.description}</small>
+                            {importedDeliveryMeta(l) && (
+                              <small>
+                                {t("Delivery row", "صف التسليم")}{" "}
+                                {importedDeliveryMeta(l)?.rowNumber || "—"} ·{" "}
+                                {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
+                                {formatDeliveryDateDisplay(importedDeliveryMeta(l)?.docDate) || "—"}
+                                {importedDeliveryMeta(l)?.sourcePartNumber &&
+                                  importedDeliveryMeta(l)?.sourcePartNumber !==
+                                    l.partNumber && (
+                                    <>
+                                      {" · "}
+                                      {t("Source part", "صنف المصدر")}: {importedDeliveryMeta(l)?.sourcePartNumber}
+                                    </>
+                                  )}
+                              </small>
+                            )}
+                          </>
+                        )}
+                        {l.input?.type === "CUSTOM" && importedDeliveryMeta(l) && (
                           <small>
-                            {t("Delivery row", "صف التسليم")}{" "}
-                            {importedDeliveryMeta(l)?.rowNumber || "—"} ·{" "}
+                            {t("Delivery source", "مصدر التسليم")}:{" "}
                             {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
                             {formatDeliveryDateDisplay(importedDeliveryMeta(l)?.docDate) || "—"}
-                            {importedDeliveryMeta(l)?.sourcePartNumber &&
-                              importedDeliveryMeta(l)?.sourcePartNumber !==
-                                l.partNumber && (
-                                <>
-                                  {" · "}
-                                  {t("Source part", "صنف المصدر")}: {importedDeliveryMeta(l)?.sourcePartNumber}
-                                </>
-                              )}
+                          </small>
+                        )}
+
+                        {(l.description || l.input?.description) && <p className="quotation-full-description">{l.description || l.input.description}</p>}
+                        <WorkflowCostReference
+                          line={l}
+                          visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
+                          currency={cart.workflowCurrency || "SAR"}
+                          t={t}
+                        />
+                        {l.previousPriceSource && (
+                          <span className="badge success" title={`${l.previousPriceSource.status} ${l.previousPriceSource.quotation_number}`}>
+                            {t("Previous customer price", "سعر العميل السابق")}
+                          </span>
+                        )}
+                        {l.input?.type !== "CUSTOM" && (
+                          <label>
+                            {t("Selling level", "مستوى سعر البيع")}
+                            <select
+                              aria-label={
+                                t("Selling level", "مستوى سعر البيع") +
+                                " " +
+                                l.partNumber
+                              }
+                              disabled={busy}
+                              onFocus={() => {
+                                if (online) void loadLevels(l.productId);
+                              }}
+                              value={quotationSellingLevel(l)}
+                              onChange={(e) =>
+                                change(i, "sellingLevel", e.target.value)
+                              }
+                            >
+                              <option
+                                value={quotationSellingLevel(l)}
+                              >
+                                {levelLabel(
+                                  quotationSellingLevel(l),
+                                  t,
+                                )}
+                              </option>
+                              {(options[l.productId] ?? l.sellingLevels ?? [])
+                                .filter(
+                                  (v) =>
+                                    v.code !==
+                                    quotationSellingLevel(l),
+                                )
+                                .map((v) => (
+                                  <option key={v.code} value={v.code}>
+                                    {levelLabel(v.code, t)} · {v.masterExcl}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        )}
+                        </div></details>
+                        {!!l.livePriceError && (
+                          <small className="sales-check-error">{l.livePriceError}</small>
+                        )}
+                        {!!l.compatibilityIssue && (
+                          <small className="sales-check-error" role="alert">
+                            {t(l.compatibilityIssue, l.compatibilityIssue)}
+                          </small>
+                        )}
+                        {unresolvedImportedCustom(l) && !l.livePriceError && (
+                          <small className="sales-check-error">
+                            {t(
+                              "Enter a unit price before issuing this quotation line.",
+                              "أدخل سعر الوحدة قبل إصدار هذا السطر في عرض السعر.",
+                            )}
                           </small>
                         )}
                       </>
                     )}
-                    {l.input?.type === "CUSTOM" && importedDeliveryMeta(l) && (
-                      <small>
-                        {t("Delivery source", "مصدر التسليم")}:{" "}
-                        {importedDeliveryMeta(l)?.docNo || "—"} ·{" "}
-                        {formatDeliveryDateDisplay(importedDeliveryMeta(l)?.docDate) || "—"}
-                      </small>
-                    )}
-
-                    {(l.description || l.input?.description) && <p className="quotation-full-description">{l.description || l.input.description}</p>}
-                    <WorkflowCostReference
-                      line={l}
-                      visible={!!l.workflowCost || user.permissions.includes("COST_VIEW") || (!!cart.ownerId && cart.ownerId === user.id)}
-                      currency={cart.workflowCurrency || "SAR"}
-                      t={t}
-                    />
-                    {l.previousPriceSource && (
-                      <span className="badge success" title={`${l.previousPriceSource.status} ${l.previousPriceSource.quotation_number}`}>
-                        {t("Previous customer price", "سعر العميل السابق")}
-                      </span>
-                    )}
-                    {l.input?.type !== "CUSTOM" && (
-                      <label>
-                        {t("Selling level", "مستوى سعر البيع")}
-                        <select
-                          aria-label={
-                            t("Selling level", "مستوى سعر البيع") +
-                            " " +
-                            l.partNumber
-                          }
-                          disabled={busy}
-                          onFocus={() => {
-                            if (online) void loadLevels(l.productId);
-                          }}
-                          value={quotationSellingLevel(l)}
-                          onChange={(e) =>
-                            change(i, "sellingLevel", e.target.value)
-                          }
-                        >
-                          <option
-                            value={quotationSellingLevel(l)}
-                          >
-                            {levelLabel(
-                              quotationSellingLevel(l),
-                              t,
-                            )}
-                          </option>
-                          {(options[l.productId] ?? l.sellingLevels ?? [])
-                            .filter(
-                              (v) =>
-                                v.code !==
-                                quotationSellingLevel(l),
-                            )
-                            .map((v) => (
-                              <option key={v.code} value={v.code}>
-                                {levelLabel(v.code, t)} · {v.masterExcl}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                    )}
-                    </div></details>
-                    {!!l.livePriceError && (
-                      <small className="sales-check-error">{l.livePriceError}</small>
-                    )}
-                    {!!l.compatibilityIssue && (
-                      <small className="sales-check-error" role="alert">
-                        {t(l.compatibilityIssue, l.compatibilityIssue)}
-                      </small>
-                    )}
-                    {unresolvedImportedCustom(l) && !l.livePriceError && (
-                      <small className="sales-check-error">
-                        {t(
-                          "Enter a unit price before issuing this quotation line.",
-                          "أدخل سعر الوحدة قبل إصدار هذا السطر في عرض السعر.",
-                        )}
-                      </small>
-                    )}
-
                   </td>
                   <td>
                     <input
