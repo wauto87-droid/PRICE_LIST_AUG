@@ -28,6 +28,8 @@ import {
 import { json } from "../backend/core/audit";
 import { quotationHtml } from "../backend/pdf/template";
 import { deliveryQuoteMappingDefaults } from "../frontend/delivery-quote-mapping";
+import * as XLSX from "xlsx";
+import { runJob } from "../backend/worker/process";
 
 async function mapRows(db: any, actor: any, id: string, input: any) {
   const queued = await queueMapRows(db, actor, id, input);
@@ -1030,6 +1032,135 @@ test("Delivery-note import with 300 rows and 40 delivery notes converts to quota
 
   await db.close?.();
 });
+
+test("Legacy XLS delivery note extraction processes successfully via worker", async () => {
+  const db = await embedded();
+  await migrate(db);
+  const uploadDir = path.join(
+    process.cwd(),
+    ".data",
+    "delivery-xls-test-" + randomUUID(),
+  );
+  await fs.mkdir(uploadDir, { recursive: true });
+  process.env.SETUP_TOKEN = "delivery-quote-xls-token-long-enough-32";
+  process.env.UPLOAD_DIR = uploadDir;
+  try {
+    await setup(db, {
+      token: process.env.SETUP_TOKEN,
+      username: "admin",
+      password: "abcd",
+      name: "Admin",
+      companyName: "AMT",
+    });
+    const signed = await login(db, { username: "admin", password: "abcd" });
+    const actor = await authenticate(
+      db,
+      new Request("http://localhost", {
+        headers: { Cookie: sessionCookie(signed.token).split(";")[0] },
+      }),
+    );
+
+    // Build a BIFF8 XLS file
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      [
+        "Date",
+        "Document No",
+        "Cust.Name",
+        "Item Code",
+        "Item Name",
+        "Unit",
+        "Qty",
+        "Invoiced",
+        "Invoice Returned",
+        "Delivery Returned",
+        "Balance",
+      ],
+      [
+        46296.39,
+        1950,
+        "ENGINEERING&INDUSTRIAL MATERIAL S TRADING EST.",
+        "GC4020M6",
+        "MODULAR CONTACTOR 2P 40A SCHNIDEDER",
+        "PCS",
+        10,
+        0,
+        0,
+        10,
+        0,
+      ],
+      [
+        46296.85,
+        1963,
+        "ENGINEERING&INDUSTRIAL MATERIAL S TRADING EST.",
+        "LV540406",
+        "CIRCUIT BREAKER CVS400F 3P",
+        "PCS",
+        2,
+        0,
+        0,
+        0,
+        2,
+      ],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const buffer = XLSX.write(wb, { bookType: "biff8", type: "buffer" });
+    const filePath = path.join(uploadDir, "1533DN.XLS");
+    await fs.writeFile(filePath, buffer);
+
+    const jobId = randomUUID();
+    await db.query(
+      "INSERT INTO delivery_quote_jobs(id,filename,file_path,status,owner_id,progress) VALUES($1,'1533DN.XLS',$2,'UPLOADED',$3,$4)",
+      [
+        jobId,
+        filePath,
+        actor.id,
+        json({ phase: "QUEUED", percentage: 0, processedRows: 0 }),
+      ],
+    );
+    await db.query(
+      "INSERT INTO jobs(id,kind,payload) VALUES($1,'DELIVERY_QUOTE_EXTRACT',$2)",
+      [randomUUID(), json({ importId: jobId })],
+    );
+
+    const ran = await runJob(db);
+    assert.equal(ran, true);
+
+    const staged = await one(
+      db,
+      "SELECT status, summary, progress, error FROM delivery_quote_jobs WHERE id=$1",
+      [jobId],
+    );
+    assert.equal(staged!.status, "AWAITING_MAPPING");
+    assert.equal(staged!.error, null);
+    assert.equal(staged!.summary.rows, 2);
+    assert.deepEqual(staged!.summary.columns, [
+      "Date",
+      "Document No",
+      "Cust.Name",
+      "Item Code",
+      "Item Name",
+      "Unit",
+      "Qty",
+      "Invoiced",
+      "Invoice Returned",
+      "Delivery Returned",
+      "Balance",
+    ]);
+
+    const rows = await db.query(
+      "SELECT * FROM delivery_quote_rows WHERE job_id=$1 ORDER BY row_number",
+      [jobId],
+    );
+    assert.equal(rows.rows.length, 2);
+    assert.equal(rows.rows[0].raw["Item Code"], "GC4020M6");
+    assert.equal(rows.rows[1].raw["Item Code"], "LV540406");
+  } finally {
+    await db.close?.();
+    await fs.rm(uploadDir, { recursive: true, force: true });
+  }
+});
+
 
 
 

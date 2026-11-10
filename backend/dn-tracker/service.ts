@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { getPythonBin } from "../worker/extract";
 import type { DB } from "../core/db";
 import { one } from "../core/db";
 import { assert } from "../core/errors";
@@ -22,49 +24,82 @@ export async function readWorkbook(actor: Actor, file: File) {
   const book = new ExcelJS.Workbook();
   const buffer = Buffer.from(await file.arrayBuffer());
   if (/\.xls$/i.test(file.name)) {
-    const result = await new Promise<string>((resolve, reject) => {
-      const child = spawn(
-        process.env.PYTHON_BIN || "python3",
-        [path.join(process.cwd(), "scripts/dn-xls.py")],
-        {
-          windowsHide: true,
-          env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-        },
-      );
-      let output = "",
-        errors = "";
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error("Workbook parsing timed out"));
-      }, 30000);
-      child.stdout.on("data", (b) => {
-        output += b;
-        if (output.length > 25 * 1024 * 1024) {
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        const child = spawn(
+          getPythonBin(),
+          [path.join(process.cwd(), "scripts/dn-xls.py")],
+          {
+            windowsHide: true,
+            env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+          },
+        );
+        let output = "",
+          errors = "";
+        const timer = setTimeout(() => {
           child.kill();
-          reject(new Error("Expanded workbook is too large"));
-        }
+          reject(new Error("Workbook parsing timed out"));
+        }, 30000);
+        child.stdout.on("data", (b) => {
+          output += b;
+          if (output.length > 25 * 1024 * 1024) {
+            child.kill();
+            reject(new Error("Expanded workbook is too large"));
+          }
+        });
+        child.stderr.on("data", (b) => {
+          errors += b;
+        });
+        child.on("error", (e) => {
+          clearTimeout(timer);
+          reject(e);
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          code === 0
+            ? resolve(output)
+            : reject(
+                new Error(
+                  "Unable to read XLS workbook. Verify the file and server XLS reader.",
+                ),
+              );
+        });
+        child.stdin.on("error", () => {});
+        child.stdin.end(buffer);
       });
-      child.stderr.on("data", (b) => {
-        errors += b;
-      });
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        code === 0
-          ? resolve(output)
-          : reject(
-              new Error(
-                "Unable to read XLS workbook. Verify the file and server XLS reader.",
-              ),
+      return { filename: file.name, ...JSON.parse(result) };
+    } catch {
+      // Fallback to in-process XLSX parsing for XLS
+      const wb = XLSX.read(buffer, { type: "buffer", cellDates: false });
+      assert(wb.SheetNames.length <= 30, 400, "Maximum 30 worksheets");
+      const sheets = wb.SheetNames.map((name) => {
+        const sheet = wb.Sheets[name];
+        if (!sheet || !sheet["!ref"]) return { name, rows: [] };
+        const range = XLSX.utils.decode_range(sheet["!ref"]);
+        const ncols = range.e.c - range.s.c + 1;
+        const nrows = range.e.r - range.s.r + 1;
+        assert(
+          nrows <= 20001 && ncols <= 100,
+          400,
+          "Maximum 20,000 rows and 100 columns per sheet",
+        );
+        const rows: string[][] = [];
+        for (let r = range.s.r; r <= range.e.r; r++) {
+          const rowVals: string[] = [];
+          for (let c = range.s.c; c <= range.e.c; c++) {
+            const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+            rowVals.push(
+              cell && cell.v !== undefined && cell.v !== null
+                ? String(cell.v)
+                : "",
             );
+          }
+          rows.push(rowVals);
+        }
+        return { name, rows };
       });
-      child.stdin.on("error", () => {});
-      child.stdin.end(buffer);
-    });
-    return { filename: file.name, ...JSON.parse(result) };
+      return { filename: file.name, sheets };
+    }
   }
   if (/\.csv$/i.test(file.name)) await book.csv.read(Readable.from([buffer]));
   else await book.xlsx.load(buffer as any);

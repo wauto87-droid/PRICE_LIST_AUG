@@ -17,6 +17,7 @@ import { exportPriceWatcherXlsx, priceWatcherHtml } from "./price-watcher";
 import { processJob as processProductEnrichment } from "../product-enrichment/service";
 import { processValidation as processImportValidation } from "../imports/service";
 import * as deliveryQuoteImports from "../delivery-quote-imports/service";
+import { extractFile } from "./extract";
 const exec = promisify(execFile);
 const IMPORT_MAX_ROWS = Number(process.env.IMPORT_MAX_ROWS || 50000);
 
@@ -96,17 +97,11 @@ export async function runJob(db: DB) {
             }),
           ],
         );
-        const { stdout } = await exec(
-          process.env.PYTHON_BIN || "python3",
-          [
-            path.join(process.cwd(), "scripts", "extract.py"),
-            report.file_path,
-            "1",
-            String(IMPORT_MAX_ROWS),
-          ],
-          { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        const extracted = await extractFile(
+          report.file_path,
+          1,
+          IMPORT_MAX_ROWS,
         );
-        const extracted = JSON.parse(stdout);
         if (
           !Array.isArray(extracted.rows) ||
           extracted.rows.length > IMPORT_MAX_ROWS
@@ -162,17 +157,11 @@ export async function runJob(db: DB) {
             }),
           ],
         );
-        const { stdout } = await exec(
-          process.env.PYTHON_BIN || "python3",
-          [
-            path.join(process.cwd(), "scripts", "extract.py"),
-            report.file_path,
-            "1",
-            String(IMPORT_MAX_ROWS),
-          ],
-          { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        const extracted = await extractFile(
+          report.file_path,
+          1,
+          IMPORT_MAX_ROWS,
         );
-        const extracted = JSON.parse(stdout);
         if (
           !Array.isArray(extracted.rows) ||
           extracted.rows.length > IMPORT_MAX_ROWS
@@ -217,17 +206,11 @@ export async function runJob(db: DB) {
           "UPDATE import_jobs SET status='PROCESSING',updated_at=now() WHERE id=$1",
           [imp.id],
         );
-        const { stdout } = await exec(
-          process.env.PYTHON_BIN || "python3",
-          [
-            path.join(process.cwd(), "scripts", "extract.py"),
-            imp.file_path,
-            String(process.env.PDF_MAX_PAGES || 100),
-            String(IMPORT_MAX_ROWS),
-          ],
-          { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        const extracted = await extractFile(
+          imp.file_path,
+          Number(process.env.PDF_MAX_PAGES || 100),
+          IMPORT_MAX_ROWS,
         );
-        const extracted = JSON.parse(stdout);
         if (
           !Array.isArray(extracted.rows) ||
           extracted.rows.length > IMPORT_MAX_ROWS
@@ -281,17 +264,11 @@ export async function runJob(db: DB) {
             json({ phase: "READING", percentage: null, processedRows: 0 }),
           ],
         );
-        const { stdout } = await exec(
-          process.env.PYTHON_BIN || "python3",
-          [
-            path.join(process.cwd(), "scripts", "extract.py"),
-            imp.file_path,
-            "1",
-            String(IMPORT_MAX_ROWS),
-          ],
-          { timeout: 300000, maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        const extracted = await extractFile(
+          imp.file_path,
+          1,
+          IMPORT_MAX_ROWS,
         );
-        const extracted = JSON.parse(stdout);
         if (
           !Array.isArray(extracted.rows) ||
           extracted.rows.length > IMPORT_MAX_ROWS

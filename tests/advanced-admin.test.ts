@@ -245,7 +245,7 @@ test("Advanced administration: reviewed rules, safe imports, global numbering an
       { skip: !process.env.LS_WORKBOOK_PATH },
       async () => {
         const { stdout } = await promisify(execFile)(
-          process.env.PYTHON_BIN || "python3",
+          process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3"),
           ["scripts/extract.py", process.env.LS_WORKBOOK_PATH!, "100"],
           { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
         );
