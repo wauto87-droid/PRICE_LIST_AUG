@@ -1,9 +1,10 @@
 [Unit]
 Description=AMT Price List scheduled backup job
-After=network-online.target docker.service podman.service amt-pricelist.service
+After=network-online.target podman.service amt-pricelist.service
 Wants=network-online.target
 
 [Service]
+Environment="DOCKER_HOST=unix:///run/podman/podman.sock"
 Type=oneshot
 User=root
 UMask=0077

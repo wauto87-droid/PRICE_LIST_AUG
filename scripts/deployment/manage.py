@@ -25,6 +25,9 @@ from urllib.parse import quote, urlsplit
 import ipaddress
 from collections import deque
 
+if 'DOCKER_HOST' not in os.environ and os.path.exists('/run/podman/podman.sock'):
+    os.environ['DOCKER_HOST'] = 'unix:///run/podman/podman.sock'
+
 REPORT = None
 
 # Inputs which can change the installed JavaScript dependency graph or the
@@ -542,10 +545,12 @@ class Deployment:
             REPORT.open(self.root)
 
     def engine(self, *args, **kwargs):
-        return run(['docker', *args], **kwargs)
+        cmd = 'podman' if shutil.which('podman') else 'docker'
+        return run([cmd, *args], **kwargs)
 
     def limited_engine(self, *args, **kwargs):
-        return run(limited_command(['docker', *args], cpu_quota='50%', memory_max='1G'), **kwargs)
+        cmd = 'podman' if shutil.which('podman') else 'docker'
+        return run(limited_command([cmd, *args], cpu_quota='50%', memory_max='1G'), **kwargs)
 
     def runtime(self):
         if self.args.runtime:
@@ -708,7 +713,7 @@ class Deployment:
         require(sys.platform.startswith('linux'), 'Run deployment on the Linux VPS; local tests do not deploy')
         require(sys.version_info >= (3, 12), 'Python 3.12 or newer is required for safe archive extraction')
         require(os.geteuid() == 0, 'Run through an authorized root/sudo session')
-        for tool in ['docker', 'git', 'ss', 'curl', 'systemctl']:
+        for tool in (['podman', 'git', 'ss', 'curl', 'systemctl'] if shutil.which('podman') else ['docker', 'git', 'ss', 'curl', 'systemctl']):
             require(shutil.which(tool), f'Missing prerequisite: {tool}. No packages were installed')
         self.engine('version')
         self.engine('compose', 'version')
